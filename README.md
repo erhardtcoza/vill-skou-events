@@ -1,3 +1,7 @@
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/erhardtcoza/vill-skou-events)
+
+
+
 villiersdorp-events/
 ├─ wrangler.toml
 ├─ schema.sql
