@@ -1,0 +1,31 @@
+name = "villiersdorp-events"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+node_compat = false
+minify = true
+
+# Bindings
+[[d1_databases]]
+binding = "DB"
+database_name = "villiersdorp-events-db"
+database_id = "823c5c97-9e4d-4305-93d1-1dfb2a6c3ac1"
+
+[[kv_namespaces]]
+binding = "EVENTS_KV"
+id = "9ac093d84f2c499e97fff3bb17a386f1"
+
+[[r2_buckets]]
+binding = "TICKET_R2"
+bucket_name = "villiersdorp-tickets"
+
+[vars]
+APP_NAME = "Villiersdorp Skou Tickets"
+
+# Secrets to set:
+# wrangler secret put HMAC_SECRET
+# wrangler secret put MAILCHANNELS_SENDER   # e.g. "tickets@villiersdorpskou.co.za"
+
+# Route the worker on the subdomain:
+routes = [
+  { pattern = "events.villiersdorpskou.co.za/*", zone_name = "villiersdorpskou.co.za" }
+]
