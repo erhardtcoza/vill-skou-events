@@ -8,8 +8,7 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#111 }
   .wrap{ max-width:980px; margin:20px auto; padding:0 14px }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 24px rgba(0,0,0,.08); padding:16px; margin-bottom:16px }
-  h1{ margin:0 0 12px }
-  h2{ margin:0 0 12px }
+  h1{ margin:0 0 12px } h2{ margin:0 0 12px }
   .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:16px }
   @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
   label{ display:block; font-size:14px; color:#222; margin:8px 0 6px }
@@ -19,8 +18,7 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
   .total{ display:flex; justify-content:space-between; font-weight:700; font-size:18px; margin-top:10px }
   .row{ display:flex; justify-content:space-between; margin:6px 0; gap:10px }
-  .err{ color:#b00020; margin-top:8px }
-  .ok{ color:#0a7d2b; margin-top:8px }
+  .err{ color:#b00020; margin-top:8px } .ok{ color:#0a7d2b; margin-top:8px }
   a.back{ text-decoration:none; color:#111; border:1px solid #e5e7eb; padding:8px 12px; border-radius:8px }
 </style>
 </head><body>
@@ -44,10 +42,12 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
       <label>Van <input id="lastName" autocomplete="family-name"/></label>
       <label>E-pos <input id="email" type="email" autocomplete="email"/></label>
       <label>Selfoon <input id="phone" type="tel" autocomplete="tel"/></label>
-      <div style="margin-top:12px">
-        <button id="payBtn" class="btn primary">Gaan voort</button>
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap">
+        <button id="payNowBtn" class="btn primary">Pay now</button>
+        <button id="payLaterBtn" class="btn">Pay at event</button>
         <span id="msg" class="muted"></span>
       </div>
+      <p id="pickup" class="ok" style="display:none;margin-top:10px"></p>
       <p class="muted" style="margin-top:10px">
         Attendee-besonderhede (bv. geslag) kan by die hek ingevul word indien nodig.
       </p>
@@ -57,7 +57,9 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
       <h2>Jou keuse</h2>
       <div id="lines"></div>
       <div class="total"><span>Totaal</span><span id="total">R0.00</span></div>
-      <p class="muted" style="margin-top:8px" id="note">Let wel: pryse word bevestig en herbereken op die volgende stap.</p>
+      <p class="muted" style="margin-top:8px" id="note">
+        Let wel: pryse word bevestig en herbereken op die volgende stap.
+      </p>
     </div>
   </div>
 </div>
@@ -66,14 +68,13 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
 const slug = ${JSON.stringify(slug)};
 
 function rands(c){ return 'R' + ((c||0)/100).toFixed(2); }
+function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+
 function loadCart(){
-  try {
-    const raw = sessionStorage.getItem('pending_cart');
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  try { const raw = sessionStorage.getItem('pending_cart'); return raw ? JSON.parse(raw) : null; }
+  catch { return null; }
 }
 
-// map ticket_type_id -> {name, price_cents, requires_gender}
 async function fetchCatalog(slug){
   const res = await fetch('/api/public/events/'+encodeURIComponent(slug));
   if (!res.ok) return null;
@@ -87,17 +88,12 @@ async function fetchCatalog(slug){
 function render(cart, types){
   const empty = document.getElementById('empty');
   const content = document.getElementById('content');
-
   if (!cart || !Array.isArray(cart.items) || !cart.items.length){
-    empty.style.display = 'block';
-    content.style.display = 'none';
-    return;
+    empty.style.display = 'block'; content.style.display = 'none'; return;
   }
-  empty.style.display = 'none';
-  content.style.display = 'grid';
+  empty.style.display = 'none'; content.style.display = 'grid';
 
-  const lines = document.getElementById('lines');
-  let total = 0;
+  const lines = document.getElementById('lines'); let total = 0;
   lines.innerHTML = cart.items.map(it => {
     const meta = types.get(Number(it.ticket_type_id)) || { name: 'Ticket', price_cents: 0 };
     const lineTotal = (meta.price_cents||0) * (it.qty||0);
@@ -107,52 +103,48 @@ function render(cart, types){
   document.getElementById('total').textContent = rands(total);
 }
 
-function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-
-async function submitCheckout(cart){
+async function submit(cart, mode){
   const msg = document.getElementById('msg');
   msg.className = 'muted'; msg.textContent = 'Besig…';
 
   const body = {
     event_id: cart.event_id,
-    items: cart.items,            // [{ticket_type_id, qty}]
+    items: cart.items,
     contact: {
       first_name: document.getElementById('firstName').value || '',
       last_name:  document.getElementById('lastName').value || '',
       email:      document.getElementById('email').value || '',
       phone:      document.getElementById('phone').value || ''
-    }
-    // delivery: 'email'  // WhatsApp soon
+    },
+    mode
   };
 
   const res = await fetch('/api/public/checkout', {
-    method:'POST',
-    headers:{'content-type':'application/json'},
-    body: JSON.stringify(body)
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)
   }).then(r=>r.json()).catch(()=>({ok:false,error:'Network error'}));
 
-  if (!res.ok){
-    msg.className = 'err';
-    msg.textContent = res.error || 'Kon nie voortgaan nie.';
-    return;
-  }
+  if (!res.ok){ msg.className='err'; msg.textContent = res.error || 'Kon nie voortgaan nie.'; return; }
 
-  msg.className = 'ok';
-  msg.textContent = 'Bestelling geskep.';
   try { sessionStorage.removeItem('pending_cart'); } catch(_){}
-  if (res.payment_url) location.href = res.payment_url;
+
+  if (mode === 'pay_later') {
+    msg.className='ok'; msg.textContent='Bestelling geskep.';
+    const el = document.getElementById('pickup');
+    el.style.display='block';
+    el.textContent = 'Jou versamelkode: ' + res.pickup_code + '. Wys dit by die hek om te betaal en jou kaartjies te ontvang.';
+  } else {
+    location.href = res.payment_url; // replace with Yoco Hosted URL when wired
+  }
 }
 
 (async function init(){
   const cart = loadCart();
   const cat = await fetchCatalog(slug);
-  if (!cart || !cat){ 
-    document.getElementById('empty').style.display = 'block';
-    return;
-  }
+  if (!cart || !cat){ document.getElementById('empty').style.display = 'block'; return; }
   render(cart, cat.types);
   document.getElementById('content').style.display = 'grid';
-  document.getElementById('payBtn').onclick = ()=> submitCheckout(cart);
+  document.getElementById('payNowBtn').onclick  = ()=> submit(cart, 'pay_now');
+  document.getElementById('payLaterBtn').onclick= ()=> submit(cart, 'pay_later');
 })();
 </script>
 </body></html>`;
