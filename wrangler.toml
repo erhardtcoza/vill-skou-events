@@ -29,3 +29,11 @@ APP_NAME = "Villiersdorp Skou Tickets"
 [[routes]]
 pattern = "events.villiersdorpskou.co.za/*"
 zone_name = "villiersdorpskou.co.za"
+
+[[routes]]
+pattern = "events.villiersdorpskou.co.za"
+custom_domain = true
+
+[observability.logs]
+enabled = true
+
