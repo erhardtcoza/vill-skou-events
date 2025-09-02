@@ -109,7 +109,6 @@ async function load() {
   const ev = await fetch('/api/admin/events').then(r=>r.json());
   _events = ev.events || [];
   renderEventsTable();
-
   setEventSelect();
 
   const gs = await fetch('/api/admin/gates').then(r=>r.json());
@@ -197,10 +196,7 @@ async function saveEdit(){
   if (endMs < startMs) { setEdMsg('End date cannot be before start date', false); return; }
 
   const galLines = document.getElementById('ed_gallery').value
-    .split(/\\r?\\n/)
-    .map(s=>s.trim())
-    .filter(Boolean)
-    .slice(0,8);
+    .split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean).slice(0,8);
 
   const b = {
     slug: v('ed_slug'),
@@ -244,10 +240,10 @@ async function addTT(){
   if (!isFinite(priceRand) || priceRand < 0) { document.getElementById('ttmsg').textContent = 'Invalid price.'; return; }
   const price_cents = Math.round(priceRand * 100); // 0 = FREE
 
-  const b = { 
-    name, 
+  const b = {
+    name,
     price_cents,
-    requires_gender: document.getElementById('ttGen').checked 
+    requires_gender: document.getElementById('ttGen').checked
   };
 
   const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
@@ -262,7 +258,22 @@ async function addTT(){
 // Helpers
 function v(id){return document.getElementById(id).value}
 function msg(id, o){ const el = document.getElementById(id); el.textContent = JSON.stringify(o,null,2); el.className = o.ok ? 'ok' : 'err'; }
-async function post(url, body){ return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()) }
+
+// Improved fetch helper: handles non-JSON responses gracefully
+async function post(url, body){
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type':'application/json' },
+    body: JSON.stringify(body)
+  });
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok:false, error: text || (r.status+' '+r.statusText) };
+  }
+}
+
 function tryParseJSON(s){ try{ return JSON.parse(s); }catch(_){ return null; } }
 
 load();
