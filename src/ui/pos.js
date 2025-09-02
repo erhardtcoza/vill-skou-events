@@ -14,6 +14,7 @@ export const posHTML = () => `<!doctype html><html><head>
   .row{ display:flex; gap:10px; flex-wrap:wrap }
   .btn{ padding:12px 16px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
   .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .btn[disabled]{ opacity:.5; cursor:not-allowed }
   .muted{ color:var(--muted) }
   .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px }
   .pill{ border:1px solid #e5e7eb; border-radius:999px; padding:14px 16px; text-align:center; cursor:pointer; user-select:none }
@@ -25,9 +26,11 @@ export const posHTML = () => `<!doctype html><html><head>
   .danger{ background:#8b0000; color:#fff; border-color:transparent }
   .ok{ color:var(--green) } .err{ color:#b00020 }
   .tiny{ font-size:12px }
+  .selected{ outline:3px solid var(--green); }
 </style>
 </head><body><div class="wrap">
 
+  <!-- Screen: Start Shift -->
   <div id="screen-start" class="card">
     <h1>Begin skof</h1>
     <div class="row">
@@ -47,6 +50,7 @@ export const posHTML = () => `<!doctype html><html><head>
     </div>
   </div>
 
+  <!-- Screen: Sell -->
   <div id="screen-sell" style="display:none">
     <div class="card topbar">
       <div class="row" style="align-items:center">
@@ -82,23 +86,28 @@ export const posHTML = () => `<!doctype html><html><head>
     </div>
   </div>
 
+  <!-- Screen: Payment (mandatory method + purchaser info) -->
   <div id="screen-pay" class="card" style="display:none">
     <h2>Betaling</h2>
-    <div class="row">
+    <div class="sumtotal" id="payTotal">R0.00</div>
+    <p class="muted tiny">Kies betaalmetode:</p>
+    <div class="row" style="margin:10px 0">
       <button class="btn" id="payCash">Kontant</button>
       <button class="btn" id="payCard">Kaart</button>
     </div>
-    <div class="row" style="margin-top:12px">
+    <p class="muted tiny">Kliënt besonderhede:</p>
+    <div class="row" style="margin-top:8px">
       <label style="flex:2">Naam <input id="cName"/></label>
       <label style="flex:2">Selfoon <input id="cPhone"/></label>
     </div>
-    <div class="row">
-      <button class="btn primary" id="btnComplete">Voltooi</button>
+    <div class="row" style="margin-top:16px">
+      <button class="btn primary" id="btnComplete" disabled>Voltooi</button>
       <button class="btn" id="btnBackSell">Terug</button>
       <span id="payMsg" class="muted"></span>
     </div>
   </div>
 
+  <!-- Screen: End Shift -->
   <div id="screen-end" class="card" style="display:none">
     <h2>Beëindig skof</h2>
     <label>Bestuurder Naam <input id="mName" placeholder="Manager"/></label>
@@ -122,18 +131,19 @@ let state = {
   mode: 'new',     // 'new' or 'recall'
   recalledOrder: null
 };
+let _payMethod = null;
 
-// Load gates & event & ticket types
+/* ---------- Bootstrapping ---------- */
 async function boot(prefCashier, prefGate){
   const body = { cashier_name: prefCashier||'', gate_id: prefGate||null };
-  const r = await fetch('/api/pos/bootstrap',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
+  const r = await fetch('/api/pos/bootstrap',{
+    method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)
+  }).then(r=>r.json()).catch(()=>({ok:false}));
   const gateSel = document.getElementById('iGate');
   gateSel.innerHTML = (r.gates||[]).map(g=>'<option value="'+g.id+'">'+g.name+'</option>').join('');
   if (prefGate) gateSel.value = String(prefGate);
-
   state.event = r.event;
   state.ticketTypes = r.ticket_types||[];
-
   if (r.session){
     state.session = r.session;
     state.gateId = r.session.gate_id;
@@ -144,6 +154,7 @@ async function boot(prefCashier, prefGate){
 }
 boot();
 
+/* ---------- Rendering ---------- */
 function renderCart(){
   let total=0;
   const lines=[];
@@ -161,7 +172,9 @@ function renderCart(){
 
 function renderPills(){
   const p = document.getElementById('pills');
-  p.innerHTML = state.ticketTypes.map(t=> '<div class="pill" data-id="'+t.id+'">'+t.name+'<br><span class="muted tiny">'+(t.price_cents?R(t.price_cents):'FREE')+'</span></div>').join('');
+  p.innerHTML = state.ticketTypes.map(t=> 
+    '<div class="pill" data-id="'+t.id+'">'+t.name+'<br><span class="muted tiny">'+(t.price_cents?R(t.price_cents):'FREE')+'</span></div>'
+  ).join('');
   p.querySelectorAll('.pill').forEach(el=>{
     el.onclick = ()=>{
       const id = Number(el.getAttribute('data-id'));
@@ -178,74 +191,53 @@ function gotoSell(){
   document.getElementById('screen-pay').style.display='none';
   document.getElementById('screen-end').style.display='none';
   document.getElementById('screen-sell').style.display='block';
-  document.getElementById('who').textContent = 'Kassier: '+state.session.cashier_name+' · Ingang: '+document.getElementById('iGate').selectedOptions[0].textContent;
+  document.getElementById('who').textContent =
+    'Kassier: '+state.session.cashier_name+' · Ingang: '+document.getElementById('iGate').selectedOptions[0].textContent;
   document.getElementById('evName').textContent = state.event?state.event.name:'';
   document.getElementById('evMeta').textContent = state.event ? new Date(state.event.starts_at*1000).toLocaleDateString() : '';
   renderPills(); renderCart();
 }
 
+/* ---------- Start Shift ---------- */
 document.getElementById('btnStart').onclick = async ()=>{
   const cashier = document.getElementById('iCashier').value.trim();
   const gate_id = Number(document.getElementById('iGate').value||0);
   const opening = Number(document.getElementById('iFloat').value||0);
   const msg = document.getElementById('startMsg');
   if (!cashier || !gate_id){ msg.textContent='Vul naam en ingang in.'; return; }
-  const r = await fetch('/api/pos/sessions/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({cashier_name:cashier,gate_id,opening_float_rands:opening})}).then(r=>r.json());
+  const r = await fetch('/api/pos/sessions/start',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify({cashier_name:cashier,gate_id,opening_float_rands:opening})
+  }).then(r=>r.json()).catch(()=>({ok:false}));
   if (!r.ok){ msg.textContent = r.error||'Kon nie begin nie'; return; }
   state.session = { id:r.session_id, cashier_name:cashier, gate_id };
   state.gateId = gate_id;
   gotoSell();
 };
 
+/* ---------- Sell / Cart ---------- */
 document.getElementById('btnClear').onclick = ()=>{ state.cart.clear(); renderCart(); };
 
 document.getElementById('btnProcess').onclick = ()=>{
   if (!state.cart.size && !state.recalledOrder){ alert('Geen items nie.'); return; }
+  // reset payment screen
+  _payMethod=null;
+  document.getElementById('payCash').classList.remove('primary','selected');
+  document.getElementById('payCard').classList.remove('primary','selected');
+  document.getElementById('cName').value='';
+  document.getElementById('cPhone').value='';
+  updatePayScreen();
   document.getElementById('screen-sell').style.display='none';
   document.getElementById('screen-pay').style.display='block';
 };
 
-document.getElementById('btnBackSell').onclick = ()=>{ document.getElementById('screen-pay').style.display='none'; document.getElementById('screen-sell').style.display='block'; };
-
-let _payMethod = 'pos_cash';
-document.getElementById('payCash').onclick = ()=>{ _payMethod='pos_cash'; };
-document.getElementById('payCard').onclick = ()=>{ _payMethod='pos_card'; };
-
-document.getElementById('btnComplete').onclick = async ()=>{
-  const payMsg = document.getElementById('payMsg');
-  payMsg.textContent = 'Besig…';
-
-  // If we recalled an order: update items (if cart changed), then settle.
-  if (state.recalledOrder) {
-    const id = state.recalledOrder.order.id;
-    // update items to match cart
-    const items = Array.from(state.cart.entries()).map(([ticket_type_id, qty])=>({ticket_type_id, qty}));
-    await fetch('/api/pos/orders/'+id+'/update-items',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({items})}).then(r=>r.json()).catch(()=>({ok:false}));
-    const settle = await fetch('/api/pos/orders/'+id+'/settle',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method:_payMethod, session_id: state.session.id})}).then(r=>r.json());
-    if (!settle.ok){ payMsg.textContent = settle.error||'Kon nie afhandel nie'; return; }
-    payMsg.textContent='Klaar!'; state.cart.clear(); state.recalledOrder=null; gotoSell(); return;
-  }
-
-  // New walk-up order: create a "pay at event" order and immediately settle under the POS session
-  // 1) create temporary order via public checkout pay_later
-  const items = Array.from(state.cart.entries()).map(([ticket_type_id, qty])=>({ticket_type_id, qty}));
-  if (!items.length){ payMsg.textContent='Geen items.'; return; }
-  const create = await fetch('/api/public/checkout',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({event_id: state.event.id, items, contact:{ name:document.getElementById('cName').value||'', phone:document.getElementById('cPhone').value||'' }, mode:'pay_later'})}).then(r=>r.json());
-  if (!create.ok){ payMsg.textContent=create.error||'Kon nie order skep nie'; return; }
-
-  // 2) settle it
-  const settle = await fetch('/api/pos/orders/'+create.order_id+'/settle',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({method:_payMethod, session_id: state.session.id})}).then(r=>r.json());
-  if (!settle.ok){ payMsg.textContent = settle.error||'Kon nie afhandel nie'; return; }
-
-  payMsg.textContent='Klaar!'; state.cart.clear(); gotoSell();
-};
-
+/* ---------- Recall Order ---------- */
 document.getElementById('btnRecall').onclick = async ()=>{
   const code = document.getElementById('code').value.trim();
   const m = document.getElementById('recallMsg');
   if (!code){ m.textContent='Voer kode in'; return; }
   m.textContent='…';
-  const r = await fetch('/api/pos/orders/lookup/'+encodeURIComponent(code)).then(r=>r.json());
+  const r = await fetch('/api/pos/orders/lookup/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
   if (!r.ok){ m.textContent=r.error||'Nie gevind nie'; return; }
   // move items into cart for editing
   state.cart.clear();
@@ -256,25 +248,119 @@ document.getElementById('btnRecall').onclick = async ()=>{
   renderCart();
 };
 
+/* ---------- Payment Screen (mandatory) ---------- */
+function updatePayScreen(){
+  // Compute total from cart
+  let total=0;
+  for (const [id, qty] of state.cart.entries()){
+    const tt = state.ticketTypes.find(t=>Number(t.id)===Number(id));
+    if (!tt) continue;
+    total += (Number(tt.price_cents)||0) * qty;
+  }
+  document.getElementById('payTotal').textContent = R(total);
+
+  const name = document.getElementById('cName').value.trim();
+  const phone = document.getElementById('cPhone').value.trim();
+  const ready = !!_payMethod && (name || phone) && total > 0;
+  document.getElementById('btnComplete').disabled = !ready;
+}
+
+// Selectors for method (visual feedback)
+document.getElementById('payCash').onclick = ()=>{
+  _payMethod='pos_cash';
+  document.getElementById('payCash').classList.add('primary','selected');
+  document.getElementById('payCard').classList.remove('primary','selected');
+  updatePayScreen();
+};
+document.getElementById('payCard').onclick = ()=>{
+  _payMethod='pos_card';
+  document.getElementById('payCard').classList.add('primary','selected');
+  document.getElementById('payCash').classList.remove('primary','selected');
+  updatePayScreen();
+};
+
+// Watch purchaser inputs
+['cName','cPhone'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', updatePayScreen);
+});
+
+// Back to sell
+document.getElementById('btnBackSell').onclick = ()=>{
+  document.getElementById('screen-pay').style.display='none';
+  document.getElementById('screen-sell').style.display='block';
+};
+
+/* ---------- Complete Payment ---------- */
+document.getElementById('btnComplete').onclick = async ()=>{
+  const payMsg = document.getElementById('payMsg');
+  payMsg.textContent = 'Besig…';
+
+  // Recalled order: update items then settle
+  if (state.recalledOrder) {
+    const id = state.recalledOrder.order.id;
+    const items = Array.from(state.cart.entries()).map(([ticket_type_id, qty])=>({ticket_type_id, qty}));
+    const u = await fetch('/api/pos/orders/'+id+'/update-items',{
+      method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({items})
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+    if (!u.ok){ payMsg.textContent = u.error||'Kon nie opdateer nie'; return; }
+
+    const settle = await fetch('/api/pos/orders/'+id+'/settle',{
+      method:'POST', headers:{'content-type':'application/json'},
+      body:JSON.stringify({method:_payMethod, session_id: state.session.id})
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+    if (!settle.ok){ payMsg.textContent = settle.error||'Kon nie afhandel nie'; return; }
+
+    payMsg.textContent='Klaar!';
+    state.cart.clear(); state.recalledOrder=null; _payMethod=null;
+    gotoSell(); return;
+  }
+
+  // New walk-up order: create pay_later order via public checkout, then settle
+  const items = Array.from(state.cart.entries()).map(([ticket_type_id, qty])=>({ticket_type_id, qty}));
+  if (!items.length){ payMsg.textContent='Geen items.'; return; }
+
+  const create = await fetch('/api/public/checkout',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify({
+      event_id: state.event.id,
+      items,
+      contact:{ name:document.getElementById('cName').value||'', phone:document.getElementById('cPhone').value||'' },
+      mode:'pay_later'
+    })
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!create.ok){ payMsg.textContent=create.error||'Kon nie order skep nie'; return; }
+
+  const settle = await fetch('/api/pos/orders/'+create.order_id+'/settle',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body:JSON.stringify({method:_payMethod, session_id: state.session.id})
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!settle.ok){ payMsg.textContent = settle.error||'Kon nie afhandel nie'; return; }
+
+  payMsg.textContent='Klaar!';
+  state.cart.clear(); _payMethod=null;
+  gotoSell();
+};
+
+/* ---------- End Shift ---------- */
 document.getElementById('btnEnd').onclick = ()=>{
   document.getElementById('screen-end').style.display='block';
   document.getElementById('screen-sell').style.display='none';
 };
-
 document.getElementById('btnCancelEnd').onclick = ()=>{
   document.getElementById('screen-end').style.display='none';
   document.getElementById('screen-sell').style.display='block';
 };
-
 document.getElementById('btnRealEnd').onclick = async ()=>{
   const m = document.getElementById('endMsg');
   const name = document.getElementById('mName').value.trim();
   m.textContent='…';
-  const r = await fetch('/api/pos/sessions/'+state.session.id+'/end',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({manager_name:name})}).then(r=>r.json());
+  const r = await fetch('/api/pos/sessions/'+state.session.id+'/end',{
+    method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({manager_name:name})
+  }).then(r=>r.json()).catch(()=>({ok:false}));
   if (!r.ok){ m.textContent = r.error||'Kon nie beëindig nie'; return; }
   m.textContent='Skof klaar.';
-  // Return to start
-  state.session=null; state.cart.clear();
+  // Reset to start
+  state.session=null; state.cart.clear(); _payMethod=null;
   document.getElementById('screen-end').style.display='none';
   document.getElementById('screen-start').style.display='block';
 };
