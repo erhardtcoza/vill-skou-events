@@ -27,6 +27,16 @@ export function mountPublic(router) {
     return json({ ok: true, ...cat });
   });
 
+// Public gates list for login suggestions
+router.add("GET", "/api/public/gates", async (_req, env) => {
+  try {
+    const rows = await env.DB.prepare("SELECT name FROM gates ORDER BY id ASC").all();
+    return json({ ok:true, gates: (rows.results||[]).map(r=>({ name:r.name })) });
+  } catch(e) {
+    return json({ ok:false, error:String(e) }, 500);
+  }
+});
+
   // Ticket lookup by QR payload (your tickets table uses `qr` as the unique code)
   router.add("GET", "/api/public/tickets/:qr", async (_req, env, _ctx, { qr }) => {
     try {
