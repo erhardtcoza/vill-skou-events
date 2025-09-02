@@ -1,35 +1,79 @@
-import { q, qi } from "../env.js";
-import { issueTickets } from "./tickets.js";
+// /src/services/orders.js
 
-export async function createOnlineOrder(db, secret, payload) {
-  // Payment is assumed successful (Yoco hosted/app — we just trust webhook/ref later if needed)
-  const { event_id, items, buyer, attendees } = payload;
-  const total = await priceOfItems(db, items);
-  const order_id = await qi(db, `
-    INSERT INTO orders (event_id,channel,payment_method,payment_ref,amount_cents,status,buyer_name,buyer_email,buyer_phone)
-    VALUES (?,?,?,?,?,'paid',?,?,?)`,
-    event_id, "online", "yoco", payload.payment_ref||null, total, buyer?.name||null, buyer?.email||null, buyer?.phone||null);
-  const tickets = await issueTickets(db, payload.secret || secret, order_id, event_id, items, attendees||[]);
-  return { order_id, total, tickets };
-}
+function nowSec() { return Math.floor(Date.now() / 1000); }
+function shortCode() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
 
-export async function createPOSOrder(db, secret, payload) {
-  const { event_id, items, cashier_id, gate_id, payment_method, payment_ref, buyer, attendees } = payload;
-  const total = await priceOfItems(db, items);
-  const order_id = await qi(db, `
-    INSERT INTO orders (event_id,channel,payment_method,payment_ref,amount_cents,status,buyer_name,buyer_email,buyer_phone,gate_id,cashier_id)
-    VALUES (?,?,?,?,?,'paid',?,?,?,?,?)`,
-    event_id, "pos", payment_method, payment_ref||null, total, buyer?.name||null, buyer?.email||null, buyer?.phone||null, gate_id||null, cashier_id||null);
-  const tickets = await issueTickets(db, secret, order_id, event_id, items, attendees||[]);
-  return { order_id, total, tickets };
-}
+// Resolve ticket_type prices on the server and compute total
+async function pricedItems(db, event_id, items) {
+  const ids = items.map(i => Number(i.ticket_type_id)).filter(Boolean);
+  if (!ids.length) return { lines: [], total: 0 };
 
-async function priceOfItems(db, items) {
+  const qMarks = ids.map(() => "?").join(",");
+  const list = await db
+    .prepare(`SELECT id, price_cents FROM ticket_types WHERE event_id=? AND id IN (${qMarks})`)
+    .bind(event_id, ...ids)
+    .all();
+
+  const priceMap = new Map();
+  for (const r of (list.results || [])) priceMap.set(Number(r.id), Number(r.price_cents) || 0);
+
   let total = 0;
-  for (const it of items) {
-    const row = (await q(db, "SELECT price_cents FROM ticket_types WHERE id=?", it.ticket_type_id))[0];
-    if (!row) throw new Error("Unknown ticket type");
-    total += row.price_cents * (it.qty||1);
+  const lines = [];
+  for (const i of items) {
+    const ttId = Number(i.ticket_type_id);
+    const qty = Math.max(0, Number(i.qty) || 0);
+    if (!ttId || !qty) continue;
+    const price = priceMap.get(ttId) ?? 0;
+    total += price * qty;
+    lines.push({ ticket_type_id: ttId, qty, price_cents: price });
   }
-  return total;
+  return { lines, total };
+}
+
+// PAY LATER: create order with short pickup code
+export async function createOrderPayLater(db, body) {
+  const { lines, total } = await pricedItems(db, body.event_id, body.items);
+  if (!lines.length) throw new Error("No items");
+
+  const sc = shortCode();
+
+  await db
+    .prepare(`INSERT INTO orders (short_code, event_id, status, total_cents, contact_json, created_at)
+              VALUES (?, ?, 'awaiting_payment', ?, ?, ?)`)
+    .bind(sc, body.event_id, total, JSON.stringify(body.contact || {}), nowSec())
+    .run();
+
+  const row = await db.prepare("SELECT last_insert_rowid() AS id").first();
+  const order_id = row?.id;
+
+  const ins = await db.prepare(
+    "INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents) VALUES (?, ?, ?, ?)"
+  );
+  for (const li of lines) await ins.bind(order_id, li.ticket_type_id, li.qty, li.price_cents).run();
+
+  return { order_id, short_code: sc };
+}
+
+// PAY NOW: create pending order and return a (stub) payment URL for now
+export async function createOrderPayNow(db, body, _env) {
+  const { lines, total } = await pricedItems(db, body.event_id, body.items);
+  if (!lines.length) throw new Error("No items");
+
+  await db
+    .prepare(`INSERT INTO orders (event_id, status, total_cents, contact_json, created_at, payment_method)
+              VALUES (?, 'pending', ?, ?, ?, 'online_yoco')`)
+    .bind(body.event_id, total, JSON.stringify(body.contact || {}), nowSec())
+    .run();
+
+  const row = await db.prepare("SELECT last_insert_rowid() AS id").first();
+  const order_id = row?.id;
+
+  const ins = await db.prepare(
+    "INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents) VALUES (?, ?, ?, ?)"
+  );
+  for (const li of lines) await ins.bind(order_id, li.ticket_type_id, li.qty, li.price_cents).run();
+
+  // TODO: Replace with Yoco Hosted Payment URL once available
+  const payment_url = `/shop/thank-you?order=${order_id}`;
+  return { order_id, payment_url };
 }
