@@ -4,22 +4,18 @@ import { json, bad } from "../utils/http.js";
 function now(){ return Math.floor(Date.now()/1000); }
 
 export function mountPOS(router) {
-  // Bootstrap POS (active event, gates, ticket types, and any open session for this gate/cashier if provided)
+  // Bootstrap POS
   router.add("POST", "/api/pos/bootstrap", async (req, env) => {
     const body = await req.json().catch(()=>({})) || {};
-    // get latest active event
     const ev = await env.DB
       .prepare("SELECT id, slug, name, starts_at, ends_at FROM events WHERE status='active' ORDER BY starts_at ASC LIMIT 1")
       .first();
-
     const tts = ev
       ? await env.DB.prepare("SELECT id, name, price_cents FROM ticket_types WHERE event_id=? ORDER BY id")
           .bind(ev.id).all()
       : { results: [] };
-
     const gates = await env.DB.prepare("SELECT id, name FROM gates ORDER BY id").all();
 
-    // try to locate any open session if gate_id+cashier_name matches (optional)
     let session = null;
     if (body.cashier_name && body.gate_id) {
       session = await env.DB
@@ -31,7 +27,7 @@ export function mountPOS(router) {
     return json({ ok:true, event: ev||null, ticket_types: tts.results||[], gates: gates.results||[], session });
   });
 
-  // Start a POS session
+  // Start session
   router.add("POST", "/api/pos/sessions/start", async (req, env) => {
     const b = await req.json().catch(()=>null);
     if (!b?.cashier_name || !b?.gate_id) return bad("Missing cashier_name or gate_id");
@@ -44,7 +40,7 @@ export function mountPOS(router) {
     return json({ ok:true, session_id: row.id });
   });
 
-  // End a POS session (cashier cannot see totals; just close)
+  // End session
   router.add("POST", "/api/pos/sessions/:id/end", async (req, env, _ctx, { id }) => {
     const b = await req.json().catch(()=> ({}));
     await env.DB
@@ -54,9 +50,7 @@ export function mountPOS(router) {
     return json({ ok:true });
   });
 
-  // === ORDER RECALL & SETTLEMENT ===
-
-  // Lookup an awaiting-payment order by its short pickup code
+  // Recall order
   router.add("GET", "/api/pos/orders/lookup/:code", async (_req, env, _ctx, { code }) => {
     try {
       const o = await env.DB
@@ -70,7 +64,6 @@ export function mountPOS(router) {
         .prepare(`SELECT ticket_type_id, qty, price_cents FROM order_items WHERE order_id=? ORDER BY id ASC`)
         .bind(o.id).all();
 
-      // enrich with ticket names
       const ids = (items.results||[]).map(r=>r.ticket_type_id);
       let names = new Map();
       if (ids.length) {
@@ -86,17 +79,15 @@ export function mountPOS(router) {
     }
   });
 
-  // Update items on recalled order (allow cashier to amend quantities)
+  // Update items on recalled order
   router.add("POST", "/api/pos/orders/:id/update-items", async (req, env, _ctx, { id }) => {
     const b = await req.json().catch(()=>null);
     if (!b || !Array.isArray(b.items)) return bad("Invalid items");
 
-    // delete previous items; re-insert with server prices
     const order = await env.DB.prepare("SELECT event_id, status FROM orders WHERE id=?").bind(Number(id)).first();
     if (!order) return bad("Order not found", 404);
     if (order.status === 'paid') return bad("Order already paid", 400);
 
-    // resolve prices
     const ids = b.items.map(i=>Number(i.ticket_type_id)).filter(Boolean);
     const q = ids.length ? ids.map(()=>'?').join(',') : 'NULL';
     const priceRows = ids.length
@@ -122,28 +113,41 @@ export function mountPOS(router) {
     return json({ ok:true, total_cents: total });
   });
 
-  // Settle a pay-later order at the gate (cash or card) and record POS payment
+  // === Settle pay-later at POS: mark paid, record payment, ISSUE TICKETS ===
   router.add("POST", "/api/pos/orders/:id/settle", async (req, env, _ctx, { id }) => {
     const body = await req.json().catch(() => ({}));
     const method = body.method === "pos_card" ? "pos_card" : "pos_cash";
     const ref = body.payment_ref || "";
     const session_id = Number(body.session_id)||0;
 
-    const o = await env.DB.prepare("SELECT status, total_cents FROM orders WHERE id=?").bind(Number(id)).first();
-    if (!o) return bad("Order not found", 404);
-    if (o.status === 'paid') return json({ ok:true, already:true });
+    try {
+      const o = await env.DB.prepare("SELECT status, total_cents FROM orders WHERE id=?").bind(Number(id)).first();
+      if (!o) return bad("Order not found", 404);
 
-    await env.DB
-      .prepare(`UPDATE orders SET status='paid', payment_method=?, payment_ref=?, paid_at=? WHERE id=?`)
-      .bind(method, ref, now(), Number(id))
-      .run();
+      if (o.status !== 'paid') {
+        await env.DB
+          .prepare(`UPDATE orders SET status='paid', payment_method=?, payment_ref=?, paid_at=? WHERE id=?`)
+          .bind(method, ref, now(), Number(id))
+          .run();
+      }
 
-    await env.DB
-      .prepare("INSERT INTO pos_payments (session_id, order_id, method, amount_cents, created_at) VALUES (?,?,?,?,?)")
-      .bind(session_id, Number(id), method, Number(o.total_cents)||0, now())
-      .run();
+      await env.DB
+        .prepare("INSERT INTO pos_payments (session_id, order_id, method, amount_cents, created_at) VALUES (?,?,?,?,?)")
+        .bind(session_id, Number(id), method, Number(o.total_cents)||0, now())
+        .run();
 
-    // TODO: issue tickets + deliver
-    return json({ ok:true });
+      // >>> NEW: issue tickets (idempotent)
+      const { ensureTicketsIssuedForOrder, deliverTickets, listTicketsForOrder } = await import("../services/tickets.js");
+      const issued = await ensureTicketsIssuedForOrder(env.DB, Number(id));
+
+      // Optional (stub): send WhatsApp/email later
+      try { await deliverTickets(env, Number(id), issued); } catch(_e){/* ignore for now */ }
+
+      // Return links for convenience in POS (could be shown to customer if needed)
+      const links = (issued||[]).map(t => ({ qr: t.qr, link: `/t/${encodeURIComponent(t.qr)}` }));
+      return json({ ok:true, tickets: links });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
   });
 }
