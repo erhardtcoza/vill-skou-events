@@ -1,147 +1,227 @@
 // /src/routes/admin.js
 import { json, bad } from "../utils/http.js";
-import { createEvent, listEvents, addTicketType, getCatalog } from "../services/events.js";
-import { q, qi } from "../env.js";
 
+/**
+ * Admin API:
+ * - Events CRUD (slug/name/venue/start/end/status + hero_url/poster_url/gallery_urls)
+ * - Gates (list/add)
+ * - Ticket Types (robust insert; no NULL explosions)
+ * - Site Settings (get/put; key/value table)
+ */
 export function mountAdmin(router) {
-  // ----- Events -----
+  /* ----------------------- SETTINGS ----------------------- */
 
-  // List events
+  // GET all settings as an object
+  router.add("GET", "/api/admin/settings", async (_req, env) => {
+    try {
+      const res = await env.DB.prepare("SELECT key, value FROM settings").all();
+      const settings = {};
+      for (const r of res.results || []) settings[r.key] = r.value;
+      return json({ ok: true, settings });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
+
+  // PUT selected settings (site_title, logo_url, favicon_url)
+  router.add("PUT", "/api/admin/settings", async (req, env) => {
+    let body;
+    try { body = await req.json(); } catch { return bad("Invalid JSON"); }
+    const pairs = [
+      ["site_title", body?.site_title ?? ""],
+      ["logo_url", body?.logo_url ?? ""],
+      ["favicon_url", body?.favicon_url ?? ""],
+    ];
+    try {
+      const stmt = await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
+      for (const [k, v] of pairs) await stmt.bind(k, String(v)).run();
+      return json({ ok: true });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
+
+  /* ----------------------- EVENTS ------------------------- */
+
+  // List all events (admin view)
   router.add("GET", "/api/admin/events", async (_req, env) => {
-    const events = await listEvents(env.DB);
-    return json({ ok: true, events });
+    try {
+      const res = await env.DB
+        .prepare(`SELECT id, slug, name, venue, starts_at, ends_at, status, hero_url, poster_url, gallery_urls
+                  FROM events ORDER BY starts_at ASC`)
+        .all();
+      return json({ ok: true, events: res.results || [] });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
   });
 
   // Create event
   router.add("POST", "/api/admin/events", async (req, env) => {
-    const b = await req.json().catch(() => null);
-    if (!b?.slug || !b?.name || !b?.starts_at || !b?.ends_at) {
-      return bad("Missing fields");
+    let b;
+    try { b = await req.json(); } catch { return bad("Invalid JSON"); }
+
+    if (!b?.slug || !b?.name) return bad("slug and name required");
+    if (!Number.isFinite(b?.starts_at) || !Number.isFinite(b?.ends_at)) return bad("starts_at/ends_at invalid");
+
+    const status = b.status || "active";
+    try {
+      await env.DB
+        .prepare(`INSERT INTO events (slug, name, venue, starts_at, ends_at, status, hero_url, poster_url, gallery_urls)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .bind(
+          String(b.slug).trim(),
+          String(b.name).trim(),
+          (b.venue ?? null),
+          Math.floor(b.starts_at),
+          Math.floor(b.ends_at),
+          status,
+          b.hero_url ?? null,
+          b.poster_url ?? null,
+          b.gallery_urls ?? null
+        )
+        .run();
+
+      const row = await env.DB.prepare("SELECT last_insert_rowid() AS id").first();
+      return json({ ok: true, id: row?.id ?? null });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
     }
-    const id = await createEvent(env.DB, b);
-    return json({ ok: true, id });
   });
 
-  // Read one event (for edit panel)
+  // Read single event
   router.add("GET", "/api/admin/events/:id", async (_req, env, _ctx, { id }) => {
-    const rows = await q(env.DB, "SELECT * FROM events WHERE id=?", Number(id));
-    if (!rows[0]) return bad("Not found", 404);
-    return json({ ok: true, event: rows[0] });
-  });
-
-  // Update event (supports hero/poster/gallery/status)
-  router.add("PUT", "/api/admin/events/:id", async (req, env, _ctx, { id }) => {
-    const b = await req.json().catch(() => null);
-    if (!b) return bad("Invalid body");
-
-    const fields = [
-      "slug",
-      "name",
-      "venue",
-      "starts_at",
-      "ends_at",
-      "status",
-      "hero_url",
-      "poster_url",
-      "gallery_urls",
-    ];
-    const set = [];
-    const args = [];
-    for (const f of fields) {
-      if (b[f] !== undefined) {
-        set.push(`${f}=?`);
-        args.push(b[f]);
-      }
+    try {
+      const ev = await env.DB
+        .prepare(`SELECT id, slug, name, venue, starts_at, ends_at, status, hero_url, poster_url, gallery_urls
+                  FROM events WHERE id=?`)
+        .bind(Number(id))
+        .first();
+      if (!ev) return bad("Event not found", 404);
+      return json({ ok: true, event: ev });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
     }
-    if (!set.length) return bad("No changes");
-
-    args.push(Number(id));
-    await env.DB.prepare(`UPDATE events SET ${set.join(", ")}, updated_at=unixepoch() WHERE id=?`)
-      .bind(...args)
-      .run();
-
-    const rows = await q(env.DB, "SELECT * FROM events WHERE id=?", Number(id));
-    return json({ ok: true, event: rows[0] });
   });
 
-  // Delete event
+  // Update event
+  router.add("PUT", "/api/admin/events/:id", async (req, env, _ctx, { id }) => {
+    let b;
+    try { b = await req.json(); } catch { return bad("Invalid JSON"); }
+
+    // Validate (dates required by UI; keep robust)
+    if (!b?.slug || !b?.name) return bad("slug and name required");
+    if (!Number.isFinite(b?.starts_at) || !Number.isFinite(b?.ends_at)) return bad("starts_at/ends_at invalid");
+
+    try {
+      await env.DB
+        .prepare(`UPDATE events
+                  SET slug=?, name=?, venue=?, starts_at=?, ends_at=?, status=?,
+                      hero_url=?, poster_url=?, gallery_urls=?
+                  WHERE id=?`)
+        .bind(
+          String(b.slug).trim(),
+          String(b.name).trim(),
+          (b.venue ?? null),
+          Math.floor(b.starts_at),
+          Math.floor(b.ends_at),
+          (b.status || "active"),
+          b.hero_url ?? null,
+          b.poster_url ?? null,
+          b.gallery_urls ?? null,
+          Number(id)
+        )
+        .run();
+      return json({ ok: true });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
+
+  // Delete event (and its ticket types)
   router.add("DELETE", "/api/admin/events/:id", async (_req, env, _ctx, { id }) => {
-    await env.DB.prepare("DELETE FROM events WHERE id=?").bind(Number(id)).run();
-    return json({ ok: true });
+    try {
+      const eid = Number(id);
+      await env.DB.prepare("DELETE FROM ticket_types WHERE event_id=?").bind(eid).run();
+      await env.DB.prepare("DELETE FROM events WHERE id=?").bind(eid).run();
+      return json({ ok: true });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
   });
 
-  // Catalog (event + ticket types) by event id
-  router.add("GET", "/api/admin/events/:id/catalog", async (_req, env, _ctx, { id }) => {
-    const cat = await getCatalog(env.DB, Number(id));
-    return json({ ok: true, ...cat });
+  /* ----------------------- GATES -------------------------- */
+
+  // List gates
+  router.add("GET", "/api/admin/gates", async (_req, env) => {
+    try {
+      const res = await env.DB.prepare("SELECT id, name FROM gates ORDER BY id ASC").all();
+      return json({ ok: true, gates: res.results || [] });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
   });
 
-  // ----- Ticket Types -----
+  // Add gate
+  router.add("POST", "/api/admin/gates", async (req, env) => {
+    let b;
+    try { b = await req.json(); } catch { return bad("Invalid JSON"); }
+    const name = (b?.name || "").trim();
+    if (!name) return bad("name required");
+    try {
+      await env.DB.prepare("INSERT INTO gates (name) VALUES (?)").bind(name).run();
+      const row = await env.DB.prepare("SELECT last_insert_rowid() AS id").first();
+      return json({ ok: true, id: row?.id ?? null });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
 
-  // Create ticket type (FREE=0, optional gender, optional capacity)
+  /* -------------------- TICKET TYPES ---------------------- */
+
+  // Create ticket type (robust: defaults, no NULLs)
   router.add("POST", "/api/admin/events/:id/ticket-types", async (req, env, _ctx, { id }) => {
-    const b = await req.json().catch(() => null);
+    let b;
+    try { b = await req.json(); } catch { return bad("Invalid JSON"); }
     if (!b || !b.name) return bad("name required");
 
-    const centsNum = Number(b.price_cents);
-    const price_cents =
-      Number.isFinite(centsNum) && centsNum >= 0 ? Math.round(centsNum) : 0;
+    const pcRaw = Number(b.price_cents);
+    const price_cents = Number.isFinite(pcRaw) && pcRaw >= 0 ? Math.round(pcRaw) : 0;
 
     const capRaw = b.capacity;
-    const capNum =
-      capRaw === undefined || capRaw === null || capRaw === "" ? null : Number(capRaw);
-    const capacity = Number.isFinite(capNum) && capNum >= 0 ? capNum : null;
+    const capNum = (capRaw === undefined || capRaw === null || capRaw === "") ? 0 : Number(capRaw);
+    const capacity = Number.isFinite(capNum) && capNum >= 0 ? capNum : 0;
 
-    const requires_gender = !!b.requires_gender;
+    const requires_gender = b.requires_gender ? 1 : 0;
 
-    const payload = {
-      event_id: Number(id),
-      name: String(b.name).trim(),
-      price_cents,
-      requires_gender,
-      capacity,
-    };
+    try {
+      // Ensure event exists
+      const ev = await env.DB.prepare("SELECT id FROM events WHERE id=?").bind(Number(id)).first();
+      if (!ev) return bad("Event not found", 404);
 
-    const ttId = await addTicketType(env.DB, payload);
-    return json({ ok: true, id: ttId });
-  });
+      // Insert
+      await env.DB
+        .prepare("INSERT INTO ticket_types (event_id, name, price_cents, requires_gender, capacity) VALUES (?, ?, ?, ?, ?)")
+        .bind(ev.id, String(b.name).trim(), price_cents, requires_gender, capacity)
+        .run();
 
-  // ----- Gates -----
-
-  router.add("GET", "/api/admin/gates", async (_req, env) => {
-    const gates = await q(env.DB, "SELECT * FROM gates ORDER BY id");
-    return json({ ok: true, gates });
-  });
-
-  router.add("POST", "/api/admin/gates", async (req, env) => {
-    const b = await req.json().catch(() => null);
-    if (!b?.name) return bad("name required");
-    const gid = await qi(env.DB, "INSERT INTO gates (name) VALUES (?)", b.name);
-    return json({ ok: true, id: gid });
-  });
-
-  // ----- Site Settings -----
-
-  router.add("GET", "/api/admin/settings", async (_req, env) => {
-    const rows = await env.DB.prepare("SELECT key, value FROM settings").all();
-    const s = {};
-    for (const r of (rows.results || [])) s[r.key] = r.value;
-    return json({ ok: true, settings: s });
-  });
-
-  router.add("PUT", "/api/admin/settings", async (req, env) => {
-    const body = await req.json().catch(() => null);
-    if (!body || typeof body !== "object") return bad("Invalid body");
-
-    const entries = Object.entries(body).filter(([k]) => typeof k === "string");
-    if (!entries.length) return json({ ok: true });
-
-    const stmt = await env.DB.prepare(
-      "INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value"
-    );
-    for (const [k, v] of entries) {
-      await stmt.bind(k, v ?? "").run();
+      const row = await env.DB.prepare("SELECT last_insert_rowid() AS id").first();
+      return json({ ok: true, id: row?.id ?? null });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
     }
-    return json({ ok: true });
+  });
+
+  // (Optional) list ticket types per event for admin inspection
+  router.add("GET", "/api/admin/events/:id/ticket-types", async (_req, env, _ctx, { id }) => {
+    try {
+      const res = await env.DB
+        .prepare("SELECT id, name, price_cents, requires_gender, capacity FROM ticket_types WHERE event_id=? ORDER BY id ASC")
+        .bind(Number(id))
+        .all();
+      return json({ ok: true, ticket_types: res.results || [] });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
   });
 }
