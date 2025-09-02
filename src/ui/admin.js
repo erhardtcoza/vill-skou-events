@@ -191,4 +191,80 @@ async function saveEdit(){
   const id = Number(document.getElementById('ed_id').value||0);
   if (!id) return;
 
-  const startMs
+  const startMs = parseLocalDateToMs(document.getElementById('ed_start').value, false);
+  const endMs   = parseLocalDateToMs(document.getElementById('ed_end').value, true);
+  if (!isFinite(startMs) || !isFinite(endMs)) { setEdMsg('Please set valid dates', false); return; }
+  if (endMs < startMs) { setEdMsg('End date cannot be before start date', false); return; }
+
+  const galLines = document.getElementById('ed_gallery').value
+    .split(/\\r?\\n/)
+    .map(s=>s.trim())
+    .filter(Boolean)
+    .slice(0,8);
+
+  const b = {
+    slug: v('ed_slug'),
+    name: v('ed_name'),
+    venue: v('ed_venue'),
+    starts_at: Math.floor(startMs/1000),
+    ends_at: Math.floor(endMs/1000),
+    hero_url: v('ed_hero') || null,
+    poster_url: v('ed_poster') || null,
+    gallery_urls: JSON.stringify(galLines)
+  };
+
+  const r = await fetch('/api/admin/events/'+id, {
+    method:'PUT',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify(b)
+  }).then(r=>r.json());
+
+  setEdMsg(r.ok ? 'Saved' : (r.error||'Save failed'), r.ok);
+  if (r.ok) { await load(); cancelEdit(); }
+}
+
+async function deleteEvent(id){
+  if (!confirm('Delete this event? This cannot be undone.')) return;
+  const r = await fetch('/api/admin/events/'+id, { method:'DELETE' }).then(r=>r.json());
+  if (!r.ok) return alert('Delete failed');
+  await load();
+}
+
+function setEdMsg(t, ok){ const el=document.getElementById('edmsg'); el.textContent=t; el.className = ok?'ok':'err'; }
+
+// Ticket Types (Rand input, FREE if blank/0; no capacity)
+async function addTT(){
+  const eventId = Number(document.getElementById('evSelect').value || 0);
+  if (!eventId) { document.getElementById('ttmsg').textContent = 'Please create/select an event first.'; return; }
+
+  const name = v('ttName').trim();
+  const randStr = (document.getElementById('ttPriceRand').value || '').trim();
+  const priceRand = randStr ? Number(randStr) : 0;
+  if (!name) { document.getElementById('ttmsg').textContent = 'Name is required.'; return; }
+  if (!isFinite(priceRand) || priceRand < 0) { document.getElementById('ttmsg').textContent = 'Invalid price.'; return; }
+  const price_cents = Math.round(priceRand * 100); // 0 = FREE
+
+  const b = { 
+    name, 
+    price_cents,
+    requires_gender: document.getElementById('ttGen').checked 
+  };
+
+  const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
+  document.getElementById('ttmsg').textContent = r.ok ? (price_cents ? 'Added' : 'Added (FREE)') : (r.error||'Add failed');
+  if (r.ok) {
+    document.getElementById('ttName').value = '';
+    document.getElementById('ttPriceRand').value = '';
+    document.getElementById('ttGen').checked = false;
+  }
+}
+
+// Helpers
+function v(id){return document.getElementById(id).value}
+function msg(id, o){ const el = document.getElementById(id); el.textContent = JSON.stringify(o,null,2); el.className = o.ok ? 'ok' : 'err'; }
+async function post(url, body){ return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()) }
+function tryParseJSON(s){ try{ return JSON.parse(s); }catch(_){ return null; } }
+
+load();
+</script>
+</div></body></html>`;
