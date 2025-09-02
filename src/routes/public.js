@@ -27,6 +27,33 @@ export function mountPublic(router) {
     return json({ ok: true, ...cat });
   });
 
+// Ticket lookup (by code)
+router.add("GET", "/api/public/tickets/:code", async (req, env, ctx, { code }) => {
+  // Expect your DB has tickets with a unique code or serial and a relation to orders/events
+  const t = await env.DB.prepare(
+    `SELECT t.id, t.code, t.serial, t.holder_name, t.state, t.gate_name, t.scan_payload,
+            t.ticket_type_id, t.order_id
+     FROM tickets t WHERE t.code = ?1`
+  ).bind(code).first();
+
+  if (!t) return bad("Ticket not found", 404);
+
+  const tt = await env.DB.prepare(
+    `SELECT id, name, price_cents FROM ticket_types WHERE id = ?1`
+  ).bind(t.ticket_type_id).first();
+
+  const order = await env.DB.prepare(
+    `SELECT id, short_code, buyer_name, buyer_email, buyer_phone, event_id
+     FROM orders WHERE id = ?1`
+  ).bind(t.order_id).first();
+
+  const ev = order ? await env.DB.prepare(
+    `SELECT id, slug, name, venue, starts_at, ends_at, hero_url FROM events WHERE id = ?1`
+  ).bind(order.event_id).first() : null;
+
+  return json({ ok:true, ticket:t, ticket_type:tt||null, order:order||null, event:ev||null });
+});
+  
   // Checkout: create order either pay-now (Yoco) or pay-later (pickup code)
   router.add("POST", "/api/public/checkout", async (req, env) => {
     const body = await req.json().catch(() => null);
