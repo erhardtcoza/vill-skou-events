@@ -1,175 +1,76 @@
-// /src/ui/admin.js
-export const adminHTML = () => `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Admin · Villiersdorp Skou</title>
-<style>
-  body{font-family:system-ui;margin:0;background:#fff}
-  .wrap{max-width:1000px;margin:20px auto;padding:16px}
-  h2{margin-top:28px}
-  input,button,select{padding:10px;border:1px solid #ccc;border-radius:8px;margin:4px}
-  table{width:100%;border-collapse:collapse} td,th{padding:8px;border-bottom:1px solid #eee}
-  .row{display:flex;gap:8px;flex-wrap:wrap}
-  .muted{color:#6b7280}
-  .err{color:#b00020}
-  .ok{color:#0a7d2b}
-</style></head><body><div class="wrap">
-<h1>Admin</h1>
+// /src/routes/admin.js
+import { json, bad } from "../utils/http.js";
+import { createEvent, listEvents, addTicketType, getCatalog } from "../services/events.js";
+import { q, qi } from "../env.js";
 
-<section>
-  <h2>Create Event</h2>
-  <div class="row">
-    <input id="slug" placeholder="slug (e.g. skou-2025)"/>
-    <input id="name" placeholder="Event name" />
-    <input id="venue" placeholder="Venue" />
-    <!-- Dates only -->
-    <label>Start date <input id="startDate" type="date"/></label>
-    <label>End date <input id="endDate" type="date"/></label>
-    <button onclick="createEvt()">Create</button>
-  </div>
-  <pre id="evmsg"></pre>
-</section>
+export function mountAdmin(router) {
+  // List events
+  router.add("GET", "/api/admin/events", async (req, env) =>
+    json({ ok: true, events: await listEvents(env.DB) })
+  );
 
-<section>
-  <h2>Events</h2>
-  <table id="events"></table>
-</section>
+  // Create event
+  router.add("POST", "/api/admin/events", async (req, env) => {
+    const b = await req.json().catch(() => null);
+    if (!b?.slug || !b?.name || !b?.starts_at || !b?.ends_at) return bad("Missing fields");
+    const id = await createEvent(env.DB, b);
+    return json({ ok: true, id });
+  });
 
-<section>
-  <h2>Gates</h2>
-  <div class="row">
-    <input id="gatename" placeholder="New gate name"/>
-    <button onclick="addGate()">Add gate</button>
-  </div>
-  <ul id="gates"></ul>
-</section>
+  // Read one (for editing)
+  router.add("GET", "/api/admin/events/:id", async (req, env, ctx, { id }) => {
+    const rows = await q(env.DB, "SELECT * FROM events WHERE id=?", Number(id));
+    if (!rows[0]) return bad("Not found", 404);
+    return json({ ok: true, event: rows[0] });
+  });
 
-<section>
-  <h2>Add Ticket Type</h2>
-  <div class="row">
-    <label class="muted">Event
-      <select id="evSelect"></select>
-    </label>
-    <input id="ttName" placeholder="name"/>
-    <input id="ttPrice" type="number" placeholder="price cents"/>
-    <input id="ttCap" type="number" placeholder="capacity"/>
-    <label>Gender?
-      <input id="ttGen" type="checkbox"/>
-    </label>
-    <button onclick="addTT()">Add</button>
-  </div>
-  <p class="muted" id="ttmsg"></p>
-</section>
+  // Update event (name/slug/venue/dates/status + images)
+  router.add("PUT", "/api/admin/events/:id", async (req, env, ctx, { id }) => {
+    const b = await req.json().catch(() => null);
+    if (!b) return bad("Invalid body");
+    const fields = [
+      "slug","name","venue","starts_at","ends_at","status",
+      "hero_url","poster_url","gallery_urls"
+    ];
+    const set = [];
+    const args = [];
+    for (const f of fields) {
+      if (b[f] !== undefined) { set.push(`${f}=?`); args.push(b[f]); }
+    }
+    if (!set.length) return bad("No changes");
+    args.push(Number(id));
+    await env.DB.prepare(`UPDATE events SET ${set.join(", ")}, updated_at=unixepoch() WHERE id=?`).bind(...args).run();
+    const rows = await q(env.DB, "SELECT * FROM events WHERE id=?", Number(id));
+    return json({ ok: true, event: rows[0] });
+  });
 
-<script>
-let _events = [];
+  // Delete event
+  router.add("DELETE", "/api/admin/events/:id", async (req, env, ctx, { id }) => {
+    await env.DB.prepare("DELETE FROM events WHERE id=?").bind(Number(id)).run();
+    return json({ ok: true });
+  });
 
-function parseLocalDateToMs(dateStr, endOfDay=false){
-  if (!dateStr) return NaN;
-  const [y,m,d] = dateStr.split('-').map(n=>parseInt(n,10));
-  if (!y || !m || !d) return NaN;
-  const dt = endOfDay ? new Date(y, m-1, d, 23, 59, 0, 0) : new Date(y, m-1, d, 0, 0, 0, 0);
-  return dt.getTime();
+  // Add ticket type (we’ll switch UI to rands later; backend still expects cents)
+  router.add("POST", "/api/admin/events/:id/ticket-types", async (req, env, ctx, { id }) => {
+    const b = await req.json().catch(() => null);
+    if (!b?.name || !b?.price_cents /* capacity optional now */) return bad("Missing fields");
+    const ttId = await addTicketType(env.DB, { ...b, event_id: Number(id) });
+    return json({ ok: true, id: ttId });
+  });
+
+  // Catalog
+  router.add("GET", "/api/admin/events/:id/catalog", async (req, env, ctx, { id }) =>
+    json({ ok: true, ...(await getCatalog(env.DB, Number(id))) })
+  );
+
+  // Gates
+  router.add("GET", "/api/admin/gates", async (req, env) =>
+    json({ ok: true, gates: await q(env.DB,"SELECT * FROM gates ORDER BY id") })
+  );
+  router.add("POST", "/api/admin/gates", async (req, env) => {
+    const b = await req.json().catch(() => null);
+    if (!b?.name) return bad("name required");
+    const gid = await qi(env.DB, "INSERT INTO gates (name) VALUES (?)", b.name);
+    return json({ ok: true, id: gid });
+  });
 }
-
-async function load() {
-  const ev = await fetch('/api/admin/events').then(r=>r.json());
-  _events = ev.events || [];
-  document.getElementById('events').innerHTML =
-    '<tr><th>ID</th><th>Slug</th><th>Name</th><th>Starts</th><th>Ends</th></tr>' +
-    _events.map(e=>\`<tr><td>\${e.id}</td><td>\${e.slug}</td><td>\${e.name}</td>
-    <td>\${new Date(e.starts_at*1000).toLocaleString()}</td>
-    <td>\${new Date(e.ends_at*1000).toLocaleString()}</td></tr>\`).join('');
-  setEventSelect();
-  const gs = await fetch('/api/admin/gates').then(r=>r.json());
-  document.getElementById('gates').innerHTML = gs.gates.map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
-}
-
-function setEventSelect(preferId){
-  const sel = document.getElementById('evSelect');
-  const eventsSorted = [..._events].sort((a,b)=> (b.starts_at||0) - (a.starts_at||0));
-  sel.innerHTML = eventsSorted.map(e=>\`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`).join('') || '<option value="">No events</option>';
-  if (preferId) sel.value = String(preferId);
-  if (!sel.value && eventsSorted.length) sel.value = String(eventsSorted[0].id);
-}
-
-// RENAMED to avoid clashing with document.createEvent
-async function createEvt(){
-  const startMs = parseLocalDateToMs(document.getElementById('startDate').value, false);
-  const endMs   = parseLocalDateToMs(document.getElementById('endDate').value, true);
-
-  if (!isFinite(startMs) || !isFinite(endMs)) {
-    msg('evmsg', { ok:false, error:'Please select valid start and end dates (YYYY-MM-DD)' });
-    return;
-  }
-  if (endMs < startMs) {
-    msg('evmsg', { ok:false, error:'End date cannot be before start date' });
-    return;
-  }
-
-  const b = {
-    slug: v('slug'),
-    name: v('name'),
-    venue: v('venue'),
-    starts_at: Math.floor(startMs / 1000),
-    ends_at:   Math.floor(endMs   / 1000),
-    status: 'active'
-  };
-
-  const r = await post('/api/admin/events', b);
-  msg('evmsg', r);
-  if (r.ok) {
-    await load();
-    setEventSelect(r.id);
-    document.getElementById('slug').value = '';
-    document.getElementById('name').value = '';
-    document.getElementById('venue').value = '';
-    document.getElementById('startDate').value = '';
-    document.getElementById('endDate').value = '';
-  }
-}
-
-async function addTT(){
-  const eventId = Number(document.getElementById('evSelect').value || 0);
-  if (!eventId) { document.getElementById('ttmsg').textContent = 'Please create/select an event first.'; return; }
-
-  const b = { 
-    name: v('ttName'), 
-    price_cents: +v('ttPrice'), 
-    capacity: +v('ttCap'), 
-    requires_gender: document.getElementById('ttGen').checked 
-  };
-  if (!b.name || !b.price_cents || !b.capacity) {
-    document.getElementById('ttmsg').textContent = 'Name, price, and capacity are required.';
-    return;
-  }
-
-  const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
-  document.getElementById('ttmsg').textContent = JSON.stringify(r);
-  if (r.ok) {
-    document.getElementById('ttName').value = '';
-    document.getElementById('ttPrice').value = '';
-    document.getElementById('ttCap').value = '';
-    document.getElementById('ttGen').checked = false;
-  }
-}
-
-async function addGate(){ 
-  const r = await post('/api/admin/gates', {name:v('gatename')}); 
-  alert(JSON.stringify(r)); 
-  load(); 
-}
-
-function v(id){return document.getElementById(id).value}
-function msg(id, o){ 
-  const el = document.getElementById(id);
-  el.textContent = JSON.stringify(o,null,2);
-  el.className = o.ok ? 'ok' : 'err';
-}
-async function post(url, body){ 
-  return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
-    .then(r=>r.json()) 
-}
-
-load();
-</script>
-</div></body></html>`;
