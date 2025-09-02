@@ -1,18 +1,82 @@
-export const landingHTML = () => `<!doctype html>
-<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Villiersdorp Skou Tickets</title>
+// /src/ui/landing.js
+export const landingHTML = () => `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Villiersdorp Skou — Tickets</title>
 <style>
-  body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#f7faf7;margin:0;color:#123}
-  .wrap{max-width:920px;margin:40px auto;padding:24px}
-  a.btn{display:inline-block;margin:8px 8px 0 0;padding:12px 16px;border-radius:10px;background:#0a7d2b;color:#fff;text-decoration:none}
-  header h1{margin:0 0 6px} header small{color:#456}
-</style></head>
-<body><div class="wrap">
-  <header><h1>Villiersdorp Skou — Tickets</h1><small>Online sales · POS · Gate scanning</small></header>
-  <p>Choose a console:</p>
-  <p>
-    <a class="btn" href="/admin">Admin</a>
-    <a class="btn" href="/pos">POS</a>
-    <a class="btn" href="/scan">Scanner</a>
-  </p>
-</div></body></html>`;
+  :root{ --green:#0a7d2b; --yellow:#ffd900; --bg:#f7f7f8; --muted:#667085; }
+  *{ box-sizing:border-box }
+  body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#1a1a1a }
+  header{ background:linear-gradient(90deg,var(--green),var(--yellow)); color:#fff; padding:28px 16px }
+  .hero{ max-width:1200px; margin:0 auto; display:flex; justify-content:space-between; gap:16px; align-items:center }
+  .hero h1{ margin:0 0 6px; font-size:28px }
+  .hero small{ opacity:.95 }
+  nav a{ color:#0b2; background:#ffffff10; padding:10px 14px; border:1px solid #ffffff33; border-radius:10px; text-decoration:none; margin-left:8px }
+  .wrap{ max-width:1200px; margin:20px auto; padding:0 16px }
+  h2{ margin:8px 0 12px }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.08); overflow:hidden; display:flex; flex-direction:column }
+  .poster{ background:linear-gradient(135deg,#e6ffe6,#fffad1); height:160px; display:flex; align-items:center; justify-content:center; color:#123; font-weight:700; letter-spacing:.4px }
+  .body{ padding:14px; flex:1; display:flex; flex-direction:column; gap:6px }
+  .title{ font-weight:700; font-size:18px; margin:0 0 2px }
+  .meta{ color:var(--muted); font-size:14px }
+  .actions{ padding:14px; display:flex; gap:10px }
+  .btn{ flex:1; display:inline-block; text-align:center; padding:12px 14px; border-radius:10px; text-decoration:none; font-weight:600; }
+  .primary{ background:var(--green); color:#fff }
+  .ghost{ border:1px solid #e5e7eb; color:#111; background:#fff }
+</style>
+</head><body>
+<header>
+  <div class="hero">
+    <div>
+      <h1>Villiersdorp Skou — Tickets</h1>
+      <small>Opkomende vertonings · Koop aanlyn · POS · Toegangsbeheer</small>
+    </div>
+    <nav>
+      <a href="/admin">Admin</a>
+      <a href="/pos">POS</a>
+      <a href="/scan">Scanner</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <h2>Opkomende Vertonings</h2>
+  <div id="grid" class="grid">Loading…</div>
+</div>
+
+<script>
+function fmtDateRange(s,e){
+  const sdt = new Date(s*1000), edt=new Date(e*1000);
+  const opts = { weekday:'short', day:'2-digit', month:'short' };
+  const time = { hour:'2-digit', minute:'2-digit' };
+  const sameDay = sdt.toDateString() === edt.toDateString();
+  return sameDay
+    ? sdt.toLocaleDateString(undefined, opts) + " " + sdt.toLocaleTimeString(undefined, time)
+    : sdt.toLocaleDateString(undefined, opts) + " – " + edt.toLocaleDateString(undefined, opts);
+}
+function cardHTML(ev){
+  const when = fmtDateRange(ev.starts_at, ev.ends_at);
+  const v = ev.venue ? ' · ' + ev.venue : '';
+  return \`
+    <div class="card">
+      <div class="poster">\${ev.name.charAt(0).toUpperCase()}</div>
+      <div class="body">
+        <div class="title">\${ev.name}</div>
+        <div class="meta">\${when}\${v}</div>
+      </div>
+      <div class="actions">
+        <a class="btn ghost" href="/shop/\${ev.slug}">Info</a>
+        <a class="btn primary" href="/shop/\${ev.slug}">Kaartjies</a>
+      </div>
+    </div>\`;
+}
+async function load(){
+  const res = await fetch('/api/public/events').then(r=>r.json()).catch(()=>({ok:false}));
+  const grid = document.getElementById('grid');
+  if (!res.ok){ grid.textContent = 'Kon nie laai nie'; return; }
+  if (!res.events.length){ grid.textContent = 'Geen vertonings tans'; return; }
+  grid.innerHTML = res.events.map(cardHTML).join('');
+}
+load();
+</script>
+</body></html>`;
