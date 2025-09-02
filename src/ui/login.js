@@ -16,22 +16,37 @@ export const loginHTML = (role) => `<!doctype html><html><head>
   <h1>${role.toUpperCase()} Login</h1>
   <label>Name (optional)</label>
   <input id="name" placeholder="Your name"/>
+  ${role === 'scan' ? `
+    <label>Gate</label>
+    <input id="gate" list="gates" placeholder="Select or type gate name"/>
+    <datalist id="gates"></datalist>
+  ` : ``}
   <label>Access token</label>
   <input id="token" placeholder="${role.toUpperCase()}_TOKEN" />
   <button id="go">Sign In</button>
   <small>Need help? Ask an admin for the ${role.toUpperCase()} token.</small>
 </div>
 <script>
+async function loadGates(){
+  if ('${role}'!=='scan') return;
+  try{
+    const r = await fetch('/api/public/gates').then(r=>r.json());
+    const list = (r.gates||[]).map(g=>'<option value="'+g.name+'">').join('');
+    document.getElementById('gates').innerHTML = list;
+  }catch{}
+}
 document.getElementById('go').onclick = async () => {
   const token = document.getElementById('token').value.trim();
   const name  = document.getElementById('name').value.trim();
+  const gate  = '${role}'==='scan' ? (document.getElementById('gate').value.trim()) : '';
+  if ('${role}'==='scan' && !gate) { alert('Please choose a gate'); return; }
   const res = await fetch('/api/auth/login', {
     method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({ role: '${role}', token, name })
+    body: JSON.stringify({ role: '${role}', token, name, gate_name: gate })
   }).then(r=>r.json()).catch(()=>({ok:false}));
   if (!res.ok) return alert(res.error||'Login failed');
-  // redirect based on role
   location.href = ${role === 'admin' ? '"/admin"' : role === 'pos' ? '"/pos"' : '"/scan"'};
 };
+loadGates();
 </script>
 </body></html>`;
