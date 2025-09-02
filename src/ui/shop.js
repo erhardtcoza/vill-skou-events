@@ -1,270 +1,245 @@
 // /src/ui/shop.js
 export const shopHTML = (slug) => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${slug} · Villiersdorp Skou</title>
+<title>Event · Villiersdorp Skou</title>
 <style>
-  :root{
-    --skou-green:#0a7d2b; --skou-yellow:#ffd900; --grey-1:#f7f7f8; --grey-2:#eef0f2; --text:#222; --muted:#666; --red:#b91c1c;
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  *{ box-sizing:border-box }
+  body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#111 }
+  .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
+
+  /* HERO (use contain so nothing gets cropped) */
+  .hero{
+    position:relative; border-radius:14px; overflow:hidden; background:#111;
+    display:flex; align-items:flex-end; min-height:160px;
   }
-  *{box-sizing:border-box}
-  body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--grey-1);margin:0;color:var(--text)}
-  .hero{position:relative;background:#e9f5eb;color:#fff}
-  .hero .img{width:100%;height:220px;object-fit:cover;display:block;filter:brightness(.75)}
-  .hero .wrap{position:absolute;inset:0;display:flex;align-items:flex-end}
-  .hero .inner{max-width:1100px;margin:0 auto;padding:16px;display:flex;gap:16px;align-items:flex-end;width:100%}
-  .poster{width:160px;height:110px;background:#ffffff55;border-radius:10px;overflow:hidden;flex:0 0 auto;border:1px solid #ffffff66}
-  .poster img{width:100%;height:100%;object-fit:cover;display:block}
-  .meta{color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.4)}
-  .meta h1{margin:0 0 6px;font-size:28px}
-  .meta small{opacity:.95}
-  .ribbon{position:absolute;top:12px;left:12px;background:var(--red);color:#fff;font-weight:700;padding:6px 10px;border-radius:999px;box-shadow:0 4px 12px rgba(0,0,0,.2)}
+  .hero img{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:contain; object-position:center; /* IMPORTANT: no cropping */
+    background:#111; /* letterbox behind */
+  }
+  .hero .meta{
+    position:relative; z-index:1; color:#fff;
+    width:100%; padding:18px;
+    background:linear-gradient(0deg,rgba(0,0,0,.55),rgba(0,0,0,0));
+  }
+  .hero h1{ margin:0 0 6px; font-size:28px }
+  .muted{ color:#9aa3af }
 
-  .page{max-width:1100px;margin:18px auto;padding:0 16px;display:grid;grid-template-columns:1.5fr .9fr;gap:20px}
-  .card{background:#fff;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.06);padding:18px}
-  .muted{color:var(--muted);font-size:14px}
+  /* LAYOUT */
+  .grid{ display:grid; grid-template-columns: 1.35fr .9fr; gap:16px; margin-top:14px }
+  @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
 
-  .notice{background:#fff1f1;border:1px solid #ffd2d2;color:#7a1c1c;padding:10px 12px;border-radius:10px;margin-bottom:10px}
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
 
-  .gallery{display:flex;flex-direction:column;gap:10px}
-  .gallery-main{position:relative;border-radius:12px;overflow:hidden;background:#000}
-  .gallery-main img{width:100%;height:360px;object-fit:cover;display:block}
-  .gallery-thumbs{display:flex;gap:8px;overflow:auto;padding-bottom:4px}
-  .gallery-thumbs img{width:90px;height:60px;object-fit:cover;border-radius:8px;cursor:pointer;border:2px solid transparent}
-  .gallery-thumbs img.active{border-color:var(--skou-green)}
-
-  .ticket{display:grid;grid-template-columns:1fr 140px 140px;gap:10px;align-items:center;border-bottom:1px solid var(--grey-2);padding:12px 0}
-  .ticket:last-child{border-bottom:none}
-  .name{font-weight:600}
-  .price{font-variant-numeric:tabular-nums;color:#000}
-  .price.free{color:#0a7d2b;font-weight:700}
-  .qty{display:flex;align-items:center;gap:6px;justify-content:flex-end}
-  .qty button{width:32px;height:32px;border:none;border-radius:8px;background:var(--grey-2);cursor:pointer}
-  .qty input{width:56px;text-align:center;padding:8px;border:1px solid var(--grey-2);border-radius:8px}
-
-  .summary .row{display:flex;justify-content:space-between;margin:8px 0}
-  .summary .total{font-size:20px;font-weight:700}
-  .btn{display:inline-block;background:var(--skou-green);color:#fff;text-decoration:none;border:none;border-radius:10px;padding:12px 16px;cursor:pointer}
-  .btn[disabled]{opacity:.45;cursor:not-allowed}
-  .sticky{position:sticky;top:16px}
-
+  /* GALLERY (no cropping) */
+  .gallery-main{
+    position:relative; border-radius:12px; overflow:hidden; background:#111;
+    display:flex; align-items:center; justify-content:center;
+    margin-bottom:10px;
+  }
+  .gallery-main img{
+    width:100%;
+    height:auto;             /* let the image decide its height */
+    max-height:70vh;         /* but never exceed viewport */
+    display:block;
+    object-fit:contain;      /* show entire image */
+    background:#111;         /* behind transparent PNGs */
+    border-radius:12px;
+  }
   @media (max-width:900px){
-    .page{grid-template-columns:1fr}
-    .gallery-main img{height:240px}
-    .poster{display:none}
+    .gallery-main img{ max-height:60vh; }
   }
+  .thumbs{ display:flex; gap:8px; overflow:auto; padding:6px 2px }
+  .thumbs img{
+    width:88px; height:60px; object-fit:cover; border-radius:8px; cursor:pointer;
+    border:2px solid transparent; background:#eee;
+  }
+  .thumbs img.active{ border-color:#0a7d2b }
+
+  /* TICKETS */
+  h2{ margin:10px 0 12px }
+  .ticket{ display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid #f1f3f5 }
+  .ticket:last-child{ border-bottom:0 }
+  .qty{ display:flex; align-items:center; gap:8px }
+  .btn{ padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .btn:disabled{ background:#e5e7eb; color:#777; cursor:not-allowed }
+
+  .totals{ font-weight:700; font-size:20px; text-align:right }
+  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
 </style>
 </head><body>
-
-  <div class="hero">
-    <span id="closedRibbon" class="ribbon" style="display:none">Event Closed</span>
-    <img id="heroImg" class="img" alt="" />
-    <div class="wrap">
-      <div class="inner">
-        <div class="poster" id="posterBox" aria-hidden="true"></div>
-        <div class="meta">
-          <h1 id="ev-name">Loading…</h1>
-          <small id="ev-when"></small><br/>
-          <small id="ev-venue"></small>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="page">
-    <div class="card">
-      <div id="closedNotice" class="notice" style="display:none">Hierdie vertoning is afgehandel. Kaartjie-aankope is gesluit.</div>
-
-      <div class="gallery" id="gallery" style="display:none">
-        <div class="gallery-main"><img id="gMain" alt="Gallery image"></div>
-        <div class="gallery-thumbs" id="gThumbs"></div>
-      </div>
-
-      <h2 style="margin:14px 0 6px">Kaartjies</h2>
-      <div id="tickets"></div>
-      <p class="muted">Kies hoeveel kaartjies jy wil koop. Jy sal jou besonderhede op die volgende blad invoer.</p>
-    </div>
-
-    <div class="card sticky summary">
-      <h3 style="margin-top:0">Jou keuse</h3>
-      <div id="summary-list" class="muted">Geen kaartjies gekies</div>
-      <div class="row"><span>Subtotaal</span><span id="subtotal">R0.00</span></div>
-      <div class="row total"><span>Totaal</span><span id="total">R0.00</span></div>
-      <button id="checkout" class="btn" disabled>Checkout</button>
-    </div>
-  </div>
+<div class="wrap" id="app">Loading…</div>
 
 <script>
-const slug=${JSON.stringify(slug)};
-let catalog=null, selections=new Map();
-let CLOSED=false;
+const slug = ${JSON.stringify(slug)};
 
-function fmtR(c){ return 'R'+(c/100).toFixed(2); }
+function rands(cents){ return 'R' + ( (cents||0)/100 ).toFixed(2); }
 
-function fmtWhen(s,e){
-  const sdt = new Date(s*1000), edt=new Date(e*1000);
-  const sameDay = sdt.toDateString() === edt.toDateString();
-  const dopt = { weekday:'short', day:'2-digit', month:'short' };
-  const topt = { hour:'2-digit', minute:'2-digit' };
-  return sameDay
-    ? sdt.toLocaleDateString('af-ZA', dopt) + ' ' + sdt.toLocaleTimeString('af-ZA', topt)
-    : sdt.toLocaleDateString('af-ZA', dopt) + ' – ' + edt.toLocaleDateString('af-ZA', dopt);
-}
+function render(cat){
+  const ev = cat.event || {};
+  const images = (ev.gallery_urls ? tryParseJSON(ev.gallery_urls) : []) || [];
+  const hero = ev.hero_url || images[0] || ev.poster_url || '';
 
-async function load(){
-  const res = await fetch('/api/public/events/'+slug).then(r=>r.json());
-  catalog = res; const ev=res.event, types=res.types||[];
-
-  // Closed?
-  CLOSED = (ev?.ends_at||0) < Math.floor(Date.now()/1000);
-  if (CLOSED){
-    document.getElementById('closedRibbon').style.display='inline-block';
-    document.getElementById('closedNotice').style.display='block';
-  }
-
-  // Header info
-  document.getElementById('ev-name').textContent = ev.name || slug;
-  document.getElementById('ev-when').textContent = fmtWhen(ev.starts_at, ev.ends_at);
-  document.getElementById('ev-venue').textContent = ev.venue || '';
-
-  // Hero image
-  const hero = document.getElementById('heroImg');
-  if (ev.hero_url) {
-    hero.src = ev.hero_url;
-    hero.alt = ev.name || 'Event';
-  } else {
-    hero.style.background = 'linear-gradient(90deg,var(--skou-green),var(--skou-yellow))';
-    hero.style.filter = 'none';
-  }
-
-  // Poster
-  const posterBox = document.getElementById('posterBox');
-  if (ev.poster_url) {
-    const img = new Image(); img.src = ev.poster_url; img.alt = (ev.name||'') + ' poster';
-    posterBox.appendChild(img);
-  } else {
-    posterBox.style.display='none';
-  }
-
-  // Gallery
-  let gallery = [];
-  try { gallery = Array.isArray(ev.gallery_urls) ? ev.gallery_urls : JSON.parse(ev.gallery_urls||'[]'); }
-  catch(_) { gallery = []; }
-  gallery = (gallery||[]).filter(Boolean).slice(0,8);
-  if (gallery.length){
-    const gWrap = document.getElementById('gallery');
-    const gMain = document.getElementById('gMain');
-    const gThumbs = document.getElementById('gThumbs');
-    gWrap.style.display='flex';
-    let idx = 0;
-    function show(i){
-      idx = i;
-      gMain.src = gallery[i];
-      [...gThumbs.children].forEach((el,j)=> el.classList.toggle('active', j===i));
-    }
-    gallery.forEach((url,i)=>{
-      const t = new Image();
-      t.src = url; t.alt = 'Gallery '+(i+1);
-      t.onclick = ()=> show(i);
-      gThumbs.appendChild(t);
-    });
-    show(0);
-
-    // swipe support
-    let sx=0, dx=0;
-    gMain.addEventListener('touchstart', e=>{ sx = e.changedTouches[0].clientX; }, {passive:true});
-    gMain.addEventListener('touchend',   e=>{
-      dx = e.changedTouches[0].clientX - sx;
-      if (Math.abs(dx) > 40){
-        const n = (idx + (dx<0?1:-1) + gallery.length) % gallery.length;
-        show(n);
-      }
-    }, {passive:true});
-  }
-
-  renderTickets(types); updateSummary();
-}
-
-function renderTickets(types){
-  const wrap = document.getElementById('tickets'); wrap.innerHTML='';
-  if (CLOSED){
-    // Show tickets as read-only when closed
-    types.forEach(t=>{
-      const row=document.createElement('div'); row.className='ticket';
-      const isFree = !t.price_cents || t.price_cents===0;
-      const priceHTML = isFree ? '<span class="price free">FREE</span>' : '<span class="price">'+fmtR(t.price_cents)+'</span>';
-      row.innerHTML = \`
-        <div>
-          <div class="name">\${t.name}</div>
-          <div class="muted">\${t.requires_gender?'Gender required':''}</div>
-        </div>
-        <div>\${priceHTML}</div>
-        <div class="qty">
-          <button disabled>-</button>
-          <input type="number" value="0" disabled>
-          <button disabled>+</button>
-        </div>\`;
-      wrap.appendChild(row);
-    });
-    document.getElementById('checkout').textContent = 'Event Closed';
-    document.getElementById('checkout').disabled = true;
-    return;
-  }
-
-  // Normal interactive tickets
-  types.forEach(t=>{
-    const row=document.createElement('div'); row.className='ticket';
-    const isFree = !t.price_cents || t.price_cents===0;
-    const priceHTML = isFree ? '<span class="price free">FREE</span>' : '<span class="price">'+fmtR(t.price_cents)+'</span>';
-    row.innerHTML = \`
-      <div>
-        <div class="name">\${t.name}</div>
-        <div class="muted">\${t.per_order_limit ? ('Max per order: '+t.per_order_limit) : (t.requires_gender?'Gender required':'' )}</div>
+  const app = document.getElementById('app');
+  app.innerHTML = \`
+    <div class="hero">
+      \${hero ? '<img alt="" src="'+escapeHtml(hero)+'"/>' : ''}
+      <div class="meta">
+        <h1>\${escapeHtml(ev.name||'Event')}</h1>
+        <div class="muted">\${fmtWhen(ev.starts_at, ev.ends_at)}<span>\${ev.venue ? ' · '+escapeHtml(ev.venue) : ''}</span></div>
       </div>
-      <div>\${priceHTML}</div>
-      <div class="qty">
-        <button aria-label="decrease">-</button>
-        <input type="number" min="0" value="0">
-        <button aria-label="increase">+</button>
-      </div>\`;
-    const [dec,input,inc]=row.querySelectorAll('.qty *');
-    function set(v){
-      v = Math.max(0, Math.min(v, t.per_order_limit||99));
-      input.value=v;
-      if (v>0) selections.set(t.id, { name:t.name, price_cents:t.price_cents||0, qty:v, requires_gender: !!t.requires_gender, ticket_type_id:t.id });
-      else selections.delete(t.id);
-      updateSummary();
-    }
-    dec.onclick=()=>set(+input.value-1);
-    inc.onclick=()=>set(+input.value+1);
-    input.oninput=()=>set(+input.value||0);
-    wrap.appendChild(row);
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        \${renderGallery(images.length ? images : (ev.poster_url?[ev.poster_url]:[]))}
+        <h2>Kaartjies</h2>
+        <p class="muted">Kies hoeveel kaartjies jy wil koop. Jy sal jou besonderhede op die volgende blad invoer.</p>
+        <div id="tickets"></div>
+      </div>
+
+      <div class="card">
+        <h2>Jou keuse</h2>
+        <div id="cartEmpty" class="muted">Geen kaartjies gekies</div>
+        <div id="cartList"></div>
+        <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+          <span style="font-weight:700">Totaal</span>
+          <span id="total" class="totals">R0.00</span>
+        </div>
+        <div style="margin-top:12px;display:flex;justify-content:flex-start;gap:8px;flex-wrap:wrap">
+          <span id="statusPill" class="pill" style="display:none"></span>
+        </div>
+        <div style="margin-top:12px">
+          <button id="checkoutBtn" class="btn primary" disabled>Checkout</button>
+        </div>
+      </div>
+    </div>
+  \`;
+
+  renderTickets(cat.ticket_types||[]);
+  wireCart(cat.event);
+}
+
+function renderGallery(imgs){
+  if (!imgs.length) return '';
+  const first = escapeHtml(imgs[0]);
+  const thumbs = imgs.map((u,i)=>\`<img src="\${escapeHtml(u)}" data-idx="\${i}" class="\${i===0?'active':''}" alt="thumbnail"/>\`).join('');
+  return \`
+    <div class="gallery-main"><img id="gMain" src="\${first}" alt="gallery image"/></div>
+    <div class="thumbs" id="gThumbs">\${thumbs}</div>
+  \`;
+}
+
+function wireGallery(){
+  const thumbs = document.querySelectorAll('#gThumbs img');
+  const main = document.getElementById('gMain');
+  if (!thumbs || !main) return;
+  thumbs.forEach(t=>{
+    t.addEventListener('click', ()=>{
+      thumbs.forEach(x=>x.classList.remove('active'));
+      t.classList.add('active');
+      main.src = t.src;
+    });
   });
 }
 
-function updateSummary(){
-  const list=document.getElementById('summary-list');
-  if (!selections.size){ list.textContent='Geen kaartjies gekies'; }
-  else {
-    list.innerHTML = [...selections.values()].map(s=>{
-      const linePrice = (s.price_cents===0) ? 'FREE' : fmtR(s.price_cents*s.qty);
-      return \`<div class="row"><span>\${s.name} × \${s.qty}</span><span>\${linePrice}</span></div>\`;
-    }).join('');
-  }
-  let total = 0; selections.forEach(s=> total += (s.price_cents||0)*s.qty );
-  document.getElementById('subtotal').textContent = fmtR(total);
-  document.getElementById('total').textContent = fmtR(total);
-  document.getElementById('checkout').disabled = CLOSED || total===0;
-  document.getElementById('checkout').textContent = CLOSED ? 'Event Closed' : 'Checkout';
+function renderTickets(types){
+  const el = document.getElementById('tickets');
+  if (!types.length){ el.innerHTML = '<p class="muted">Geen kaartjies beskikbaar nie.</p>'; return; }
+  el.innerHTML = types.map(t => \`
+    <div class="ticket">
+      <div>
+        <div style="font-weight:600">\${escapeHtml(t.name)}</div>
+        <div class="muted">\${(t.price_cents||0) ? rands(t.price_cents) : 'FREE'}</div>
+      </div>
+      <div class="qty">
+        <button class="btn" data-dec="\${t.id}">−</button>
+        <span id="q\${t.id}">0</span>
+        <button class="btn" data-inc="\${t.id}">+</button>
+      </div>
+    </div>\`).join('');
 }
 
-// move to checkout (store cart in sessionStorage)
-document.getElementById('checkout').onclick = ()=>{
-  if (CLOSED) return;
-  const items = [...selections.values()].map(s=>({ ticket_type_id:s.ticket_type_id, qty:s.qty, requires_gender:s.requires_gender, name:s.name, price_cents:s.price_cents||0 }));
-  sessionStorage.setItem('skou_cart', JSON.stringify({ slug, event_id: catalog.event.id, items, ts: Date.now() }));
-  location.href = '/shop/'+slug+'/checkout';
-};
+function wireCart(event){
+  const state = { items:new Map(), ttypes:null, event };
+  state.ttypes = new Map((event.ticket_types||[]).map(t=>[t.id, t]));
 
+  // Inc/Dec
+  document.querySelectorAll('[data-inc]').forEach(b=>{
+    b.onclick = ()=> changeQty(state, Number(b.dataset.inc), +1);
+  });
+  document.querySelectorAll('[data-dec]').forEach(b=>{
+    b.onclick = ()=> changeQty(state, Number(b.dataset.dec), -1);
+  });
+
+  // Checkout
+  document.getElementById('checkoutBtn').onclick = ()=> {
+    const items = Array.from(state.items.entries()).map(([id,qty])=>({ ticket_type_id:id, qty }));
+    if (!items.length) return;
+    const params = new URLSearchParams({ slug: state.event.slug||'' });
+    sessionStorage.setItem('pending_cart', JSON.stringify({ event_id: state.event.id, items }));
+    location.href = '/shop/' + encodeURIComponent(state.event.slug) + '/checkout';
+  };
+
+  // After DOM finished, add gallery handlers
+  wireGallery();
+
+  // Status pill (closed?)
+  const now = Math.floor(Date.now()/1000);
+  if ((state.event.ends_at||0) < now || (state.event.status!=='active')){
+    const pill = document.getElementById('statusPill');
+    pill.textContent = 'Event Closed';
+    pill.style.display = 'inline-block';
+    document.getElementById('checkoutBtn').disabled = true;
+  }
+}
+
+function changeQty(state, id, delta){
+  const cur = state.items.get(id)||0;
+  const next = Math.max(0, cur+delta);
+  if (next===0) state.items.delete(id); else state.items.set(id,next);
+  document.getElementById('q'+id).textContent = String(next);
+
+  // Update cart
+  const list = document.getElementById('cartList');
+  const empty = document.getElementById('cartEmpty');
+  const arr = Array.from(state.items.entries());
+  empty.style.display = arr.length ? 'none' : 'block';
+
+  let total = 0;
+  list.innerHTML = arr.map(([tid,qty])=>{
+    const tt = state.ttypes.get(tid) || (state.event.ticket_types||[]).find(t=>t.id===tid) || {name:'',price_cents:0};
+    const line = qty * (tt.price_cents||0);
+    total += line;
+    return \`<div style="display:flex;justify-content:space-between;margin:6px 0">
+      <div>\${escapeHtml(tt.name)} × \${qty}</div>
+      <div>\${(tt.price_cents||0)? rands(line): 'FREE'}</div>
+    </div>\`;
+  }).join('');
+
+  document.getElementById('total').textContent = rands(total);
+  document.getElementById('checkoutBtn').disabled = total<=0 && !arr.length;
+}
+
+function fmtWhen(s,e){
+  const sdt = new Date((s||0)*1000), edt=new Date((e||0)*1000);
+  const opts = { weekday:'short', day:'2-digit', month:'short' };
+  return sdt.toLocaleDateString('af-ZA',opts) + ' – ' + edt.toLocaleDateString('af-ZA',opts);
+}
+
+function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+function tryParseJSON(s){ try{ return JSON.parse(s); }catch{ return null; } }
+
+async function load(){
+  const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!res.ok){ document.getElementById('app').textContent = 'Kon nie laai nie'; return; }
+  // attach ticket types to event for quick access in wireCart()
+  res.event = res.event || {};
+  res.event.ticket_types = res.ticket_types || [];
+  render(res);
+}
 load();
 </script>
 </body></html>`;
