@@ -3,21 +3,28 @@ export const landingHTML = () => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Villiersdorp Skou — Tickets</title>
 <style>
-  :root{ --green:#0a7d2b; --yellow:#ffd900; --bg:#f7f7f8; --muted:#667085; --red:#b91c1c; }
+  :root{ --green:#0a7d2b; --yellow:#ffd900; --bg:#f7f7f8; --muted:#667085; }
   *{ box-sizing:border-box }
   body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#1a1a1a }
   header{ background:linear-gradient(90deg,var(--green),var(--yellow)); color:#fff; padding:28px 16px }
   .hero{ max-width:1200px; margin:0 auto; display:flex; justify-content:space-between; gap:16px; align-items:center }
   .hero h1{ margin:0 0 6px; font-size:28px }
-  .hero small{ opacity:.95 }
-  nav a{ color:#0b2; background:#ffffff10; padding:10px 14px; border:1px solid #ffffff33; border-radius:10px; text-decoration:none; margin-left:8px }
+  .hero small{ opacity:.95; display:block }
+  nav a{ color:#0b2; background:#ffffff10; padding:10px 14px; border:1px solid #ffffff33; border-radius:10px; text-decoration:none; margin-left:8px; display:inline-block }
   .wrap{ max-width:1200px; margin:20px auto; padding:0 16px }
   h2{ margin:8px 0 12px }
-  .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px }
-  .card{ position:relative; background:#fff; border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.08); overflow:hidden; display:flex; flex-direction:column }
-  .badge{ position:absolute; top:10px; left:10px; background:var(--red); color:#fff; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:700; box-shadow:0 4px 10px rgba(0,0,0,.15) }
-  .poster{ height:180px; width:100%; object-fit:cover; display:block; background:linear-gradient(135deg,#e6ffe6,#fffad1) }
-  .poster.fallback{ display:flex; align-items:center; justify-content:center; color:#123; font-weight:700; letter-spacing:.4px; font-size:40px }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:18px }
+
+  .card{ background:#fff; border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.08); overflow:hidden; display:flex; flex-direction:column }
+  /* Poster area: letterboxed, no cropping */
+  .posterBox{ position:relative; background:#111; }
+  .posterBox img{
+    width:100%; height:auto; display:block;
+    object-fit:contain; object-position:center; /* no cropping */
+    max-height:220px;                           /* nice on mobile too */
+    background:#111;
+  }
+
   .body{ padding:14px; flex:1; display:flex; flex-direction:column; gap:6px }
   .title{ font-weight:700; font-size:18px; margin:0 0 2px }
   .meta{ color:var(--muted); font-size:14px }
@@ -25,9 +32,6 @@ export const landingHTML = () => `<!doctype html><html><head>
   .btn{ flex:1; display:inline-block; text-align:center; padding:12px 14px; border-radius:10px; text-decoration:none; font-weight:600; }
   .primary{ background:var(--green); color:#fff }
   .ghost{ border:1px solid #e5e7eb; color:#111; background:#fff }
-  .btn[aria-disabled="true"]{ background:#e5e7eb; color:#888; pointer-events:none }
-  .card a.card-link{ position:absolute; inset:0; outline:0; }
-  .card:focus-within{ box-shadow:0 0 0 3px #0a7d2b55; }
 </style>
 </head><body>
 <header>
@@ -53,107 +57,42 @@ export const landingHTML = () => `<!doctype html><html><head>
 function fmtDateRange(s,e){
   const sdt = new Date(s*1000), edt=new Date(e*1000);
   const opts = { weekday:'short', day:'2-digit', month:'short' };
-  const time = { hour:'2-digit', minute:'2-digit' };
-  const sameDay = sdt.toDateString() === edt.toDateString();
-  return sameDay
-    ? sdt.toLocaleDateString('af-ZA', opts) + " " + sdt.toLocaleTimeString('af-ZA', time)
-    : sdt.toLocaleDateString('af-ZA', opts) + " – " + edt.toLocaleDateString('af-ZA', opts);
+  return sdt.toLocaleDateString('af-ZA', opts) + " – " + edt.toLocaleDateString('af-ZA', opts);
 }
-function isClosed(ev){ return (ev.ends_at||0) < Math.floor(Date.now()/1000); }
-
-function posterNode(ev){
-  if (ev.poster_url) {
-    const img = document.createElement('img');
-    img.className = 'poster';
-    img.alt = (ev.name||'Event') + ' poster';
-    img.loading = 'lazy';
-    img.src = ev.poster_url;
-    img.onerror = () => {
-      const fb = document.createElement('div');
-      fb.className = 'poster fallback';
-      fb.textContent = (ev.name||'E').charAt(0).toUpperCase();
-      img.replaceWith(fb);
-    };
-    return img;
-  }
-  const fb = document.createElement('div');
-  fb.className = 'poster fallback';
-  fb.textContent = (ev.name||'E').charAt(0).toUpperCase();
-  return fb;
+function firstImage(ev){
+  // prefer poster, then hero, then first of gallery
+  if (ev.poster_url) return ev.poster_url;
+  if (ev.hero_url) return ev.hero_url;
+  try {
+    const g = ev.gallery_urls ? JSON.parse(ev.gallery_urls) : null;
+    if (Array.isArray(g) && g.length) return g[0];
+  } catch {}
+  return null;
 }
-
-function cardNode(ev){
-  const card = document.createElement('div');
-  card.className = 'card';
-
-  const link = document.createElement('a');
-  link.className = 'card-link';
-  link.href = '/shop/' + ev.slug;
-  link.setAttribute('aria-label', ev.name || 'Event');
-  card.appendChild(link);
-
-  if (isClosed(ev)){
-    const badge = document.createElement('span');
-    badge.className = 'badge';
-    badge.textContent = 'Event Closed';
-    card.appendChild(badge);
-  }
-
-  card.appendChild(posterNode(ev));
-
-  const body = document.createElement('div');
-  body.className = 'body';
-  const title = document.createElement('div');
-  title.className = 'title';
-  title.textContent = ev.name;
-  const meta = document.createElement('div');
-  meta.className = 'meta';
-  meta.textContent = fmtDateRange(ev.starts_at, ev.ends_at) + (ev.venue ? (' · ' + ev.venue) : '');
-  body.appendChild(title); body.appendChild(meta);
-  card.appendChild(body);
-
-  const actions = document.createElement('div');
-  actions.className = 'actions';
-  const info = document.createElement('a');
-  info.className = 'btn ghost';
-  info.href = '/shop/' + ev.slug;
-  info.textContent = 'Info';
-  const buy = document.createElement('a');
-  buy.className = 'btn primary';
-  if (isClosed(ev)){
-    buy.setAttribute('aria-disabled','true');
-    buy.textContent = 'Event Closed';
-  } else {
-    buy.href = '/shop/' + ev.slug;
-    buy.textContent = 'Kaartjies';
-  }
-  actions.appendChild(info); actions.appendChild(buy);
-  card.appendChild(actions);
-
-  return card;
+function cardHTML(ev){
+  const when = fmtDateRange(ev.starts_at, ev.ends_at);
+  const v = ev.venue ? ' · ' + ev.venue : '';
+  const img = firstImage(ev);
+  return \`
+    <div class="card">
+      <div class="posterBox">\${img ? '<img alt="" src="'+escapeHtml(img)+'"/>' : ''}</div>
+      <div class="body">
+        <div class="title">\${escapeHtml(ev.name)}</div>
+        <div class="meta">\${when}\${v}</div>
+      </div>
+      <div class="actions">
+        <a class="btn ghost" href="/shop/\${encodeURIComponent(ev.slug)}">Info</a>
+        <a class="btn primary" href="/shop/\${encodeURIComponent(ev.slug)}">Kaartjies</a>
+      </div>
+    </div>\`;
 }
-
+function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 async function load(){
+  const res = await fetch('/api/public/events').then(r=>r.json()).catch(()=>({ok:false}));
   const grid = document.getElementById('grid');
-  try{
-    const res = await fetch('/api/public/events');
-    const data = await res.json();
-    if (!data.ok){ grid.textContent = 'Kon nie laai nie'; return; }
-    if (!data.events.length){ grid.textContent = 'Geen vertonings tans'; return; }
-
-    // Sort: upcoming, then closed
-    const now = Math.floor(Date.now()/1000);
-    const events = data.events.slice().sort((a,b)=>{
-      const ac = (a.ends_at||0) < now, bc = (b.ends_at||0) < now;
-      if (ac !== bc) return ac ? 1 : -1;
-      return (a.starts_at||0) - (b.starts_at||0);
-    });
-
-    grid.innerHTML = '';
-    events.forEach(ev => grid.appendChild(cardNode(ev)));
-  }catch(e){
-    grid.textContent = 'Kon nie laai nie';
-  }
+  if (!res.ok){ grid.textContent = 'Kon nie laai nie'; return; }
+  if (!res.events.length){ grid.textContent = 'Geen vertonings tans'; return; }
+  grid.innerHTML = res.events.map(cardHTML).join('');
 }
 load();
 </script>
