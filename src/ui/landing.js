@@ -14,8 +14,9 @@ export const landingHTML = () => `<!doctype html><html><head>
   .wrap{ max-width:1200px; margin:20px auto; padding:0 16px }
   h2{ margin:8px 0 12px }
   .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.08); overflow:hidden; display:flex; flex-direction:column }
-  .poster{ background:linear-gradient(135deg,#e6ffe6,#fffad1); height:160px; display:flex; align-items:center; justify-content:center; color:#123; font-weight:700; letter-spacing:.4px }
+  .card{ position:relative; background:#fff; border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.08); overflow:hidden; display:flex; flex-direction:column }
+  .poster{ height:180px; width:100%; object-fit:cover; display:block; background:linear-gradient(135deg,#e6ffe6,#fffad1) }
+  .poster.fallback{ display:flex; align-items:center; justify-content:center; color:#123; font-weight:700; letter-spacing:.4px; font-size:40px }
   .body{ padding:14px; flex:1; display:flex; flex-direction:column; gap:6px }
   .title{ font-weight:700; font-size:18px; margin:0 0 2px }
   .meta{ color:var(--muted); font-size:14px }
@@ -23,6 +24,9 @@ export const landingHTML = () => `<!doctype html><html><head>
   .btn{ flex:1; display:inline-block; text-align:center; padding:12px 14px; border-radius:10px; text-decoration:none; font-weight:600; }
   .primary{ background:var(--green); color:#fff }
   .ghost{ border:1px solid #e5e7eb; color:#111; background:#fff }
+  /* Make whole card clickable & keyboard focusable */
+  .card a.card-link{ position:absolute; inset:0; outline:0; }
+  .card:focus-within{ box-shadow:0 0 0 3px #0a7d2b55; }
 </style>
 </head><body>
 <header>
@@ -51,15 +55,36 @@ function fmtDateRange(s,e){
   const time = { hour:'2-digit', minute:'2-digit' };
   const sameDay = sdt.toDateString() === edt.toDateString();
   return sameDay
-    ? sdt.toLocaleDateString(undefined, opts) + " " + sdt.toLocaleTimeString(undefined, time)
-    : sdt.toLocaleDateString(undefined, opts) + " – " + edt.toLocaleDateString(undefined, opts);
+    ? sdt.toLocaleDateString('af-ZA', opts) + " " + sdt.toLocaleTimeString('af-ZA', time)
+    : sdt.toLocaleDateString('af-ZA', opts) + " – " + edt.toLocaleDateString('af-ZA', opts);
 }
+
+function posterHTML(ev){
+  const url = ev.poster_url && String(ev.poster_url).trim();
+  if (url) {
+    const esc = url.replace(/"/g,'&quot;');
+    return '<img class="poster" src="'+esc+'" alt="'+(ev.name||"Event")+' poster" loading="lazy" onerror="this.replaceWith(fallbackPoster(\''+escapeJS(ev.name||"")+ '\'))">';
+  }
+  return '<div class="poster fallback">'+(ev.name?.charAt(0)?.toUpperCase() || 'E')+'</div>';
+}
+
+function fallbackPoster(title){
+  const div = document.createElement('div');
+  div.className = 'poster fallback';
+  div.textContent = (title||'E').charAt(0).toUpperCase();
+  return div;
+}
+
+// Used only inside posterHTML string construction
+function escapeJS(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\\"'); }
+
 function cardHTML(ev){
   const when = fmtDateRange(ev.starts_at, ev.ends_at);
   const v = ev.venue ? ' · ' + ev.venue : '';
   return \`
     <div class="card">
-      <div class="poster">\${ev.name.charAt(0).toUpperCase()}</div>
+      <a class="card-link" href="/shop/\${ev.slug}" aria-label="\${ev.name}"></a>
+      \${posterHTML(ev)}
       <div class="body">
         <div class="title">\${ev.name}</div>
         <div class="meta">\${when}\${v}</div>
@@ -70,6 +95,7 @@ function cardHTML(ev){
       </div>
     </div>\`;
 }
+
 async function load(){
   const res = await fetch('/api/public/events').then(r=>r.json()).catch(()=>({ok:false}));
   const grid = document.getElementById('grid');
