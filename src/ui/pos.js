@@ -105,7 +105,7 @@ export const posHTML = () => `<!doctype html><html><head>
 </div>
 
 <!-- CHECKOUT MODAL -->
-<div id="checkoutModal" class="modal hidden">
+<div id="checkoutModal" class="modal hidden" data-recall-code="">
   <div class="card">
     <h3>Finish Order</h3>
     <div class="split">
@@ -151,11 +151,11 @@ export const posHTML = () => `<!doctype html><html><head>
   </div>
 </div>
 
-<!-- RECALL (placeholder) -->
+<!-- RECALL -->
 <div id="recallModal" class="modal hidden">
   <div class="card">
     <h3>Recall Order</h3>
-    <p class="muted">Enter order code for “Pay at event”. (API hookup coming next.)</p>
+    <p class="muted">Enter order code for “Pay at event”.</p>
     <div class="split">
       <input id="recCode" placeholder="Order code e.g. ABC123"/>
       <div class="right">
@@ -320,21 +320,49 @@ function onPayChange(){
 async function confirmCheckout(){
   const pay = [...document.querySelectorAll('input[name="pay"]')].find(r=>r.checked)?.value || '';
   if (!pay) return;
+
   const items = [...cart.values()].map(({tt, qty})=>({ ticket_type_id: tt.id, qty }));
-  const res = await fetchJSON('/api/pos/sale',{
-    method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({
-      cashup_id: cashup.id,
-      event_id: currentEventId,
-      items,
-      payment_method: pay,
-      buyer_name: el('ckName').value.trim(),
-      buyer_phone: el('ckPhone').value.trim()
-    })
-  });
-  hide(el('checkoutModal'));
-  resetSale();
-  alert('Order #' + res.order_id + ' completed. Tickets: ' + (res.tickets?.length||0));
+  const recallCode = el('checkoutModal').dataset.recallCode || '';
+
+  try {
+    let res;
+    if (recallCode) {
+      // Confirm a recalled pending order
+      res = await fetch('/api/pos/recall/confirm', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          code: recallCode,
+          cashup_id: cashup.id,
+          payment_method: pay,
+          buyer_name: el('ckName').value.trim(),
+          buyer_phone: el('ckPhone').value.trim(),
+          items
+        })
+      }).then(r=>r.json());
+    } else {
+      // Normal POS sale
+      res = await fetch('/api/pos/sale', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          cashup_id: cashup.id,
+          event_id: currentEventId,
+          items,
+          payment_method: pay,
+          buyer_name: el('ckName').value.trim(),
+          buyer_phone: el('ckPhone').value.trim()
+        })
+      }).then(r=>r.json());
+    }
+
+    if (!res.ok) { alert(res.error || 'Failed'); return; }
+
+    hide(el('checkoutModal'));
+    el('checkoutModal').dataset.recallCode = ''; // clear recall state
+    resetSale();
+    alert('Order #' + res.order_id + ' completed. Tickets: ' + (res.tickets?.length||0));
+  } catch (e) {
+    alert(String(e));
+  }
 }
 
 // ---- wire up UI
@@ -343,8 +371,8 @@ el('endShiftBtn').onclick = ()=> { hideAllModals(); show(el('closeModal')); };
 el('cancelClose').onclick = ()=> hide(el('closeModal'));
 el('confirmClose').onclick = closeShift;
 
+// Recall modal handlers
 el('recallBtn').onclick = () => {
-  // Only allow after a shift is open
   if (!cashup?.id) {
     alert('Open a shift first');
     hideAllModals();
@@ -355,14 +383,40 @@ el('recallBtn').onclick = () => {
   show(el('recallModal'));
 };
 el('recCancel').onclick = ()=> hide(el('recallModal'));
-el('recGo').onclick = ()=> alert('Lookup coming in next step.');
+el('recGo').onclick = async () => {
+  const code = el('recCode').value.trim();
+  if (!code) return;
+  try {
+    const res = await fetch(\`/api/pos/recall/\${encodeURIComponent(code)}\`).then(r=>r.json());
+    if (!res.ok) { alert(res.error || 'Not found'); return; }
+
+    // Hydrate POS with recalled items
+    currentEventId = res.event_id;
+    el('eventSel').value = String(currentEventId);
+    cart.clear();
+    for (const it of res.items || []) {
+      if (!it.qty) continue;
+      cart.set(String(it.ticket_type_id), { tt: { id: it.ticket_type_id, name: it.name, price_cents: it.price_cents }, qty: Number(it.qty) });
+    }
+    hide(el('recallModal'));
+    renderTT();
+    renderCart();
+
+    // store recall code for checkout confirmation
+    el('checkoutModal').dataset.recallCode = code;
+    // optionally jump straight to checkout
+    beginCheckout();
+  } catch (e) {
+    alert(String(e));
+  }
+};
 
 el('clearBtn').onclick = resetSale;
 el('checkoutBtn').onclick = beginCheckout;
 el('cancelCheckout').onclick = ()=> hide(el('checkoutModal'));
 document.querySelectorAll('input[name="pay"]').forEach(r=> r.addEventListener('change', onPayChange));
+el('confirmCheckout').onclick = confirmCheckout;
 el('cashBtn').onclick = ()=>{ 
-  // Quick cash: open modal pre-selected to cash
   beginCheckout(); 
   const r = document.querySelector('input[name="pay"][value="cash"]');
   if (r){ r.checked = true; onPayChange(); }
