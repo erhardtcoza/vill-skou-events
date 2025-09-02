@@ -10,23 +10,27 @@ export const adminHTML = () => `<!doctype html><html><head>
   h1{ margin:0 0 14px }
   h2{ margin:18px 0 10px }
   h3{ margin:14px 0 8px }
+  h4{ margin:12px 0 6px }
   .tabs{ display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 18px }
-  .pill{ padding:10px 14px; border:1px solid #e5e7eb; border-radius:999px; background:#fff; cursor:pointer; font-weight:600 }
+  .pill{ padding:10px 14px; border:1px solid #e5e7eb; border-radius:999px; background:#fff; cursor:pointer; font-weight:600; white-space:nowrap }
   .pill.active{ background:var(--green); color:#fff; border-color:transparent }
   .card{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px; box-shadow:0 10px 24px rgba(0,0,0,.06); margin-bottom:16px }
   .muted{ color:var(--muted) } .tiny{ font-size:12px }
-  input,button,select,textarea{ padding:10px; border:1px solid #e5e7eb; border-radius:10px; margin:4px; font-size:14px }
+  input,button,select,textarea{ padding:10px; border:1px solid #e5e7eb; border-radius:10px; margin:4px; font-size:14px; max-width:100% }
   button.primary{ background:var(--green); color:#fff; border-color:transparent }
   table{ width:100%; border-collapse:collapse } td,th{ padding:10px; border-bottom:1px solid #f0f0f0; vertical-align:top }
   .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  .row-nowrap{ display:flex; gap:10px; align-items:center; flex-wrap:nowrap }
   .right{ margin-left:auto }
   .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:8px }
   @media (max-width:800px){ .grid2{ grid-template-columns:1fr } }
+  .tag{ background:#f1f5f9; padding:3px 8px; border-radius:999px; font-size:12px; margin-left:6px; display:inline-block }
   /* Modal */
-  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px }
+  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; padding:16px; z-index:50 }
   .sheet{ max-width:720px; width:100%; background:#fff; border-radius:16px; box-shadow:0 30px 70px rgba(0,0,0,.25); padding:16px }
   .actions button{ padding:8px 12px }
-  .tag{ background:#f1f5f9; padding:3px 8px; border-radius:999px; font-size:12px; margin-left:6px }
+  /* Numeric right cells */
+  td.right, th.right{ text-align:right }
 </style>
 </head><body><div class="wrap">
   <h1>Admin</h1>
@@ -77,9 +81,74 @@ export const adminHTML = () => `<!doctype html><html><head>
 
   <!-- TAB: POS admin -->
   <section id="tab-pos" class="card" style="display:none">
-    <h2>POS admin</h2>
-    <p class="muted">Cashups & totals per cashier / gate (placeholder).</p>
-    <div id="posStats" class="tiny muted">Coming soon: session list, totals per method (cash / card), per ticket type, exports.</div>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <h2 style="margin:0">POS admin</h2>
+      <div class="row-nowrap">
+        <label class="tiny muted">From <input id="pos_from" type="date"/></label>
+        <label class="tiny muted">To <input id="pos_to" type="date"/></label>
+        <button class="pill" id="pos_refresh">Refresh</button>
+      </div>
+    </div>
+
+    <div class="row" style="gap:12px;margin-top:12px;flex-wrap:wrap">
+      <div class="card" style="flex:1;min-width:220px">
+        <div class="tiny muted">Cash</div>
+        <div id="pos_cash" style="font-size:22px;font-weight:800">R0.00</div>
+      </div>
+      <div class="card" style="flex:1;min-width:220px">
+        <div class="tiny muted">Card</div>
+        <div id="pos_card" style="font-size:22px;font-weight:800">R0.00</div>
+      </div>
+      <div class="card" style="flex:1;min-width:220px">
+        <div class="tiny muted">Payments</div>
+        <div id="pos_count" style="font-size:22px;font-weight:800">0</div>
+      </div>
+      <div class="card" style="flex:1;min-width:220px">
+        <div class="tiny muted">Total</div>
+        <div id="pos_total" style="font-size:22px;font-weight:800">R0.00</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3>Ticket breakdown</h3>
+      <table id="pos_types">
+        <tr><th>Ticket type</th><th class="right">Qty</th><th class="right">Revenue</th></tr>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3>Sessions</h3>
+      <table id="pos_sessions">
+        <tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th class="right">Cash</th><th class="right">Card</th><th></th></tr>
+      </table>
+    </div>
+
+    <!-- Session drawer -->
+    <div id="pos_drawer" class="card" style="display:none;margin-top:12px">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <h3 id="sd_title" style="margin:0">Session</h3>
+        <button class="pill" id="sd_close">Close</button>
+      </div>
+      <div class="row" style="gap:12px;margin-top:8px;flex-wrap:wrap">
+        <div class="card" style="flex:1;min-width:180px">
+          <div class="tiny muted">Cash</div><div id="sd_cash" style="font-weight:700">R0.00</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px">
+          <div class="tiny muted">Card</div><div id="sd_card" style="font-weight:700">R0.00</div>
+        </div>
+        <div class="card" style="flex:1;min-width:180px">
+          <div class="tiny muted">Payments</div><div id="sd_payments" style="font-weight:700">0</div>
+        </div>
+      </div>
+      <h4>Ticket breakdown</h4>
+      <table id="sd_types">
+        <tr><th>Ticket type</th><th class="right">Qty</th><th class="right">Revenue</th></tr>
+      </table>
+      <h4>Payments</h4>
+      <table id="sd_list">
+        <tr><th>Time</th><th>Order</th><th>Method</th><th class="right">Amount</th></tr>
+      </table>
+    </div>
   </section>
 
   <!-- TAB: Visitors -->
@@ -129,8 +198,6 @@ export const adminHTML = () => `<!doctype html><html><head>
     </div>
   </div>
 
-  <!-- Hidden edit panel template will be injected per-row -->
-
 </div>
 
 <script>
@@ -149,6 +216,9 @@ document.querySelectorAll('.pill[data-tab]').forEach(btn=>{
     btn.classList.add('active');
     const k = btn.getAttribute('data-tab');
     Object.entries(tabs).forEach(([name,el])=> el.style.display = (name===k?'block':'none'));
+    if (k==='pos'){ loadPosOverview(); loadPosSessions(); }
+    if (k==='events'){ loadEvents(); }
+    if (k==='site'){ loadSite(); }
   };
 });
 
@@ -171,6 +241,8 @@ async function GET(url){ return fetch(url).then(r=>r.json()).catch(()=>({ok:fals
 async function POST(url,body){ return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>({ok:false})) }
 async function PUT(url,body){ return fetch(url,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).catch(()=>({ok:false})) }
 async function DEL(url){ return fetch(url,{method:'DELETE'}).then(r=>r.json()).catch(()=>({ok:false})) }
+const R = (c)=>'R'+((Number(c)||0)/100).toFixed(2);
+function ymd(d){ const x = new Date(d); const y=x.getFullYear(), m=String(x.getMonth()+1).padStart(2,'0'), da=String(x.getDate()).padStart(2,'0'); return \`\${y}-${m}-${da}\`; }
 
 /* ========== Site settings ========== */
 async function loadSite(){
@@ -259,19 +331,15 @@ async function loadEvents(){
         </div>
       </td></tr>\`;
     }).join('');
-  // Preload lists inside edit panels when opened
 }
 
-/* open/close edit row */
 window.editEvent = async function(id){
   const open = document.getElementById('edit-'+id).style.display !== 'table-row';
   toggleEdit(id, open);
   if (open){
-    // ticket types
     const t = await GET('/api/admin/events/'+id+'/ticket-types');
     renderTTList(id, t.ok?(t.ticket_types||[]):[]);
-    // gates (global list for now)
-    const g = await GET('/api/admin/gates');
+    const g = await GET('/api/admin/gates'); // global gates for now
     document.getElementById('gates_'+id).innerHTML =
       (g.gates||[]).map((ga,i)=>\`\${i+1}. \${ga.name}\`).join('<br>') || 'No gates';
   }
@@ -300,8 +368,6 @@ window.deleteEvent = async function(id){
   if (!r.ok){ alert(r.error||'Failed'); return; }
   loadEvents();
 };
-
-/* ticket types */
 function renderTTList(evId, list){
   if (!list.length){ document.getElementById('ttlist_'+evId).textContent = 'No ticket types yet.'; return; }
   document.getElementById('ttlist_'+evId).innerHTML = list.map(t=>
@@ -322,8 +388,6 @@ window.addTT = async function(evId){
   document.getElementById('tt_price_'+evId).value='';
   document.getElementById('tt_gen_'+evId).checked=false;
 };
-
-/* gates (global for now, managed here for convenience) */
 window.addGate = async function(evId){
   const name = document.getElementById('gate_name_'+evId).value.trim();
   if (!name){ alert('Gate name required'); return; }
@@ -363,8 +427,79 @@ document.getElementById('mCreate').onclick = async ()=>{
   if (r.ok){ closeModal(); loadEvents(); document.querySelector('[data-tab="events"]').click(); }
 };
 
+/* ========== POS admin logic ========== */
+async function loadPosOverview(){
+  const from = document.getElementById('pos_from').value;
+  const to   = document.getElementById('pos_to').value;
+  const q = new URLSearchParams(); if (from) q.set('from', from); if (to) q.set('to', to);
+  const o = await GET('/api/admin/pos/overview?'+q.toString());
+  if (!o.ok){ console.warn(o.error); return; }
+  const cash = o.totals.pos_cash||0, card = o.totals.pos_card||0, count = o.totals.payments||0;
+  document.getElementById('pos_cash').textContent = R(cash);
+  document.getElementById('pos_card').textContent = R(card);
+  document.getElementById('pos_count').textContent = String(count);
+  document.getElementById('pos_total').textContent = R(cash+card);
+  const tb = document.getElementById('pos_types');
+  tb.innerHTML = '<tr><th>Ticket type</th><th class="right">Qty</th><th class="right">Revenue</th></tr>' +
+    (o.by_type||[]).map(t=>\`<tr><td>\${t.name}</td><td class="right">\${t.qty||0}</td><td class="right">\${R(t.rev_cents||0)}</td></tr>\`).join('');
+}
+
+async function loadPosSessions(){
+  const s = await GET('/api/admin/pos/sessions');
+  if (!s.ok){ return; }
+  const tb = document.getElementById('pos_sessions');
+  tb.innerHTML = '<tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th class="right">Cash</th><th class="right">Card</th><th></th></tr>' +
+    (s.sessions||[]).map(x=>{
+      const opened = new Date((x.opened_at||0)*1000).toLocaleString();
+      const closed = x.closed_at ? new Date(x.closed_at*1000).toLocaleString() : '<span class="tiny muted">open</span>';
+      return \`<tr>
+        <td>\${x.id}</td>
+        <td>\${x.cashier_name}</td>
+        <td>\${x.gate_name||('Gate '+x.gate_id)}</td>
+        <td>\${opened}</td>
+        <td>\${closed}</td>
+        <td class="right">\${R(x.cash_cents||0)}</td>
+        <td class="right">\${R(x.card_cents||0)}</td>
+        <td><button class="pill" onclick="viewSession(\${x.id})">View</button></td>
+      </tr>\`;
+    }).join('');
+}
+
+window.viewSession = async function(id){
+  const r = await GET('/api/admin/pos/sessions/'+id);
+  if (!r.ok){ alert(r.error||'Failed to load'); return; }
+  document.getElementById('pos_drawer').style.display='block';
+  document.getElementById('sd_title').textContent = \`Session #\${r.session.id} · \${r.session.cashier_name} · \${r.session.gate_name||('Gate '+r.session.gate_id)}\`;
+  let cash=0, card=0, cnt=0;
+  for (const t of (r.totals||[])){
+    if (t.method==='pos_cash') cash = Number(t.total_cents)||0;
+    if (t.method==='pos_card') card = Number(t.total_cents)||0;
+    cnt += Number(t.payments)||0;
+  }
+  document.getElementById('sd_cash').textContent = R(cash);
+  document.getElementById('sd_card').textContent = R(card);
+  document.getElementById('sd_payments').textContent = String(cnt);
+  document.getElementById('sd_types').innerHTML =
+    '<tr><th>Ticket type</th><th class="right">Qty</th><th class="right">Revenue</th></tr>' +
+    (r.by_type||[]).map(t=>\`<tr><td>\${t.name}</td><td class="right">\${t.qty||0}</td><td class="right">\${R(t.rev_cents||0)}</td></tr>\`).join('');
+  document.getElementById('sd_list').innerHTML =
+    '<tr><th>Time</th><th>Order</th><th>Method</th><th class="right">Amount</th></tr>' +
+    (r.payments||[]).map(p=>{
+      const ts = new Date((p.created_at||0)*1000).toLocaleString();
+      const m  = p.method==='pos_cash'?'Cash':'Card';
+      return \`<tr><td>\${ts}</td><td>\${p.order_id}</td><td>\${m}</td><td class="right">\${R(p.amount_cents||0)}</td></tr>\`;
+    }).join('');
+};
+document.getElementById('sd_close').onclick = ()=>{ document.getElementById('pos_drawer').style.display='none'; };
+document.getElementById('pos_refresh').onclick = ()=>{ loadPosOverview(); };
+
 /* ========== Init ========== */
 async function init(){
+  // Default POS date window: last 7 days
+  const today = new Date(), start = new Date(Date.now()-6*86400000);
+  document.getElementById('pos_from').value = ymd(start);
+  document.getElementById('pos_to').value   = ymd(today);
+
   await loadSite();
   await loadEvents();
 }
