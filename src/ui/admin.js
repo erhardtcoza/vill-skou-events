@@ -254,4 +254,63 @@ async function addTT(){
   const price_cents = Math.round(priceRand * 100); // 0 = FREE
 
   const b = {
-    name
+    name,
+    price_cents,
+    requires_gender: document.getElementById('ttGen').checked
+  };
+
+  const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
+  document.getElementById('ttmsg').textContent = r.ok ? (price_cents ? 'Added' : 'Added (FREE)') : (r.error||'Add failed');
+  if (r.ok) {
+    document.getElementById('ttName').value = '';
+    document.getElementById('ttPriceRand').value = '';
+    document.getElementById('ttGen').checked = false;
+  }
+}
+
+// ----- Site settings helpers -----
+async function loadSettingsAdmin(){
+  const res = await fetch('/api/admin/settings').then(r=>r.json()).catch(()=>({ok:false}));
+  if (!res.ok) return;
+  const s = res.settings || {};
+  document.getElementById('set_title').value = s.site_title || '';
+  document.getElementById('set_logo').value  = s.logo_url   || '';
+  document.getElementById('set_favi').value  = s.favicon_url|| '';
+}
+async function saveSettings(){
+  const body = {
+    site_title: v('set_title').trim(),
+    logo_url:   v('set_logo').trim(),
+    favicon_url:v('set_favi').trim()
+  };
+  const r = await fetch('/api/admin/settings', {
+    method:'PUT',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+  document.getElementById('setmsg').textContent = r.ok ? 'Saved' : 'Failed to save';
+}
+
+// ----- Shared helpers -----
+function v(id){return document.getElementById(id).value}
+function msg(id, o){ const el = document.getElementById(id); el.textContent = JSON.stringify(o,null,2); el.className = o.ok ? 'ok' : 'err'; }
+function tryParseJSON(s){ try{ return JSON.parse(s); }catch(_){ return null; } }
+
+// Improved fetch helper: handles non-JSON responses gracefully
+async function post(url, body){
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type':'application/json' },
+    body: JSON.stringify(body)
+  });
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok:false, error: text || (r.status+' '+r.statusText) };
+  }
+}
+
+load();
+</script>
+</div></body></html>`;
