@@ -24,7 +24,7 @@ export const adminHTML = () => `<!doctype html><html><head>
     <!-- Dates only -->
     <label>Start date <input id="startDate" type="date"/></label>
     <label>End date <input id="endDate" type="date"/></label>
-    <button onclick="createEvent()">Create</button>
+    <button onclick="createEvt()">Create</button>
   </div>
   <pre id="evmsg"></pre>
 </section>
@@ -64,7 +64,6 @@ export const adminHTML = () => `<!doctype html><html><head>
 let _events = [];
 
 function parseLocalDateToMs(dateStr, endOfDay=false){
-  // dateStr is "YYYY-MM-DD". Build a local Date (not UTC) to avoid Safari quirks.
   if (!dateStr) return NaN;
   const [y,m,d] = dateStr.split('-').map(n=>parseInt(n,10));
   if (!y || !m || !d) return NaN;
@@ -73,7 +72,6 @@ function parseLocalDateToMs(dateStr, endOfDay=false){
 }
 
 async function load() {
-  // Load events
   const ev = await fetch('/api/admin/events').then(r=>r.json());
   _events = ev.events || [];
   document.getElementById('events').innerHTML =
@@ -81,10 +79,7 @@ async function load() {
     _events.map(e=>\`<tr><td>\${e.id}</td><td>\${e.slug}</td><td>\${e.name}</td>
     <td>\${new Date(e.starts_at*1000).toLocaleString()}</td>
     <td>\${new Date(e.ends_at*1000).toLocaleString()}</td></tr>\`).join('');
-
   setEventSelect();
-
-  // Load gates
   const gs = await fetch('/api/admin/gates').then(r=>r.json());
   document.getElementById('gates').innerHTML = gs.gates.map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
 }
@@ -97,7 +92,8 @@ function setEventSelect(preferId){
   if (!sel.value && eventsSorted.length) sel.value = String(eventsSorted[0].id);
 }
 
-async function createEvent(){
+// RENAMED to avoid clashing with document.createEvent
+async function createEvt(){
   const startMs = parseLocalDateToMs(document.getElementById('startDate').value, false);
   const endMs   = parseLocalDateToMs(document.getElementById('endDate').value, true);
 
@@ -124,7 +120,6 @@ async function createEvent(){
   if (r.ok) {
     await load();
     setEventSelect(r.id);
-    // reset fields lightly
     document.getElementById('slug').value = '';
     document.getElementById('name').value = '';
     document.getElementById('venue').value = '';
