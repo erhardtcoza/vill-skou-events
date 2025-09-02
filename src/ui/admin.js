@@ -3,342 +3,318 @@ export const adminHTML = () => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
 <style>
-  :root { --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --bg:#f8fafc; --pill:#eef2ff; --green:#0a7d2b; }
-  *{box-sizing:border-box}
-  body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:#fff;color:var(--ink)}
-  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
-  h1{margin:0 0 16px}
-  h2{margin:24px 0 12px}
-  h3{margin:10px 0}
-  .tabs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
-  .tabbtn{border:1px solid var(--line);background:var(--pill);padding:10px 14px;border-radius:999px;cursor:pointer}
-  .tabbtn[aria-selected="true"]{background:#fff;border-color:#c7d2fe;box-shadow:0 1px 0 rgba(0,0,0,.02)}
-  .section{display:none}
-  .section.active{display:block}
-  input,button,select,textarea{padding:10px;border:1px solid #d1d5db;border-radius:10px;margin:4px;background:#fff}
-  button.primary{background:var(--green);color:#fff;border:0}
-  table{width:100%;border-collapse:collapse;margin-top:8px}
-  td,th{padding:10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  :root{ --green:#0a7d2b; --bg:#f7f7f8; --muted:#6b7280 }
+  body{font-family:system-ui;margin:0;background:var(--bg);color:#111}
+  header{background:#fff;border-bottom:1px solid #e5e7eb;padding:14px 16px}
+  .wrap{max-width:1200px;margin:0 auto;padding:16px}
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 16px}
+  .tab{padding:10px 14px;border:1px solid #e5e7eb;border-radius:999px;background:#fff;cursor:pointer}
+  .tab.active{background:var(--green);color:#fff;border-color:var(--green)}
+  .panel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px;border-bottom:1px solid #f1f5f9;text-align:left;vertical-align:top}
   .muted{color:var(--muted)}
-  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .right{margin-left:auto}
-  .panel{background:#f9fafb;border:1px solid var(--line);border-radius:12px;padding:12px;margin:10px 0}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  @media (max-width:820px){ .grid2{grid-template-columns:1fr} }
-  /* Modal */
-  .modal{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;padding:18px}
-  .modal.show{display:flex}
-  .card{background:#fff;border-radius:14px;border:1px solid var(--line);padding:16px;max-width:640px;width:100%}
-  .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+  .tile{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px}
+  .tile b{display:block;font-size:22px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer}
+  .btn.primary{background:var(--green);color:#fff;border-color:var(--green)}
+  input,select{padding:10px;border:1px solid #d1d5db;border-radius:10px}
+  .right{display:flex;gap:8px;align-items:center;margin-left:auto}
+  dialog{border:none;border-radius:14px;max-width:800px;width:92vw;padding:0;box-shadow:0 20px 40px rgba(0,0,0,.2)}
+  dialog .hd{padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
+  dialog .bd{padding:14px 16px;max-height:70vh;overflow:auto}
 </style>
 </head><body>
+<header><div class="wrap"><strong>Admin</strong></div></header>
 <div class="wrap">
-  <h1>Admin</h1>
 
   <!-- Tabs -->
-  <div class="tabs" role="tablist">
-    <button class="tabbtn" data-tab="site" aria-selected="true">Site Settings</button>
-    <button class="tabbtn" data-tab="events">Events</button>
-    <button class="tabbtn" data-tab="pos">POS Admin</button>
-    <button class="tabbtn" data-tab="visitors">Visitors</button>
-    <button class="tabbtn" data-tab="yoco">Yoco</button>
-    <button class="tabbtn" data-tab="tickets">Tickets</button>
-    <button class="tabbtn" data-tab="vendors">Vendors</button>
+  <div class="tabs">
+    <button class="tab" data-tab="site">Site Settings</button>
+    <button class="tab" data-tab="events">Events</button>
+    <button class="tab" data-tab="posadmin">POS Admin</button>
+    <button class="tab" data-tab="visitors">Visitors (live)</button>
   </div>
 
-  <!-- Site tab -->
-  <section id="tab-site" class="section active">
+  <!-- Site settings placeholder -->
+  <section class="panel" data-sec="site">
     <h2>Site Settings</h2>
-    <div class="row">
-      <input id="site_name" placeholder="Site name"/>
-      <input id="site_logo" placeholder="Logo URL"/>
-      <input id="site_banner" placeholder="Banner URL"/>
-      <button class="primary" onclick="saveSettings()">Save</button>
-    </div>
-    <pre id="sitemsg" class="muted"></pre>
+    <p class="muted">Your existing settings UI stays here.</p>
   </section>
 
-  <!-- Events tab -->
-  <section id="tab-events" class="section">
-    <div class="row">
-      <h2 style="margin-right:auto">Events</h2>
-      <button onclick="openCreateModal()">Create event</button>
-    </div>
+  <!-- Events placeholder -->
+  <section class="panel" data-sec="events" style="display:none">
+    <h2>Events</h2>
+    <p class="muted">Event management UI here (create/edit, ticket types, gates, images).</p>
+  </section>
 
-    <table id="events"></table>
-
-    <!-- Edit Event + nested Ticket Types & Gates -->
-    <div id="editPanel" class="panel" style="display:none">
-      <h3>Edit Event</h3>
-      <input id="ed_id" type="hidden"/>
-      <div class="grid2">
-        <input id="ed_slug" placeholder="slug"/>
-        <input id="ed_name" placeholder="name"/>
-        <input id="ed_venue" placeholder="venue"/>
-        <label>Start date <input id="ed_start" type="date"/></label>
-        <label>End date <input id="ed_end" type="date"/></label>
-      </div>
-      <div class="grid2">
-        <input id="ed_hero" placeholder="Hero image URL"/>
-        <input id="ed_poster" placeholder="Poster image URL"/>
-      </div>
-      <label class="muted">Gallery URLs (one per line, max 8)
-        <textarea id="ed_gallery" rows="4"></textarea>
-      </label>
-      <div class="row actions">
-        <span id="edmsg" class="muted" style="margin-right:auto"></span>
-        <button onclick="cancelEdit()">Cancel</button>
-        <button class="primary" onclick="saveEdit()">Save</button>
-      </div>
-
-      <div class="grid2">
-        <div class="panel">
-          <h3>Add Ticket Type</h3>
-          <div class="row">
-            <input id="ttName" placeholder="name (e.g. Algemene Toegang)"/>
-            <input id="ttPriceRand" type="number" step="0.01" placeholder="price (R) — leave blank for FREE"/>
-            <label>Gender? <input id="ttGen" type="checkbox"/></label>
-            <button onclick="addTT()">Add</button>
-          </div>
-          <p class="muted" id="ttmsg"></p>
-        </div>
-
-        <div class="panel">
-          <h3>Gates</h3>
-          <div class="row">
-            <input id="gatename" placeholder="New gate name"/>
-            <button onclick="addGate()">Add gate</button>
-          </div>
-          <ul id="gates" class="muted" style="margin:6px 0 0 10px"></ul>
-        </div>
+  <!-- POS Admin Dashboard -->
+  <section class="panel" data-sec="posadmin" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <h2>POS Admin Dashboard</h2>
+      <div class="right">
+        <select id="paEvent"><option value="0">All events</option></select>
+        <input type="datetime-local" id="paFrom">
+        <input type="datetime-local" id="paTo">
+        <label class="row"><input type="checkbox" id="paOnline"> Include online</label>
+        <button class="btn" id="paApply">Apply</button>
+        <a class="btn" id="paCSV" target="_blank">Export CSV</a>
       </div>
     </div>
-  </section>
 
-  <!-- POS Admin tab -->
-  <section id="tab-pos" class="section">
-    <div class="row">
-      <h2>POS Admin</h2>
-      <button class="right" onclick="loadCashups()">Reload</button>
+    <div class="grid">
+      <div class="tile"><small>Total Cash</small><b id="paCash">R 0.00</b></div>
+      <div class="tile"><small>Total Card</small><b id="paCard">R 0.00</b></div>
+      <div class="tile"><small>All Payments</small><b id="paAll">R 0.00</b></div>
+      <div class="tile"><small>Last Update</small><b id="paWhen" class="muted">—</b></div>
     </div>
-    <table id="cashups"></table>
+
+    <h3 style="margin-top:16px">Cashups</h3>
+    <div class="panel" style="padding:0">
+      <table id="paCashups"><thead>
+        <tr><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Cash</th><th>Card</th><th>Total</th><th>Manager</th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+
+    <h3>Ticket Types (Issued)</h3>
+    <div class="panel" style="padding:0">
+      <table id="paTT"><thead>
+        <tr><th>Event</th><th>Ticket Type</th><th>Sold</th><th>Revenue</th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+
+    <h3>Scans (Live)</h3>
+    <div class="panel" style="padding:0">
+      <table id="paScans"><thead>
+        <tr><th>Event</th><th>IN</th><th>OUT</th><th>Inside</th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+
+    <h3>Orders</h3>
+    <div class="panel" style="padding:0">
+      <div class="row" style="padding:10px">
+        <label>Source
+          <select id="paSrc">
+            <option value="pos">POS only</option>
+            <option value="online">Online only</option>
+            <option value="all">POS + Online</option>
+          </select>
+        </label>
+        <button class="btn" id="paLoadOrders">Load Orders</button>
+        <a class="btn" id="paOrdersCSV" target="_blank">Orders CSV</a>
+      </div>
+      <table id="paOrders"><thead>
+        <tr><th>#</th><th>Event</th><th>Source</th><th>Method</th><th>Total</th><th>Buyer</th><th>Phone</th><th>Paid At</th></tr>
+      </thead><tbody></tbody></table>
+    </div>
   </section>
 
-  <!-- Placeholders -->
-  <section id="tab-visitors" class="section">
-    <h2>Visitors</h2>
-    <p class="muted">Live in/out dashboard coming next.</p>
-  </section>
-  <section id="tab-yoco" class="section">
-    <h2>Yoco</h2>
-    <p class="muted">Gateway keys & webhooks config (placeholder).</p>
-  </section>
-  <section id="tab-tickets" class="section">
-    <h2>Tickets</h2>
-    <p class="muted">Search & manage issued tickets (placeholder).</p>
-  </section>
-  <section id="tab-vendors" class="section">
-    <h2>Vendors</h2>
-    <p class="muted">Vendor onboarding & staff passes (placeholder).</p>
+  <!-- Visitors placeholder -->
+  <section class="panel" data-sec="visitors" style="display:none">
+    <h2>Visitors (live)</h2>
+    <p class="muted">Coming soon — live gate view, IN/OUT flow, dwell times.</p>
   </section>
 </div>
 
-<!-- Create Event Modal -->
-<div id="createModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="createTitle">
-  <div class="card">
-    <h3 id="createTitle">Create Event</h3>
-    <div class="grid2">
-      <input id="slug" placeholder="slug (e.g. skou-2025)"/>
-      <input id="name" placeholder="Event name"/>
-      <input id="venue" placeholder="Venue"/>
-      <label>Start date <input id="startDate" type="date"/></label>
-      <label>End date <input id="endDate" type="date"/></label>
-    </div>
-    <div class="actions">
-      <button onclick="closeCreateModal()">Cancel</button>
-      <button class="primary" onclick="createEvt()">Create</button>
-    </div>
-    <pre id="evmsg" class="muted"></pre>
+<!-- Drilldown modal -->
+<dialog id="dlg">
+  <div class="hd">
+    <div id="dlgTitle"><strong>Details</strong></div>
+    <button class="btn" onclick="document.getElementById('dlg').close()">Close</button>
   </div>
-</div>
+  <div class="bd" id="dlgBody">Loading…</div>
+</dialog>
 
 <script>
-/* ---------- Tabs ---------- */
-const tabs = Array.from(document.querySelectorAll('.tabbtn'));
-tabs.forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    tabs.forEach(b=>b.setAttribute('aria-selected','false'));
-    btn.setAttribute('aria-selected','true');
-    const id = btn.dataset.tab;
-    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
-    document.getElementById('tab-'+id).classList.add('active');
-    // lazy load on switch
-    if(id==='pos') loadCashups();
-    if(id==='site') loadSettings();
-    if(id==='events') { loadEvents(); loadGates(); }
+const Z = (id)=>document.getElementById(id);
+const $$ = (sel)=>Array.from(document.querySelectorAll(sel));
+function moneyR(c){ return "R "+(Number(c||0)/100).toFixed(2); }
+function ts2(dt){ if(!dt) return '—'; const d=new Date(dt*1000); return d.toLocaleString(); }
+function toUnix(s){ if(!s) return 0; const d=new Date(s); return Math.floor(d.getTime()/1000); }
+
+function switchTab(name){
+  $$(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
+  $$("section[data-sec]").forEach(s=>s.style.display = (s.dataset.sec===name ? "" : "none"));
+  localStorage.setItem("admin_tab", name);
+  if (name==="posadmin") loadPOSSummary(true);
+}
+$$(".tab").forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));
+switchTab(localStorage.getItem("admin_tab") || "site");
+
+/* -------- Filters wiring -------- */
+async function loadEventsForFilter(){
+  const res = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
+  if (res.ok){
+    Z('paEvent').innerHTML = '<option value="0">All events</option>' + (res.events||[]).map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
+  }
+}
+loadEventsForFilter();
+
+function currentFilter(){
+  const event_id = Number(Z('paEvent').value||0);
+  const from = toUnix(Z('paFrom').value);
+  const to = toUnix(Z('paTo').value);
+  const include_online = Z('paOnline').checked;
+  return { event_id, from, to, include_online };
+}
+Z('paApply').onclick = ()=>loadPOSSummary(true);
+
+/* -------- POS Admin Summary (auto-refresh) -------- */
+let _timer = null;
+async function loadPOSSummary(resetTimer){
+  if (resetTimer){ clearInterval(_timer); }
+  await refreshPOS();
+  if (resetTimer){ _timer = setInterval(refreshPOS, 30000); }
+}
+async function refreshPOS(){
+  const f = currentFilter();
+  const qs = new URLSearchParams({
+    event_id: String(f.event_id||0),
+    from: String(f.from||0),
+    to: String(f.to||0),
+    include_online: f.include_online ? "1":"0"
   });
-});
+  const res = await fetch('/api/admin/pos/summary?'+qs.toString()).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!res.ok) return;
 
-/* ---------- Helpers ---------- */
-function v(id){return document.getElementById(id).value}
-function setv(id,val){document.getElementById(id).value = val ?? ''}
-function msg(id,o){ document.getElementById(id).textContent = typeof o==='string' ? o : JSON.stringify(o,null,2) }
-function parseLocalDateToMs(dateStr,endOfDay=false){
-  if(!dateStr) return NaN;
-  const [y,m,d] = dateStr.split('-').map(n=>parseInt(n,10));
-  if(!y||!m||!d) return NaN;
-  const dt = endOfDay ? new Date(y,m-1,d,23,59,0,0) : new Date(y,m-1,d,0,0,0,0);
-  return dt.getTime();
-}
-function msToLocalDateInput(ms){
-  const d=new Date(ms);
-  return \`\${d.getFullYear()}-\${String(d.getMonth()+1).padStart(2,'0')}-\${String(d.getDate()).padStart(2,'0')}\`;
-}
-async function getJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
-async function post(url,body){ return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()) }
-async function put(url,body){ return fetch(url,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()) }
+  Z('paCash').textContent = moneyR(res.payments.cash_cents);
+  Z('paCard').textContent = moneyR(res.payments.card_cents);
+  Z('paAll').textContent  = moneyR(res.payments.total_cents);
+  Z('paWhen').textContent = new Date(res.updated_at*1000).toLocaleTimeString();
 
-/* ---------- Site Settings ---------- */
-async function loadSettings(){
-  try{
-    const res = await fetch('/api/admin/settings').then(r=>r.json());
-    if(!res.ok) return; // nothing saved yet
-    setv('site_name', res.settings?.name||'');
-    setv('site_logo', res.settings?.logo_url||'');
-    setv('site_banner', res.settings?.banner_url||'');
-  }catch(e){ /* ignore */ }
-}
-async function saveSettings(){
-  const r = await post('/api/admin/settings', {
-    name:v('site_name'), logo_url:v('site_logo'), banner_url:v('site_banner')
+  // Cashups table (clickable)
+  const ctb = Z('paCashups').querySelector('tbody');
+  ctb.innerHTML = (res.cashups||[]).map(c=>`
+    <tr data-cashup="${c.id}" class="click">
+      <td>${c.cashier_name||''}</td>
+      <td>${c.gate_name||''}</td>
+      <td>${ts2(c.opened_at)}</td>
+      <td>${c.closed_at?ts2(c.closed_at):'<span class="muted">open</span>'}</td>
+      <td>${moneyR(c.total_cash_cents)}</td>
+      <td>${moneyR(c.total_card_cents)}</td>
+      <td>${moneyR(c.total_cents)}</td>
+      <td>${c.manager_name||''}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="8" class="muted">No cashups yet</td></tr>';
+  // wire clicks
+  Array.from(ctb.querySelectorAll('tr[data-cashup]')).forEach(tr=>{
+    tr.style.cursor='pointer';
+    tr.onclick = ()=> openCashup(tr.dataset.cashup);
   });
-  msg('sitemsg', r.ok ? 'Saved' : (r.error||'Failed'));
-}
 
-/* ---------- Events ---------- */
-let _events = [];
-async function loadEvents(){
-  const res = await fetch('/api/admin/events').then(r=>r.json());
-  _events = res.events || [];
-  renderEvents();
-}
-function renderEvents(){
-  const rows=_events.map(e=>\`
+  // Ticket types table
+  const ttb = Z('paTT').querySelector('tbody');
+  ttb.innerHTML = (res.by_ticket_type||[]).map(t=>`
     <tr>
-      <td>\${e.id}</td>
-      <td>\${e.slug}</td>
-      <td>\${e.name}<div class="muted">\${e.venue||''}</div></td>
-      <td>\${new Date(e.starts_at*1000).toLocaleDateString()}</td>
-      <td>\${new Date(e.ends_at*1000).toLocaleDateString()}</td>
-      <td>
-        <button onclick="editEvent(\${e.id})">Edit</button>
-        <button onclick="deleteEvent(\${e.id})">Delete</button>
-      </td>
-    </tr>\`).join('');
-  document.getElementById('events').innerHTML =
-    '<tr><th>ID</th><th>Slug</th><th>Name</th><th>Starts</th><th>Ends</th><th></th></tr>' + rows;
-}
-function openCreateModal(){ document.getElementById('createModal').classList.add('show'); }
-function closeCreateModal(){ document.getElementById('createModal').classList.remove('show'); msg('evmsg',''); }
-async function createEvt(){
-  const startMs=parseLocalDateToMs(v('startDate')), endMs=parseLocalDateToMs(v('endDate'),true);
-  if(!isFinite(startMs)||!isFinite(endMs)) return msg('evmsg','Please select valid start/end dates');
-  if(endMs<startMs) return msg('evmsg','End date cannot be before start date');
-  const body={ slug:v('slug'), name:v('name'), venue:v('venue'),
-    starts_at:Math.floor(startMs/1000), ends_at:Math.floor(endMs/1000), status:'active' };
-  const r=await post('/api/admin/events', body);
-  msg('evmsg', r);
-  if(r.ok){ closeCreateModal(); await loadEvents(); }
-}
-async function editEvent(id){
-  const res = await fetch('/api/admin/events/'+id).then(r=>r.json());
-  if(!res.ok) return alert('Event not found');
-  const e=res.event;
-  setv('ed_id', e.id); setv('ed_slug', e.slug||''); setv('ed_name', e.name||''); setv('ed_venue', e.venue||'');
-  setv('ed_start', msToLocalDateInput((e.starts_at||0)*1000)); setv('ed_end', msToLocalDateInput((e.ends_at||0)*1000));
-  setv('ed_hero', e.hero_url||''); setv('ed_poster', e.poster_url||'');
-  const gallery = tryParseJSON(e.gallery_urls)||[];
-  document.getElementById('ed_gallery').value = gallery.slice(0,8).join('\\n');
-  document.getElementById('editPanel').style.display='block';
-}
-function cancelEdit(){ document.getElementById('editPanel').style.display='none'; }
-async function saveEdit(){
-  const id = +document.getElementById('ed_id').value; if(!id) return;
-  const b = {
-    slug:v('ed_slug'), name:v('ed_name'), venue:v('ed_venue'),
-    starts_at:Math.floor(parseLocalDateToMs(v('ed_start'))/1000),
-    ends_at:Math.floor(parseLocalDateToMs(v('ed_end'),true)/1000),
-    hero_url:v('ed_hero'), poster_url:v('ed_poster'),
-    gallery_urls: JSON.stringify(
-      document.getElementById('ed_gallery').value.split('\\n').map(s=>s.trim()).filter(Boolean).slice(0,8)
-    )
-  };
-  const r = await put('/api/admin/events/'+id, b);
-  document.getElementById('edmsg').textContent = r.ok ? 'Saved' : (r.error||'Error');
-  if(r.ok) loadEvents();
-}
-async function deleteEvent(id){
-  if(!confirm('Delete event?')) return;
-  await fetch('/api/admin/events/'+id, { method:'DELETE' });
-  await loadEvents();
+      <td>${t.event_name||('Event #'+t.event_id)}</td>
+      <td>${t.name||('Type #'+t.ticket_type_id)}</td>
+      <td>${t.sold_qty||0}</td>
+      <td>${moneyR(t.revenue_cents||0)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="muted">No tickets issued</td></tr>';
+
+  // Scans
+  const stb = Z('paScans').querySelector('tbody');
+  stb.innerHTML = (res.scans||[]).map(s=>`
+    <tr>
+      <td>${s.name||('Event #'+s.event_id)}</td>
+      <td>${s.in||0}</td>
+      <td>${s.out||0}</td>
+      <td>${s.inside||0}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="muted">No scans yet</td></tr>';
+
+  // CSV links (summary orders)
+  Z('paCSV').href = '/api/admin/pos/export.csv';
+  updateOrdersLinks(); // refresh orders CSV link also
 }
 
-/* Ticket types (under Edit) */
-async function addTT(){
-  const id = +document.getElementById('ed_id').value; if(!id) return alert('Open an event to edit first.');
-  const price = parseFloat(v('ttPriceRand')||'0');
-  const body = { name:v('ttName'), price_cents:Math.round(price*100), requires_gender:document.getElementById('ttGen').checked };
-  const r = await post('/api/admin/events/'+id+'/ticket-types', body);
-  document.getElementById('ttmsg').textContent = r.ok ? 'Added' : (r.error||'Failed');
-  if(r.ok){ setv('ttName',''); setv('ttPriceRand',''); document.getElementById('ttGen').checked=false; }
+/* -------- Orders table (filtered) -------- */
+Z('paLoadOrders').onclick = loadOrders;
+function updateOrdersLinks(){
+  const f = currentFilter();
+  const source = Z('paSrc').value;
+  const qs = new URLSearchParams({
+    event_id: String(f.event_id||0),
+    from: String(f.from||0),
+    to: String(f.to||0),
+    source
+  });
+  Z('paOrdersCSV').href = '/api/admin/pos/orders.csv?'+qs.toString();
+}
+Z('paSrc').onchange = updateOrdersLinks;
+
+async function loadOrders(){
+  const f = currentFilter();
+  const source = Z('paSrc').value;
+  const qs = new URLSearchParams({
+    event_id: String(f.event_id||0),
+    from: String(f.from||0),
+    to: String(f.to||0),
+    source
+  });
+  const res = await fetch('/api/admin/pos/orders?'+qs.toString()).then(r=>r.json()).catch(()=>({ok:false}));
+  const tb = Z('paOrders').querySelector('tbody');
+  if (!res.ok){ tb.innerHTML = '<tr><td colspan="8" class="muted">Could not load</td></tr>'; return; }
+  tb.innerHTML = (res.orders||[]).map(o=>`
+    <tr>
+      <td>${o.id}</td>
+      <td>${o.event_name||('Event #'+o.event_id)}</td>
+      <td>${o.source}</td>
+      <td>${o.payment_method||''}</td>
+      <td>${moneyR(o.total_cents||0)}</td>
+      <td>${o.buyer_name||''}</td>
+      <td>${o.buyer_phone||''}</td>
+      <td>${o.paid_at? new Date(o.paid_at*1000).toLocaleString():'—'}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="8" class="muted">No orders</td></tr>';
+  updateOrdersLinks();
 }
 
-/* Gates (global; shown under Edit for convenience) */
-async function loadGates(){
-  try{
-    const gs = await getJSON('/api/admin/gates');
-    document.getElementById('gates').innerHTML = (gs.gates||[]).map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
-  }catch(e){
-    document.getElementById('gates').textContent='—';
-  }
-}
-async function addGate(){
-  const r = await post('/api/admin/gates', { name:v('gatename') });
-  alert(r.ok ? 'Gate added' : (r.error||'Failed'));
-  setv('gatename','');
-  loadGates();
-}
+/* -------- Cashup drill-down modal -------- */
+async function openCashup(id){
+  Z('dlgTitle').innerHTML = '<strong>Cashup #'+id+'</strong>';
+  Z('dlgBody').textContent = 'Loading…';
+  Z('dlg').showModal();
+  const res = await fetch('/api/admin/pos/cashups/'+id).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!res.ok){ Z('dlgBody').textContent='Could not load'; return; }
 
-/* ---------- POS Admin ---------- */
-async function loadCashups(){
-  try{
-    const res = await fetch('/api/admin/pos/cashups').then(r=>r.json());
-    if(!res.ok) { document.getElementById('cashups').innerHTML = '<tr><td>Failed to load</td></tr>'; return; }
-    const rows = res.cashups.map(c => \`
-      <tr>
-        <td>\${c.id}</td>
-        <td>\${c.cashier_name}</td>
-        <td>\${c.gate_name}</td>
-        <td>\${new Date(c.opened_at*1000).toLocaleString()}</td>
-        <td>\${c.closed_at ? new Date(c.closed_at*1000).toLocaleString() : '-'}</td>
-        <td>R\${(c.total_cash/100).toFixed(2)}</td>
-        <td>R\${(c.total_card/100).toFixed(2)}</td>
-        <td>R\${((c.total_cash+c.total_card)/100).toFixed(2)}</td>
-      </tr>\`).join('');
-    document.getElementById('cashups').innerHTML =
-      '<tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Cash</th><th>Card</th><th>Total</th></tr>' + rows;
-  }catch(e){
-    document.getElementById('cashups').innerHTML = '<tr><td>'+String(e)+'</td></tr>';
-  }
-}
+  const c = res.cashup;
+  const orders = res.orders||[];
+  const br = res.breakdown||[];
 
-/* ---------- Boot ---------- */
-function tryParseJSON(s){try{return JSON.parse(s)}catch{return null}}
-(async function boot(){
-  // default: load Site + Events
-  loadSettings();
-  loadEvents();
-  loadGates();
-})();
+  const body = `
+    <div class="grid" style="margin-bottom:12px">
+      <div class="tile"><small>Cashier</small><b>${c.cashier_name||''}</b></div>
+      <div class="tile"><small>Gate</small><b>${c.gate_name||''}</b></div>
+      <div class="tile"><small>Opened</small><b>${c.opened_at? new Date(c.opened_at*1000).toLocaleString() : '—'}</b></div>
+      <div class="tile"><small>Closed</small><b>${c.closed_at? new Date(c.closed_at*1000).toLocaleString() : 'Open'}</b></div>
+      <div class="tile"><small>Cash</small><b>${moneyR(c.total_cash_cents)}</b></div>
+      <div class="tile"><small>Card</small><b>${moneyR(c.total_card_cents)}</b></div>
+      <div class="tile"><small>Opening Float</small><b>${moneyR(c.opening_float_cents)}</b></div>
+    </div>
+
+    <h4>Ticket Breakdown</h4>
+    <table><thead><tr><th>Event</th><th>Type</th><th>Qty</th><th>Revenue</th></tr></thead>
+      <tbody>
+        ${br.map(x=>`<tr><td>${x.event_name||''}</td><td>${x.ticket_type||''}</td><td>${x.qty||0}</td><td>${moneyR(x.revenue_cents||0)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No tickets in this window</td></tr>'}
+      </tbody>
+    </table>
+
+    <h4 style="margin-top:12px">Orders (${orders.length})</h4>
+    <table><thead><tr><th>#</th><th>Event</th><th>Buyer</th><th>Phone</th><th>Method</th><th>Total</th><th>Paid</th></tr></thead>
+      <tbody>
+        ${orders.map(o=>`<tr>
+            <td>${o.id}</td><td>${o.event_id}</td><td>${o.buyer_name||''}</td>
+            <td>${o.buyer_phone||''}</td><td>${o.payment_method||''}</td>
+            <td>${moneyR(o.total_cents||0)}</td><td>${o.paid_at? new Date(o.paid_at*1000).toLocaleString():'—'}</td>
+        </tr>`).join('') || '<tr><td colspan="7" class="muted">No orders in this window</td></tr>'}
+      </tbody>
+    </table>
+  `;
+  Z('dlgBody').innerHTML = body;
+}
 </script>
 </body></html>`;
