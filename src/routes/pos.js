@@ -1,151 +1,251 @@
 // /src/routes/pos.js
 import { json, bad } from "../utils/http.js";
 
-function now(){ return Math.floor(Date.now()/1000); }
+/**
+ * Helper: fetch ticket type rows and compute total cents for items
+ * items: [{ ticket_type_id, qty }]
+ */
+async function computeTotalCents(db, items) {
+  if (!Array.isArray(items) || items.length === 0) return 0;
+  let total = 0;
+  for (const it of items) {
+    const tt = await db
+      .prepare("SELECT price_cents FROM ticket_types WHERE id=?1")
+      .bind(it.ticket_type_id)
+      .first();
+    const price = Number(tt?.price_cents || 0);
+    const qty = Number(it?.qty || 0);
+    total += price * qty;
+  }
+  return total;
+}
+
+/**
+ * Helper: upsert order + tickets for POS sale using services/orders.js
+ * Returns: { ok, order_id, total_cents, tickets:[...] }
+ */
+async function createPosSale(db, body) {
+  // We’ll reuse your existing order service if available.
+  try {
+    const { createPOSOrder } = await import("../services/orders.js");
+    // Expected body: { event_id, items, buyer_name, buyer_phone, payment_method, cashup_id }
+    return await createPOSOrder(db, body);
+  } catch {
+    // Fallback minimal implementation if createPOSOrder doesn’t exist yet.
+    // Create an order, then insert tickets per qty. No capacity checks here.
+    const total_cents = await computeTotalCents(db, body.items || []);
+    const insOrder = await db
+      .prepare(
+        `INSERT INTO orders (event_id, source, status, buyer_name, buyer_phone, payment_method, total_cents, created_at)
+         VALUES (?1,'pos','paid',?2,?3,?4,?5,unixepoch())`
+      )
+      .bind(
+        body.event_id,
+        body.buyer_name || "",
+        body.buyer_phone || "",
+        body.payment_method || "cash",
+        total_cents
+      )
+      .run();
+
+    const order_id = Number(insOrder.lastInsertRowid);
+    const tickets = [];
+    for (const it of body.items || []) {
+      const qty = Number(it.qty || 0);
+      if (!qty) continue;
+      for (let i = 0; i < qty; i++) {
+        // Build a simple QR payload (can be replaced later)
+        const qrPayload = `O${order_id}-TT${it.ticket_type_id}-${i + 1}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`;
+        const insT = await db
+          .prepare(
+            `INSERT INTO tickets (order_id, event_id, ticket_type_id, attendee_first, attendee_last, email, phone, qr, state, issued_at)
+             VALUES (?1,?2,?3,'','','',?4,?5,'unused',unixepoch())`
+          )
+          .bind(order_id, body.event_id, it.ticket_type_id, body.buyer_phone || "", qrPayload)
+          .run();
+        tickets.push({ id: Number(insT.lastInsertRowid), qr: qrPayload });
+      }
+    }
+    return { ok: true, order_id, total_cents, tickets };
+  }
+}
 
 export function mountPOS(router) {
-  // Bootstrap POS
-  router.add("POST", "/api/pos/bootstrap", async (req, env) => {
-    const body = await req.json().catch(()=>({})) || {};
-    const ev = await env.DB
-      .prepare("SELECT id, slug, name, starts_at, ends_at FROM events WHERE status='active' ORDER BY starts_at ASC LIMIT 1")
-      .first();
-    const tts = ev
-      ? await env.DB.prepare("SELECT id, name, price_cents FROM ticket_types WHERE event_id=? ORDER BY id")
-          .bind(ev.id).all()
-      : { results: [] };
-    const gates = await env.DB.prepare("SELECT id, name FROM gates ORDER BY id").all();
-
-    let session = null;
-    if (body.cashier_name && body.gate_id) {
-      session = await env.DB
-        .prepare("SELECT id, cashier_name, gate_id, opening_float_cents, opened_at FROM pos_sessions WHERE closed_at IS NULL AND cashier_name=? AND gate_id=?")
-        .bind(body.cashier_name, Number(body.gate_id))
-        .first();
-    }
-
-    return json({ ok:true, event: ev||null, ticket_types: tts.results||[], gates: gates.results||[], session });
-  });
-
-  // Start session
-  router.add("POST", "/api/pos/sessions/start", async (req, env) => {
-    const b = await req.json().catch(()=>null);
-    if (!b?.cashier_name || !b?.gate_id) return bad("Missing cashier_name or gate_id");
-    const opening = Math.round(Number(b.opening_float_rands||0) * 100);
-    await env.DB
-      .prepare("INSERT INTO pos_sessions (cashier_name, gate_id, opening_float_cents, opened_at) VALUES (?,?,?,?)")
-      .bind(String(b.cashier_name), Number(b.gate_id), opening, now())
-      .run();
-    const row = await env.DB.prepare("SELECT last_insert_rowid() AS id").first();
-    return json({ ok:true, session_id: row.id });
-  });
-
-  // End session
-  router.add("POST", "/api/pos/sessions/:id/end", async (req, env, _ctx, { id }) => {
-    const b = await req.json().catch(()=> ({}));
-    await env.DB
-      .prepare("UPDATE pos_sessions SET closed_at=?, closing_manager=? WHERE id=? AND closed_at IS NULL")
-      .bind(now(), String(b.manager_name||''), Number(id))
-      .run();
-    return json({ ok:true });
-  });
-
-  // Recall order
-  router.add("GET", "/api/pos/orders/lookup/:code", async (_req, env, _ctx, { code }) => {
+  /**
+   * POS bootstrap: lightweight catalog for the POS screen
+   * Returns active events + their ticket types
+   */
+  router.add("POST", "/api/pos/bootstrap", async (_req, env) => {
     try {
-      const o = await env.DB
-        .prepare(`SELECT id, short_code, event_id, status, total_cents, contact_json
-                  FROM orders WHERE short_code=?`)
-        .bind(String(code||'').toUpperCase())
-        .first();
-      if (!o) return bad("Order not found", 404);
-
-      const items = await env.DB
-        .prepare(`SELECT ticket_type_id, qty, price_cents FROM order_items WHERE order_id=? ORDER BY id ASC`)
-        .bind(o.id).all();
-
-      const ids = (items.results||[]).map(r=>r.ticket_type_id);
-      let names = new Map();
-      if (ids.length) {
-        const q = ids.map(()=>'?').join(',');
-        const r = await env.DB
-          .prepare(`SELECT id, name FROM ticket_types WHERE id IN (${q})`).bind(...ids).all();
-        names = new Map((r.results||[]).map(x=>[Number(x.id), x.name]));
-      }
-
-      return json({ ok:true, order:o, items:(items.results||[]).map(i=>({...i, name:names.get(Number(i.ticket_type_id))||'Ticket'})) });
-    } catch (e) {
-      return json({ ok:false, error:String(e) }, 500);
-    }
-  });
-
-  // Update items on recalled order
-  router.add("POST", "/api/pos/orders/:id/update-items", async (req, env, _ctx, { id }) => {
-    const b = await req.json().catch(()=>null);
-    if (!b || !Array.isArray(b.items)) return bad("Invalid items");
-
-    const order = await env.DB.prepare("SELECT event_id, status FROM orders WHERE id=?").bind(Number(id)).first();
-    if (!order) return bad("Order not found", 404);
-    if (order.status === 'paid') return bad("Order already paid", 400);
-
-    const ids = b.items.map(i=>Number(i.ticket_type_id)).filter(Boolean);
-    const q = ids.length ? ids.map(()=>'?').join(',') : 'NULL';
-    const priceRows = ids.length
-      ? await env.DB.prepare(`SELECT id, price_cents FROM ticket_types WHERE event_id=? AND id IN (${q})`).bind(order.event_id, ...ids).all()
-      : { results:[] };
-    const priceMap = new Map((priceRows.results||[]).map(r=>[Number(r.id), Number(r.price_cents)||0]));
-
-    await env.DB.prepare("DELETE FROM order_items WHERE order_id=?").bind(Number(id)).run();
-
-    let total = 0;
-    const ins = await env.DB.prepare("INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents) VALUES (?,?,?,?)");
-    for (const it of b.items) {
-      const qty = Math.max(0, Number(it.qty)||0);
-      if (!qty) continue;
-      const tt = Number(it.ticket_type_id);
-      const pc = priceMap.get(tt) ?? 0;
-      total += pc*qty;
-      await ins.bind(Number(id), tt, qty, pc).run();
-    }
-
-    await env.DB.prepare("UPDATE orders SET total_cents=? WHERE id=?").bind(total, Number(id)).run();
-
-    return json({ ok:true, total_cents: total });
-  });
-
-  // === Settle pay-later at POS: mark paid, record payment, ISSUE TICKETS ===
-  router.add("POST", "/api/pos/orders/:id/settle", async (req, env, _ctx, { id }) => {
-    const body = await req.json().catch(() => ({}));
-    const method = body.method === "pos_card" ? "pos_card" : "pos_cash";
-    const ref = body.payment_ref || "";
-    const session_id = Number(body.session_id)||0;
-
-    try {
-      const o = await env.DB.prepare("SELECT status, total_cents FROM orders WHERE id=?").bind(Number(id)).first();
-      if (!o) return bad("Order not found", 404);
-
-      if (o.status !== 'paid') {
+      const events = (
         await env.DB
-          .prepare(`UPDATE orders SET status='paid', payment_method=?, payment_ref=?, paid_at=? WHERE id=?`)
-          .bind(method, ref, now(), Number(id))
-          .run();
+          .prepare(
+            `SELECT id, slug, name, starts_at, ends_at, venue
+             FROM events WHERE status='active'
+             ORDER BY starts_at ASC`
+          )
+          .all()
+      ).results || [];
+
+      // Ticket types keyed by event_id
+      const tts = (
+        await env.DB
+          .prepare(
+            `SELECT id, event_id, name, price_cents, requires_gender
+             FROM ticket_types ORDER BY id`
+          )
+          .all()
+      ).results || [];
+
+      const byEvent = {};
+      for (const t of tts) {
+        (byEvent[t.event_id] ||= []).push(t);
       }
 
-      await env.DB
-        .prepare("INSERT INTO pos_payments (session_id, order_id, method, amount_cents, created_at) VALUES (?,?,?,?,?)")
-        .bind(session_id, Number(id), method, Number(o.total_cents)||0, now())
+      return json({ ok: true, events, ticket_types_by_event: byEvent });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
+
+  /**
+   * Open a cashup session (idempotent by cashier+gate if still open)
+   * Body: { cashier_name, gate_name, opening_float_rands }
+   */
+  router.add("POST", "/api/pos/cashups/open", async (req, env) => {
+    const b = await req.json().catch(() => ({}));
+    const cashier = (b.cashier_name || "").trim();
+    const gate = (b.gate_name || "").trim();
+    const openingFloatCents = Math.round(Number(b.opening_float_rands || 0) * 100);
+
+    if (!cashier || !gate) return bad("Missing cashier_name or gate_name");
+
+    try {
+      // Check active session for same cashier+gate
+      const existing = await env.DB
+        .prepare(
+          `SELECT id FROM pos_cashups
+           WHERE cashier_name=?1 AND gate_name=?2 AND closed_at IS NULL
+           ORDER BY opened_at DESC LIMIT 1`
+        )
+        .bind(cashier, gate)
+        .first();
+      if (existing) return json({ ok: true, id: existing.id, reused: true });
+
+      const res = await env.DB
+        .prepare(
+          `INSERT INTO pos_cashups (cashier_name, gate_name, opening_float_cents, opened_at)
+           VALUES (?1,?2,?3,unixepoch())`
+        )
+        .bind(cashier, gate, openingFloatCents)
         .run();
 
-      // >>> NEW: issue tickets (idempotent)
-      const { ensureTicketsIssuedForOrder, deliverTickets, listTicketsForOrder } = await import("../services/tickets.js");
-      const issued = await ensureTicketsIssuedForOrder(env.DB, Number(id));
+      return json({ ok: true, id: Number(res.lastInsertRowid) });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
 
-      // Optional (stub): send WhatsApp/email later
-      try { await deliverTickets(env, Number(id), issued); } catch(_e){/* ignore for now */ }
+  /**
+   * Close a cashup session
+   * Body: { cashup_id, manager_name }
+   */
+  router.add("POST", "/api/pos/cashups/close", async (req, env) => {
+    const b = await req.json().catch(() => ({}));
+    const id = Number(b.cashup_id || 0);
+    const manager = (b.manager_name || "").trim();
+    if (!id || !manager) return bad("Missing cashup_id or manager_name");
 
-      // Return links for convenience in POS (could be shown to customer if needed)
-      const links = (issued||[]).map(t => ({ qr: t.qr, link: `/t/${encodeURIComponent(t.qr)}` }));
-      return json({ ok:true, tickets: links });
+    try {
+      await env.DB
+        .prepare(
+          `UPDATE pos_cashups
+           SET closed_at = unixepoch(), manager_name = ?1
+           WHERE id = ?2`
+        )
+        .bind(manager, id)
+        .run();
+      return json({ ok: true });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
+
+  /**
+   * Record a POS sale and update totals on the cashup
+   * Body: {
+   *   cashup_id, event_id,
+   *   items: [{ ticket_type_id, qty }],
+   *   payment_method: "cash" | "card",
+   *   buyer_name?, buyer_phone?
+   * }
+   */
+  router.add("POST", "/api/pos/sale", async (req, env) => {
+    const b = await req.json().catch(() => null);
+    if (!b?.cashup_id || !b?.event_id || !Array.isArray(b.items) || b.items.length === 0) {
+      return bad("Invalid request");
+    }
+    const method = b.payment_method === "card" ? "card" : "cash";
+
+    try {
+      // Create order + tickets via service (or fallback)
+      const sale = await createPosSale(env.DB, {
+        event_id: b.event_id,
+        items: b.items,
+        buyer_name: b.buyer_name || "",
+        buyer_phone: b.buyer_phone || "",
+        payment_method: method,
+        cashup_id: b.cashup_id
+      });
+
+      if (!sale?.ok && !sale?.order_id) {
+        // Fallback path returns ok=true; but keep guard anyway
+        return json({ ok: false, error: "Failed to create order" }, 500);
+      }
+      const totalCents =
+        typeof sale.total_cents === "number"
+          ? sale.total_cents
+          : await computeTotalCents(env.DB, b.items);
+
+      // Update cash/card totals on this cashup
+      const field = method === "cash" ? "total_cash_cents" : "total_card_cents";
+      await env.DB
+        .prepare(
+          `UPDATE pos_cashups SET ${field} = COALESCE(${field},0) + ?1
+           WHERE id = ?2`
+        )
+        .bind(totalCents, b.cashup_id)
+        .run();
+
+      return json({
+        ok: true,
+        order_id: sale.order_id,
+        total_cents: totalCents,
+        tickets: sale.tickets || []
+      });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  });
+
+  /**
+   * Fetch a specific cashup (for admin or audit)
+   */
+  router.add("GET", "/api/pos/cashups/:id", async (_req, env, _ctx, { id }) => {
+    try {
+      const row = await env.DB
+        .prepare(
+          `SELECT id, cashier_name, gate_name, opened_at, closed_at,
+                  opening_float_cents, total_cash_cents, total_card_cents,
+                  manager_name, notes
+           FROM pos_cashups WHERE id=?1`
+        )
+        .bind(id)
+        .first();
+      if (!row) return bad("Not found", 404);
+      return json({ ok: true, cashup: row });
     } catch (e) {
       return json({ ok: false, error: String(e) }, 500);
     }
