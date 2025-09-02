@@ -20,6 +20,17 @@ export const adminHTML = () => `<!doctype html><html><head>
 <h1>Admin</h1>
 
 <section>
+  <h2>Site Settings</h2>
+  <div class="row">
+    <input id="set_title" placeholder="Site title (e.g. Villiersdorp Skou — Tickets)"/>
+    <input id="set_logo"  placeholder="Logo URL (square/rect)"/>
+    <input id="set_favi"  placeholder="Favicon URL (.ico/.png)"/>
+    <button onclick="saveSettings()">Save</button>
+  </div>
+  <p class="muted" id="setmsg"></p>
+</section>
+
+<section>
   <h2>Create Event</h2>
   <div class="row">
     <input id="slug" placeholder="slug (e.g. skou-2025)"/>
@@ -106,6 +117,8 @@ function msToLocalDateInput(ms){
 }
 
 async function load() {
+  await loadSettingsAdmin();
+
   const ev = await fetch('/api/admin/events').then(r=>r.json());
   _events = ev.events || [];
   renderEventsTable();
@@ -140,7 +153,7 @@ function setEventSelect(preferId){
   if (!sel.value && eventsSorted.length) sel.value = String(eventsSorted[0].id);
 }
 
-// Create
+// Create event
 async function createEvt(){
   const startMs = parseLocalDateToMs(document.getElementById('startDate').value, false);
   const endMs   = parseLocalDateToMs(document.getElementById('endDate').value, true);
@@ -166,7 +179,7 @@ async function createEvt(){
   }
 }
 
-// Edit
+// Edit event
 async function editEvent(id){
   const res = await fetch('/api/admin/events/'+id).then(r=>r.json());
   if (!res.ok) return alert('Event not found');
@@ -196,7 +209,7 @@ async function saveEdit(){
   if (endMs < startMs) { setEdMsg('End date cannot be before start date', false); return; }
 
   const galLines = document.getElementById('ed_gallery').value
-    .split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean).slice(0,8);
+    .split(/\r?\n/).map(s=>s.trim()).filter(Boolean).slice(0,8);
 
   const b = {
     slug: v('ed_slug'),
@@ -241,41 +254,4 @@ async function addTT(){
   const price_cents = Math.round(priceRand * 100); // 0 = FREE
 
   const b = {
-    name,
-    price_cents,
-    requires_gender: document.getElementById('ttGen').checked
-  };
-
-  const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
-  document.getElementById('ttmsg').textContent = r.ok ? (price_cents ? 'Added' : 'Added (FREE)') : (r.error||'Add failed');
-  if (r.ok) {
-    document.getElementById('ttName').value = '';
-    document.getElementById('ttPriceRand').value = '';
-    document.getElementById('ttGen').checked = false;
-  }
-}
-
-// Helpers
-function v(id){return document.getElementById(id).value}
-function msg(id, o){ const el = document.getElementById(id); el.textContent = JSON.stringify(o,null,2); el.className = o.ok ? 'ok' : 'err'; }
-
-// Improved fetch helper: handles non-JSON responses gracefully
-async function post(url, body){
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type':'application/json' },
-    body: JSON.stringify(body)
-  });
-  const text = await r.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { ok:false, error: text || (r.status+' '+r.statusText) };
-  }
-}
-
-function tryParseJSON(s){ try{ return JSON.parse(s); }catch(_){ return null; } }
-
-load();
-</script>
-</div></body></html>`;
+    name
