@@ -6,9 +6,10 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   :root{ --green:#0a7d2b; --bg:#f7f7f8; --muted:#667085; }
   *{ box-sizing:border-box }
   body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#111 }
-  .wrap{ max-width:900px; margin:20px auto; padding:0 14px }
+  .wrap{ max-width:980px; margin:20px auto; padding:0 14px }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 24px rgba(0,0,0,.08); padding:16px; margin-bottom:16px }
   h1{ margin:0 0 12px }
+  h2{ margin:0 0 12px }
   .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:16px }
   @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
   label{ display:block; font-size:14px; color:#222; margin:8px 0 6px }
@@ -17,7 +18,7 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   .btn{ padding:12px 16px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer }
   .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
   .total{ display:flex; justify-content:space-between; font-weight:700; font-size:18px; margin-top:10px }
-  .row{ display:flex; justify-content:space-between; margin:6px 0 }
+  .row{ display:flex; justify-content:space-between; margin:6px 0; gap:10px }
   .err{ color:#b00020; margin-top:8px }
   .ok{ color:#0a7d2b; margin-top:8px }
   a.back{ text-decoration:none; color:#111; border:1px solid #e5e7eb; padding:8px 12px; border-radius:8px }
@@ -47,13 +48,16 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
         <button id="payBtn" class="btn primary">Gaan voort</button>
         <span id="msg" class="muted"></span>
       </div>
+      <p class="muted" style="margin-top:10px">
+        Attendee-besonderhede (bv. geslag) kan by die hek ingevul word indien nodig.
+      </p>
     </div>
 
     <div class="card">
       <h2>Jou keuse</h2>
       <div id="lines"></div>
       <div class="total"><span>Totaal</span><span id="total">R0.00</span></div>
-      <p class="muted" style="margin-top:8px" id="note"></p>
+      <p class="muted" style="margin-top:8px" id="note">Let wel: pryse word bevestig en herbereken op die volgende stap.</p>
     </div>
   </div>
 </div>
@@ -62,17 +66,28 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
 const slug = ${JSON.stringify(slug)};
 
 function rands(c){ return 'R' + ((c||0)/100).toFixed(2); }
-
 function loadCart(){
-  let raw = null;
-  try { raw = sessionStorage.getItem('pending_cart'); } catch(_){}
-  if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+  try {
+    const raw = sessionStorage.getItem('pending_cart');
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
 }
 
-function render(cart){
+// map ticket_type_id -> {name, price_cents, requires_gender}
+async function fetchCatalog(slug){
+  const res = await fetch('/api/public/events/'+encodeURIComponent(slug));
+  if (!res.ok) return null;
+  const j = await res.json().catch(()=>null);
+  if (!j?.ok) return null;
+  const map = new Map();
+  for (const t of (j.ticket_types||[])) map.set(Number(t.id), t);
+  return { event: j.event, types: map };
+}
+
+function render(cart, types){
   const empty = document.getElementById('empty');
   const content = document.getElementById('content');
+
   if (!cart || !Array.isArray(cart.items) || !cart.items.length){
     empty.style.display = 'block';
     content.style.display = 'none';
@@ -81,16 +96,18 @@ function render(cart){
   empty.style.display = 'none';
   content.style.display = 'grid';
 
-  // Show lines (quantities/prices will be verified server-side too)
   const lines = document.getElementById('lines');
   let total = 0;
   lines.innerHTML = cart.items.map(it => {
-    // price will be recomputed on server; here we just show qty × ?
-    return '<div class="row"><div>Ticket '+it.ticket_type_id+' × '+it.qty+'</div><div>—</div></div>';
+    const meta = types.get(Number(it.ticket_type_id)) || { name: 'Ticket', price_cents: 0 };
+    const lineTotal = (meta.price_cents||0) * (it.qty||0);
+    total += lineTotal;
+    return '<div class="row"><div>'+escapeHtml(meta.name)+' × '+Number(it.qty||0)+'</div><div>'+rands(lineTotal)+'</div></div>';
   }).join('');
   document.getElementById('total').textContent = rands(total);
-  document.getElementById('note').textContent = 'Let wel: Finale pryse word bevestig op die volgende stap.';
 }
+
+function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 
 async function submitCheckout(cart){
   const msg = document.getElementById('msg');
@@ -104,8 +121,8 @@ async function submitCheckout(cart){
       last_name:  document.getElementById('lastName').value || '',
       email:      document.getElementById('email').value || '',
       phone:      document.getElementById('phone').value || ''
-    },
-    // delivery: 'email' // WhatsApp later
+    }
+    // delivery: 'email'  // WhatsApp soon
   };
 
   const res = await fetch('/api/public/checkout', {
@@ -121,18 +138,21 @@ async function submitCheckout(cart){
   }
 
   msg.className = 'ok';
-  msg.textContent = 'Bestelling geskep. Jy kan hierdie blad nou toemaak.';
+  msg.textContent = 'Bestelling geskep.';
   try { sessionStorage.removeItem('pending_cart'); } catch(_){}
-  // TODO: if Yoco redirect link is returned, send user there:
   if (res.payment_url) location.href = res.payment_url;
 }
 
-function wire(cart){
+(async function init(){
+  const cart = loadCart();
+  const cat = await fetchCatalog(slug);
+  if (!cart || !cat){ 
+    document.getElementById('empty').style.display = 'block';
+    return;
+  }
+  render(cart, cat.types);
+  document.getElementById('content').style.display = 'grid';
   document.getElementById('payBtn').onclick = ()=> submitCheckout(cart);
-}
-
-const cart = loadCart();
-render(cart);
-wire(cart);
+})();
 </script>
 </body></html>`;
