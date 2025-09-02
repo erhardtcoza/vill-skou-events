@@ -1,3 +1,4 @@
+// /src/ui/admin.js
 export const adminHTML = () => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
@@ -61,23 +62,56 @@ async function load() {
   const gs = await fetch('/api/admin/gates').then(r=>r.json());
   document.getElementById('gates').innerHTML = gs.gates.map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
 }
+
 async function createEvent(){
+  const elStarts = document.getElementById('starts');
+  const elEnds   = document.getElementById('ends');
+  const startsMs = elStarts.valueAsNumber || Date.parse(elStarts.value || '');
+  const endsMs   = elEnds.valueAsNumber   || Date.parse(elEnds.value || '');
+
+  if (!isFinite(startsMs) || !isFinite(endsMs)) {
+    msg('evmsg', { ok:false, error:'Please select valid start and end date/times' });
+    return;
+  }
+
   const b = {
-    slug: v('slug'), name: v('name'), venue: v('venue'),
-    starts_at: Math.floor(new Date(v('starts')).getTime()/1000),
-    ends_at: Math.floor(new Date(v('ends')).getTime()/1000),
+    slug: v('slug'),
+    name: v('name'),
+    venue: v('venue'),
+    starts_at: Math.floor(startsMs / 1000),
+    ends_at:   Math.floor(endsMs   / 1000),
+    status: 'active'
   };
-  const r = await post('/api/admin/events', b); msg('evmsg', r);
-  load();
+
+  const r = await post('/api/admin/events', b);
+  msg('evmsg', r);
+  if (r.ok) load();
 }
+
 async function addTT(){
-  const b = { name:v('ttName'), price_cents:+v('ttPrice'), capacity:+v('ttCap'), requires_gender:document.getElementById('ttGen').checked };
-  const r = await post('/api/admin/events/'+v('evId')+'/ticket-types', b); alert(JSON.stringify(r));
+  const b = { 
+    name: v('ttName'), 
+    price_cents: +v('ttPrice'), 
+    capacity: +v('ttCap'), 
+    requires_gender: document.getElementById('ttGen').checked 
+  };
+  const r = await post('/api/admin/events/'+v('evId')+'/ticket-types', b);
+  alert(JSON.stringify(r));
 }
-async function addGate(){ const r = await post('/api/admin/gates', {name:v('gatename')}); alert(JSON.stringify(r)); load(); }
+
+async function addGate(){ 
+  const r = await post('/api/admin/gates', {name:v('gatename')}); 
+  alert(JSON.stringify(r)); 
+  load(); 
+}
+
 function v(id){return document.getElementById(id).value}
 function msg(id, o){ document.getElementById(id).textContent = JSON.stringify(o,null,2) }
-async function post(url, body){ return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()) }
+async function post(url, body){ 
+  return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()) 
+}
+
 load();
 </script>
 </div></body></html>`;
