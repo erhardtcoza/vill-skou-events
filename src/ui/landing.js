@@ -15,8 +15,7 @@ export const landingHTML = () => `<!doctype html><html><head>
   h2{ margin:8px 0 12px }
   .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px }
   .card{ position:relative; background:#fff; border-radius:14px; box-shadow:0 10px 24px rgba(0,0,0,.08); overflow:hidden; display:flex; flex-direction:column }
-  .badge{ position:absolute; top:10px; left:10px; background:#fff; color:#fff; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:700; box-shadow:0 4px 10px rgba(0,0,0,.15) }
-  .badge.closed{ background:var(--red) }
+  .badge{ position:absolute; top:10px; left:10px; background:var(--red); color:#fff; border-radius:999px; padding:4px 10px; font-size:12px; font-weight:700; box-shadow:0 4px 10px rgba(0,0,0,.15) }
   .poster{ height:180px; width:100%; object-fit:cover; display:block; background:linear-gradient(135deg,#e6ffe6,#fffad1) }
   .poster.fallback{ display:flex; align-items:center; justify-content:center; color:#123; font-weight:700; letter-spacing:.4px; font-size:40px }
   .body{ padding:14px; flex:1; display:flex; flex-direction:column; gap:6px }
@@ -27,7 +26,6 @@ export const landingHTML = () => `<!doctype html><html><head>
   .primary{ background:var(--green); color:#fff }
   .ghost{ border:1px solid #e5e7eb; color:#111; background:#fff }
   .btn[aria-disabled="true"]{ background:#e5e7eb; color:#888; pointer-events:none }
-  /* whole-card link + focus */
   .card a.card-link{ position:absolute; inset:0; outline:0; }
   .card:focus-within{ box-shadow:0 0 0 3px #0a7d2b55; }
 </style>
@@ -63,59 +61,99 @@ function fmtDateRange(s,e){
 }
 function isClosed(ev){ return (ev.ends_at||0) < Math.floor(Date.now()/1000); }
 
-function posterHTML(ev){
-  const url = ev.poster_url && String(ev.poster_url).trim();
-  if (url) {
-    const esc = url.replace(/"/g,'&quot;');
-    return '<img class="poster" src="'+esc+'" alt="'+(ev.name||"Event")+' poster" loading="lazy" onerror="this.replaceWith(fallbackPoster(\''+escapeJS(ev.name||"")+ '\'))">';
+function posterNode(ev){
+  if (ev.poster_url) {
+    const img = document.createElement('img');
+    img.className = 'poster';
+    img.alt = (ev.name||'Event') + ' poster';
+    img.loading = 'lazy';
+    img.src = ev.poster_url;
+    img.onerror = () => {
+      const fb = document.createElement('div');
+      fb.className = 'poster fallback';
+      fb.textContent = (ev.name||'E').charAt(0).toUpperCase();
+      img.replaceWith(fb);
+    };
+    return img;
   }
-  return '<div class="poster fallback">'+(ev.name?.charAt(0)?.toUpperCase() || 'E')+'</div>';
+  const fb = document.createElement('div');
+  fb.className = 'poster fallback';
+  fb.textContent = (ev.name||'E').charAt(0).toUpperCase();
+  return fb;
 }
-function fallbackPoster(title){
-  const div = document.createElement('div');
-  div.className = 'poster fallback';
-  div.textContent = (title||'E').charAt(0).toUpperCase();
-  return div;
-}
-function escapeJS(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\\"'); }
 
-function cardHTML(ev){
-  const when = fmtDateRange(ev.starts_at, ev.ends_at);
-  const v = ev.venue ? ' · ' + ev.venue : '';
-  const closed = isClosed(ev);
-  const buyLabel = closed ? 'Event Closed' : 'Kaartjies';
-  const buyAttrs = closed ? 'class="btn primary" aria-disabled="true"' : 'class="btn primary" href="/shop/'+ev.slug+'"';
-  return \`
-    <div class="card">
-      <a class="card-link" href="/shop/\${ev.slug}" aria-label="\${ev.name}"></a>
-      \${closed ? '<span class="badge closed">Event Closed</span>' : ''}
-      \${posterHTML(ev)}
-      <div class="body">
-        <div class="title">\${ev.name}</div>
-        <div class="meta">\${when}\${v}</div>
-      </div>
-      <div class="actions">
-        <a class="btn ghost" href="/shop/\${ev.slug}">Info</a>
-        <a \${buyAttrs}>\${buyLabel}</a>
-      </div>
-    </div>\`;
+function cardNode(ev){
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const link = document.createElement('a');
+  link.className = 'card-link';
+  link.href = '/shop/' + ev.slug;
+  link.setAttribute('aria-label', ev.name || 'Event');
+  card.appendChild(link);
+
+  if (isClosed(ev)){
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = 'Event Closed';
+    card.appendChild(badge);
+  }
+
+  card.appendChild(posterNode(ev));
+
+  const body = document.createElement('div');
+  body.className = 'body';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = ev.name;
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = fmtDateRange(ev.starts_at, ev.ends_at) + (ev.venue ? (' · ' + ev.venue) : '');
+  body.appendChild(title); body.appendChild(meta);
+  card.appendChild(body);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const info = document.createElement('a');
+  info.className = 'btn ghost';
+  info.href = '/shop/' + ev.slug;
+  info.textContent = 'Info';
+  const buy = document.createElement('a');
+  buy.className = 'btn primary';
+  if (isClosed(ev)){
+    buy.setAttribute('aria-disabled','true');
+    buy.textContent = 'Event Closed';
+  } else {
+    buy.href = '/shop/' + ev.slug;
+    buy.textContent = 'Kaartjies';
+  }
+  actions.appendChild(info); actions.appendChild(buy);
+  card.appendChild(actions);
+
+  return card;
 }
 
 async function load(){
-  const res = await fetch('/api/public/events').then(r=>r.json()).catch(()=>({ok:false}));
   const grid = document.getElementById('grid');
-  if (!res.ok){ grid.textContent = 'Kon nie laai nie'; return; }
-  if (!res.events.length){ grid.textContent = 'Geen vertonings tans'; return; }
+  try{
+    const res = await fetch('/api/public/events');
+    const data = await res.json();
+    if (!data.ok){ grid.textContent = 'Kon nie laai nie'; return; }
+    if (!data.events.length){ grid.textContent = 'Geen vertonings tans'; return; }
 
-  // sort: upcoming first, then closed
-  const now = Math.floor(Date.now()/1000);
-  const events = res.events.slice().sort((a,b)=>{
-    const ac = (a.ends_at||0) < now, bc = (b.ends_at||0) < now;
-    if (ac !== bc) return ac ? 1 : -1; // open before closed
-    return (a.starts_at||0) - (b.starts_at||0);
-  });
+    // Sort: upcoming, then closed
+    const now = Math.floor(Date.now()/1000);
+    const events = data.events.slice().sort((a,b)=>{
+      const ac = (a.ends_at||0) < now, bc = (b.ends_at||0) < now;
+      if (ac !== bc) return ac ? 1 : -1;
+      return (a.starts_at||0) - (b.starts_at||0);
+    });
 
-  grid.innerHTML = events.map(cardHTML).join('');
+    grid.innerHTML = '';
+    events.forEach(ev => grid.appendChild(cardNode(ev)));
+  }catch(e){
+    grid.textContent = 'Kon nie laai nie';
+  }
 }
 load();
 </script>
