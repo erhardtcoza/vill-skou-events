@@ -30,7 +30,7 @@ async function pricedItems(db, event_id, items) {
   return { lines, total };
 }
 
-// PAY LATER: create order with short pickup code
+// PAY LATER
 export async function createOrderPayLater(db, body) {
   const { lines, total } = await pricedItems(db, body.event_id, body.items);
   if (!lines.length) throw new Error("No items");
@@ -54,7 +54,7 @@ export async function createOrderPayLater(db, body) {
   return { order_id, short_code: sc };
 }
 
-// PAY NOW: create pending order and return a (stub) payment URL for now
+// PAY NOW (pending)
 export async function createOrderPayNow(db, body, _env) {
   const { lines, total } = await pricedItems(db, body.event_id, body.items);
   if (!lines.length) throw new Error("No items");
@@ -76,4 +76,23 @@ export async function createOrderPayNow(db, body, _env) {
   // TODO: Replace with Yoco Hosted Payment URL once available
   const payment_url = `/shop/thank-you?order=${order_id}`;
   return { order_id, payment_url };
+}
+
+// === NEW: used by webhook later ===
+export async function markOrderPaidAndIssue(db, env, order_id, { method='online_yoco', payment_ref='' } = {}) {
+  // set paid if not already, then issue tickets idempotently
+  const row = await db.prepare(`SELECT status FROM orders WHERE id=?`).bind(Number(order_id)).first();
+  if (!row) throw new Error("Order not found");
+
+  if (row.status !== 'paid') {
+    await db
+      .prepare(`UPDATE orders SET status='paid', payment_method=?, payment_ref=?, paid_at=? WHERE id=?`)
+      .bind(method, payment_ref, nowSec(), Number(order_id))
+      .run();
+  }
+
+  const { ensureTicketsIssuedForOrder, deliverTickets } = await import("./tickets.js");
+  const tix = await ensureTicketsIssuedForOrder(db, Number(order_id));
+  try { await deliverTickets(env, Number(order_id), tix); } catch(_){}
+  return tix;
 }
