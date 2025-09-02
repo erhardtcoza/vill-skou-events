@@ -10,6 +10,8 @@ export const adminHTML = () => `<!doctype html><html><head>
   table{width:100%;border-collapse:collapse} td,th{padding:8px;border-bottom:1px solid #eee}
   .row{display:flex;gap:8px;flex-wrap:wrap}
   .muted{color:#6b7280}
+  .err{color:#b00020}
+  .ok{color:#0a7d2b}
 </style></head><body><div class="wrap">
 <h1>Admin</h1>
 
@@ -19,8 +21,9 @@ export const adminHTML = () => `<!doctype html><html><head>
     <input id="slug" placeholder="slug (e.g. skou-2025)"/>
     <input id="name" placeholder="Event name" />
     <input id="venue" placeholder="Venue" />
-    <input id="starts" type="datetime-local"/>
-    <input id="ends" type="datetime-local"/>
+    <!-- Dates only -->
+    <label>Start date <input id="startDate" type="date"/></label>
+    <label>End date <input id="endDate" type="date"/></label>
     <button onclick="createEvent()">Create</button>
   </div>
   <pre id="evmsg"></pre>
@@ -46,8 +49,6 @@ export const adminHTML = () => `<!doctype html><html><head>
     <label class="muted">Event
       <select id="evSelect"></select>
     </label>
-    <!-- legacy input kept (hidden) just in case -->
-    <input id="evId" placeholder="event_id" style="display:none"/>
     <input id="ttName" placeholder="name"/>
     <input id="ttPrice" type="number" placeholder="price cents"/>
     <input id="ttCap" type="number" placeholder="capacity"/>
@@ -62,6 +63,15 @@ export const adminHTML = () => `<!doctype html><html><head>
 <script>
 let _events = [];
 
+function parseLocalDateToMs(dateStr, endOfDay=false){
+  // dateStr is "YYYY-MM-DD". Build a local Date (not UTC) to avoid Safari quirks.
+  if (!dateStr) return NaN;
+  const [y,m,d] = dateStr.split('-').map(n=>parseInt(n,10));
+  if (!y || !m || !d) return NaN;
+  const dt = endOfDay ? new Date(y, m-1, d, 23, 59, 0, 0) : new Date(y, m-1, d, 0, 0, 0, 0);
+  return dt.getTime();
+}
+
 async function load() {
   // Load events
   const ev = await fetch('/api/admin/events').then(r=>r.json());
@@ -72,7 +82,6 @@ async function load() {
     <td>\${new Date(e.starts_at*1000).toLocaleString()}</td>
     <td>\${new Date(e.ends_at*1000).toLocaleString()}</td></tr>\`).join('');
 
-  // Populate event dropdown for ticket types (most recent first)
   setEventSelect();
 
   // Load gates
@@ -85,18 +94,19 @@ function setEventSelect(preferId){
   const eventsSorted = [..._events].sort((a,b)=> (b.starts_at||0) - (a.starts_at||0));
   sel.innerHTML = eventsSorted.map(e=>\`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`).join('') || '<option value="">No events</option>';
   if (preferId) sel.value = String(preferId);
-  // If nothing selected (or invalid preferId), default to freshest event
   if (!sel.value && eventsSorted.length) sel.value = String(eventsSorted[0].id);
 }
 
 async function createEvent(){
-  const elStarts = document.getElementById('starts');
-  const elEnds   = document.getElementById('ends');
-  const startsMs = elStarts.valueAsNumber || Date.parse(elStarts.value || '');
-  const endsMs   = elEnds.valueAsNumber   || Date.parse(elEnds.value || '');
+  const startMs = parseLocalDateToMs(document.getElementById('startDate').value, false);
+  const endMs   = parseLocalDateToMs(document.getElementById('endDate').value, true);
 
-  if (!isFinite(startsMs) || !isFinite(endsMs)) {
-    msg('evmsg', { ok:false, error:'Please select valid start and end date/times' });
+  if (!isFinite(startMs) || !isFinite(endMs)) {
+    msg('evmsg', { ok:false, error:'Please select valid start and end dates (YYYY-MM-DD)' });
+    return;
+  }
+  if (endMs < startMs) {
+    msg('evmsg', { ok:false, error:'End date cannot be before start date' });
     return;
   }
 
@@ -104,8 +114,8 @@ async function createEvent(){
     slug: v('slug'),
     name: v('name'),
     venue: v('venue'),
-    starts_at: Math.floor(startsMs / 1000),
-    ends_at:   Math.floor(endsMs   / 1000),
+    starts_at: Math.floor(startMs / 1000),
+    ends_at:   Math.floor(endMs   / 1000),
     status: 'active'
   };
 
@@ -113,12 +123,17 @@ async function createEvent(){
   msg('evmsg', r);
   if (r.ok) {
     await load();
-    setEventSelect(r.id); // select the newly created event for ticket adding
+    setEventSelect(r.id);
+    // reset fields lightly
+    document.getElementById('slug').value = '';
+    document.getElementById('name').value = '';
+    document.getElementById('venue').value = '';
+    document.getElementById('startDate').value = '';
+    document.getElementById('endDate').value = '';
   }
 }
 
 async function addTT(){
-  // Use selected event id automatically
   const eventId = Number(document.getElementById('evSelect').value || 0);
   if (!eventId) { document.getElementById('ttmsg').textContent = 'Please create/select an event first.'; return; }
 
@@ -136,7 +151,6 @@ async function addTT(){
   const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
   document.getElementById('ttmsg').textContent = JSON.stringify(r);
   if (r.ok) {
-    // Clear inputs for the next entry
     document.getElementById('ttName').value = '';
     document.getElementById('ttPrice').value = '';
     document.getElementById('ttCap').value = '';
@@ -151,7 +165,11 @@ async function addGate(){
 }
 
 function v(id){return document.getElementById(id).value}
-function msg(id, o){ document.getElementById(id).textContent = JSON.stringify(o,null,2) }
+function msg(id, o){ 
+  const el = document.getElementById(id);
+  el.textContent = JSON.stringify(o,null,2);
+  el.className = o.ok ? 'ok' : 'err';
+}
 async function post(url, body){ 
   return fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
     .then(r=>r.json()) 
