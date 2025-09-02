@@ -25,15 +25,6 @@ APP_NAME = "Villiersdorp Skou Tickets"
 # wrangler secret put HMAC_SECRET
 # wrangler secret put MAILCHANNELS_SENDER   # e.g. "tickets@villiersdorpskou.co.za"
 
-# Route the worker to your domain
-[[routes]]
-pattern = "events.villiersdorpskou.co.za/*"
-zone_name = "villiersdorpskou.co.za"
-
-[[routes]]
-pattern = "events.villiersdorpskou.co.za"
-custom_domain = true
-
 [observability.logs]
 enabled = true
 
