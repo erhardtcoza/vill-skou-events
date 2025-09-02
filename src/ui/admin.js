@@ -9,6 +9,7 @@ export const adminHTML = () => `<!doctype html><html><head>
   input,button,select{padding:10px;border:1px solid #ccc;border-radius:8px;margin:4px}
   table{width:100%;border-collapse:collapse} td,th{padding:8px;border-bottom:1px solid #eee}
   .row{display:flex;gap:8px;flex-wrap:wrap}
+  .muted{color:#6b7280}
 </style></head><body><div class="wrap">
 <h1>Admin</h1>
 
@@ -42,25 +43,50 @@ export const adminHTML = () => `<!doctype html><html><head>
 <section>
   <h2>Add Ticket Type</h2>
   <div class="row">
-    <input id="evId" placeholder="event_id"/>
+    <label class="muted">Event
+      <select id="evSelect"></select>
+    </label>
+    <!-- legacy input kept (hidden) just in case -->
+    <input id="evId" placeholder="event_id" style="display:none"/>
     <input id="ttName" placeholder="name"/>
     <input id="ttPrice" type="number" placeholder="price cents"/>
     <input id="ttCap" type="number" placeholder="capacity"/>
-    <label>Gender?<input id="ttGen" type="checkbox"/></label>
+    <label>Gender?
+      <input id="ttGen" type="checkbox"/>
+    </label>
     <button onclick="addTT()">Add</button>
   </div>
+  <p class="muted" id="ttmsg"></p>
 </section>
 
 <script>
+let _events = [];
+
 async function load() {
+  // Load events
   const ev = await fetch('/api/admin/events').then(r=>r.json());
+  _events = ev.events || [];
   document.getElementById('events').innerHTML =
     '<tr><th>ID</th><th>Slug</th><th>Name</th><th>Starts</th><th>Ends</th></tr>' +
-    ev.events.map(e=>\`<tr><td>\${e.id}</td><td>\${e.slug}</td><td>\${e.name}</td>
+    _events.map(e=>\`<tr><td>\${e.id}</td><td>\${e.slug}</td><td>\${e.name}</td>
     <td>\${new Date(e.starts_at*1000).toLocaleString()}</td>
     <td>\${new Date(e.ends_at*1000).toLocaleString()}</td></tr>\`).join('');
+
+  // Populate event dropdown for ticket types (most recent first)
+  setEventSelect();
+
+  // Load gates
   const gs = await fetch('/api/admin/gates').then(r=>r.json());
   document.getElementById('gates').innerHTML = gs.gates.map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
+}
+
+function setEventSelect(preferId){
+  const sel = document.getElementById('evSelect');
+  const eventsSorted = [..._events].sort((a,b)=> (b.starts_at||0) - (a.starts_at||0));
+  sel.innerHTML = eventsSorted.map(e=>\`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`).join('') || '<option value="">No events</option>';
+  if (preferId) sel.value = String(preferId);
+  // If nothing selected (or invalid preferId), default to freshest event
+  if (!sel.value && eventsSorted.length) sel.value = String(eventsSorted[0].id);
 }
 
 async function createEvent(){
@@ -85,18 +111,37 @@ async function createEvent(){
 
   const r = await post('/api/admin/events', b);
   msg('evmsg', r);
-  if (r.ok) load();
+  if (r.ok) {
+    await load();
+    setEventSelect(r.id); // select the newly created event for ticket adding
+  }
 }
 
 async function addTT(){
+  // Use selected event id automatically
+  const eventId = Number(document.getElementById('evSelect').value || 0);
+  if (!eventId) { document.getElementById('ttmsg').textContent = 'Please create/select an event first.'; return; }
+
   const b = { 
     name: v('ttName'), 
     price_cents: +v('ttPrice'), 
     capacity: +v('ttCap'), 
     requires_gender: document.getElementById('ttGen').checked 
   };
-  const r = await post('/api/admin/events/'+v('evId')+'/ticket-types', b);
-  alert(JSON.stringify(r));
+  if (!b.name || !b.price_cents || !b.capacity) {
+    document.getElementById('ttmsg').textContent = 'Name, price, and capacity are required.';
+    return;
+  }
+
+  const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
+  document.getElementById('ttmsg').textContent = JSON.stringify(r);
+  if (r.ok) {
+    // Clear inputs for the next entry
+    document.getElementById('ttName').value = '';
+    document.getElementById('ttPrice').value = '';
+    document.getElementById('ttCap').value = '';
+    document.getElementById('ttGen').checked = false;
+  }
 }
 
 async function addGate(){ 
