@@ -1,4 +1,4 @@
-name = "villiersdorp-events"
+name = "skou-events"
 main = "src/index.js"
 compatibility_date = "2025-09-01"
 ## node_compat = false
