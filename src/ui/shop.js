@@ -4,7 +4,7 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
 <title>${slug} · Villiersdorp Skou</title>
 <style>
   :root{
-    --skou-green:#0a7d2b; --skou-yellow:#ffd900; --grey-1:#f7f7f8; --grey-2:#eef0f2; --text:#222; --muted:#666;
+    --skou-green:#0a7d2b; --skou-yellow:#ffd900; --grey-1:#f7f7f8; --grey-2:#eef0f2; --text:#222; --muted:#666; --red:#b91c1c;
   }
   *{box-sizing:border-box}
   body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--grey-1);margin:0;color:var(--text)}
@@ -17,10 +17,13 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
   .meta{color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.4)}
   .meta h1{margin:0 0 6px;font-size:28px}
   .meta small{opacity:.95}
+  .ribbon{position:absolute;top:12px;left:12px;background:var(--red);color:#fff;font-weight:700;padding:6px 10px;border-radius:999px;box-shadow:0 4px 12px rgba(0,0,0,.2)}
 
   .page{max-width:1100px;margin:18px auto;padding:0 16px;display:grid;grid-template-columns:1.5fr .9fr;gap:20px}
   .card{background:#fff;border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,.06);padding:18px}
   .muted{color:var(--muted);font-size:14px}
+
+  .notice{background:#fff1f1;border:1px solid #ffd2d2;color:#7a1c1c;padding:10px 12px;border-radius:10px;margin-bottom:10px}
 
   .gallery{display:flex;flex-direction:column;gap:10px}
   .gallery-main{position:relative;border-radius:12px;overflow:hidden;background:#000}
@@ -41,7 +44,7 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
   .summary .row{display:flex;justify-content:space-between;margin:8px 0}
   .summary .total{font-size:20px;font-weight:700}
   .btn{display:inline-block;background:var(--skou-green);color:#fff;text-decoration:none;border:none;border-radius:10px;padding:12px 16px;cursor:pointer}
-  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .btn[disabled]{opacity:.45;cursor:not-allowed}
   .sticky{position:sticky;top:16px}
 
   @media (max-width:900px){
@@ -53,6 +56,7 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
 </head><body>
 
   <div class="hero">
+    <span id="closedRibbon" class="ribbon" style="display:none">Event Closed</span>
     <img id="heroImg" class="img" alt="" />
     <div class="wrap">
       <div class="inner">
@@ -68,6 +72,8 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
 
   <div class="page">
     <div class="card">
+      <div id="closedNotice" class="notice" style="display:none">Hierdie vertoning is afgehandel. Kaartjie-aankope is gesluit.</div>
+
       <div class="gallery" id="gallery" style="display:none">
         <div class="gallery-main"><img id="gMain" alt="Gallery image"></div>
         <div class="gallery-thumbs" id="gThumbs"></div>
@@ -89,7 +95,8 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
 
 <script>
 const slug=${JSON.stringify(slug)};
-let catalog=null, selections=new Map(); // ticket_type_id -> {name, price_cents, qty}
+let catalog=null, selections=new Map();
+let CLOSED=false;
 
 function fmtR(c){ return 'R'+(c/100).toFixed(2); }
 
@@ -107,6 +114,13 @@ async function load(){
   const res = await fetch('/api/public/events/'+slug).then(r=>r.json());
   catalog = res; const ev=res.event, types=res.types||[];
 
+  // Closed?
+  CLOSED = (ev?.ends_at||0) < Math.floor(Date.now()/1000);
+  if (CLOSED){
+    document.getElementById('closedRibbon').style.display='inline-block';
+    document.getElementById('closedNotice').style.display='block';
+  }
+
   // Header info
   document.getElementById('ev-name').textContent = ev.name || slug;
   document.getElementById('ev-when').textContent = fmtWhen(ev.starts_at, ev.ends_at);
@@ -118,12 +132,11 @@ async function load(){
     hero.src = ev.hero_url;
     hero.alt = ev.name || 'Event';
   } else {
-    // fallback gradient
     hero.style.background = 'linear-gradient(90deg,var(--skou-green),var(--skou-yellow))';
     hero.style.filter = 'none';
   }
 
-  // Poster image (beside title)
+  // Poster
   const posterBox = document.getElementById('posterBox');
   if (ev.poster_url) {
     const img = new Image(); img.src = ev.poster_url; img.alt = (ev.name||'') + ' poster';
@@ -173,6 +186,31 @@ async function load(){
 
 function renderTickets(types){
   const wrap = document.getElementById('tickets'); wrap.innerHTML='';
+  if (CLOSED){
+    // Show tickets as read-only when closed
+    types.forEach(t=>{
+      const row=document.createElement('div'); row.className='ticket';
+      const isFree = !t.price_cents || t.price_cents===0;
+      const priceHTML = isFree ? '<span class="price free">FREE</span>' : '<span class="price">'+fmtR(t.price_cents)+'</span>';
+      row.innerHTML = \`
+        <div>
+          <div class="name">\${t.name}</div>
+          <div class="muted">\${t.requires_gender?'Gender required':''}</div>
+        </div>
+        <div>\${priceHTML}</div>
+        <div class="qty">
+          <button disabled>-</button>
+          <input type="number" value="0" disabled>
+          <button disabled>+</button>
+        </div>\`;
+      wrap.appendChild(row);
+    });
+    document.getElementById('checkout').textContent = 'Event Closed';
+    document.getElementById('checkout').disabled = true;
+    return;
+  }
+
+  // Normal interactive tickets
   types.forEach(t=>{
     const row=document.createElement('div'); row.className='ticket';
     const isFree = !t.price_cents || t.price_cents===0;
@@ -215,11 +253,13 @@ function updateSummary(){
   let total = 0; selections.forEach(s=> total += (s.price_cents||0)*s.qty );
   document.getElementById('subtotal').textContent = fmtR(total);
   document.getElementById('total').textContent = fmtR(total);
-  document.getElementById('checkout').disabled = total===0;
+  document.getElementById('checkout').disabled = CLOSED || total===0;
+  document.getElementById('checkout').textContent = CLOSED ? 'Event Closed' : 'Checkout';
 }
 
 // move to checkout (store cart in sessionStorage)
 document.getElementById('checkout').onclick = ()=>{
+  if (CLOSED) return;
   const items = [...selections.values()].map(s=>({ ticket_type_id:s.ticket_type_id, qty:s.qty, requires_gender:s.requires_gender, name:s.name, price_cents:s.price_cents||0 }));
   sessionStorage.setItem('skou_cart', JSON.stringify({ slug, event_id: catalog.event.id, items, ts: Date.now() }));
   location.href = '/shop/'+slug+'/checkout';
