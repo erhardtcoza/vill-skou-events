@@ -45,6 +45,7 @@ export const adminHTML = () => `<!doctype html><html><head>
 
 <section>
   <h2>Events</h2>
+  <div id="eventsErr" class="err" style="display:none"></div>
   <div id="editPanel" class="panel" style="display:none">
     <h3>Edit Event</h3>
     <input id="ed_id" type="hidden"/>
@@ -75,6 +76,7 @@ https://.../img2.jpg"></textarea>
 
 <section>
   <h2>Gates</h2>
+  <div id="gatesErr" class="err" style="display:none"></div>
   <div class="row">
     <input id="gatename" placeholder="New gate name"/>
     <button onclick="addGate()">Add gate</button>
@@ -101,6 +103,7 @@ https://.../img2.jpg"></textarea>
 <script>
 let _events = [];
 
+/* ---------- utils ---------- */
 function parseLocalDateToMs(dateStr, endOfDay=false){
   if (!dateStr) return NaN;
   const [y,m,d] = dateStr.split('-').map(n=>parseInt(n,10));
@@ -115,19 +118,63 @@ function msToLocalDateInput(ms){
   const da = String(d.getDate()).padStart(2,'0');
   return \`\${y}-\${m}-\${da}\`;
 }
+function v(id){return document.getElementById(id).value}
+function msg(id, o){ const el = document.getElementById(id); el.textContent = JSON.stringify(o,null,2); el.className = o.ok ? 'ok' : 'err'; }
+function tryParseJSON(s){ try{ return JSON.parse(s); }catch(_){ return null; } }
 
+async function safeGet(url){
+  try{
+    const res = await fetch(url);
+    const text = await res.text();
+    try { return JSON.parse(text); } catch { return { ok:false, error:text||res.statusText }; }
+  }catch(e){ return { ok:false, error:String(e) }; }
+}
+async function post(url, body){
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type':'application/json' },
+    body: JSON.stringify(body)
+  });
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok:false, error: text || (r.status+' '+r.statusText) };
+  }
+}
+
+/* ---------- loading ---------- */
 async function load() {
+  // settings
   await loadSettingsAdmin();
 
-  const ev = await fetch('/api/admin/events').then(r=>r.json());
-  _events = ev.events || [];
+  // events
+  const ev = await safeGet('/api/admin/events');
+  const evErrEl = document.getElementById('eventsErr');
+  if (!ev.ok){
+    evErrEl.style.display='block';
+    evErrEl.textContent = 'Could not load events: ' + (ev.error||'error');
+    _events = [];
+  } else {
+    evErrEl.style.display='none';
+    _events = ev.events || [];
+  }
   renderEventsTable();
   setEventSelect();
 
-  const gs = await fetch('/api/admin/gates').then(r=>r.json());
-  document.getElementById('gates').innerHTML = gs.gates.map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
+  // gates
+  const gs = await safeGet('/api/admin/gates');
+  const gErrEl = document.getElementById('gatesErr');
+  if (!gs.ok){
+    gErrEl.style.display='block';
+    gErrEl.textContent = 'Could not load gates: ' + (gs.error||'error');
+  } else {
+    gErrEl.style.display='none';
+    document.getElementById('gates').innerHTML = (gs.gates||[]).map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
+  }
 }
 
+/* ---------- events table ---------- */
 function renderEventsTable(){
   const rows = _events.map(e=>\`
     <tr>
@@ -153,11 +200,10 @@ function setEventSelect(preferId){
   if (!sel.value && eventsSorted.length) sel.value = String(eventsSorted[0].id);
 }
 
-// Create event
+/* ---------- create ---------- */
 async function createEvt(){
   const startMs = parseLocalDateToMs(document.getElementById('startDate').value, false);
   const endMs   = parseLocalDateToMs(document.getElementById('endDate').value, true);
-
   if (!isFinite(startMs) || !isFinite(endMs)) { msg('evmsg', { ok:false, error:'Please select valid start and end dates' }); return; }
   if (endMs < startMs) { msg('evmsg', { ok:false, error:'End date cannot be before start date' }); return; }
 
@@ -179,17 +225,17 @@ async function createEvt(){
   }
 }
 
-// Edit event
+/* ---------- edit ---------- */
 async function editEvent(id){
-  const res = await fetch('/api/admin/events/'+id).then(r=>r.json());
-  if (!res.ok) return alert('Event not found');
-  const e = res.event;
-  document.getElementById('ed_id').value = e.id;
+  const res = await safeGet('/api/admin/events/'+id);
+  if (!res.ok) return alert('Event not found: ' + (res.error||''));
+  const e = res.event || {};
+  document.getElementById('ed_id').value = e.id||'';
   document.getElementById('ed_slug').value = e.slug||'';
   document.getElementById('ed_name').value = e.name||'';
   document.getElementById('ed_venue').value = e.venue||'';
-  document.getElementById('ed_start').value = msToLocalDateInput((e.starts_at||0)*1000);
-  document.getElementById('ed_end').value   = msToLocalDateInput((e.ends_at||0)*1000);
+  document.getElementById('ed_start').value = e.starts_at ? msToLocalDateInput((e.starts_at)*1000) : '';
+  document.getElementById('ed_end').value   = e.ends_at   ? msToLocalDateInput((e.ends_at)*1000)   : '';
   document.getElementById('ed_hero').value  = e.hero_url||'';
   document.getElementById('ed_poster').value= e.poster_url||'';
   const gallery = (e.gallery_urls ? tryParseJSON(e.gallery_urls) : []) || [];
@@ -209,7 +255,7 @@ async function saveEdit(){
   if (endMs < startMs) { setEdMsg('End date cannot be before start date', false); return; }
 
   const galLines = document.getElementById('ed_gallery').value
-    .split(/\r?\n/).map(s=>s.trim()).filter(Boolean).slice(0,8);
+    .split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean).slice(0,8);
 
   const b = {
     slug: v('ed_slug'),
@@ -222,11 +268,13 @@ async function saveEdit(){
     gallery_urls: JSON.stringify(galLines)
   };
 
-  const r = await fetch('/api/admin/events/'+id, {
+  const resp = await fetch('/api/admin/events/'+id, {
     method:'PUT',
     headers:{'content-type':'application/json'},
     body: JSON.stringify(b)
-  }).then(r=>r.json());
+  });
+  const text = await resp.text(); let r;
+  try{ r = JSON.parse(text); }catch{ r = { ok:false, error:text||resp.statusText }; }
 
   setEdMsg(r.ok ? 'Saved' : (r.error||'Save failed'), r.ok);
   if (r.ok) { await load(); cancelEdit(); }
@@ -234,14 +282,22 @@ async function saveEdit(){
 
 async function deleteEvent(id){
   if (!confirm('Delete this event? This cannot be undone.')) return;
-  const r = await fetch('/api/admin/events/'+id, { method:'DELETE' }).then(r=>r.json());
-  if (!r.ok) return alert('Delete failed');
+  const r = await safeGet('/api/admin/events/'+id, { method:'DELETE' });
+  if (!r.ok) return alert('Delete failed: ' + (r.error||''));
+  await load();
+}
+function setEdMsg(t, ok){ const el=document.getElementById('edmsg'); el.textContent=t; el.className = ok?'ok':'err'; }
+
+/* ---------- gates ---------- */
+async function addGate(){
+  const name = v('gatename').trim();
+  if (!name) return;
+  const r = await post('/api/admin/gates', {name});
+  if (!r.ok) alert('Add gate failed: ' + (r.error||'')); else document.getElementById('gatename').value='';
   await load();
 }
 
-function setEdMsg(t, ok){ const el=document.getElementById('edmsg'); el.textContent=t; el.className = ok?'ok':'err'; }
-
-// Ticket Types (Rand input, FREE if blank/0; no capacity)
+/* ---------- ticket types ---------- */
 async function addTT(){
   const eventId = Number(document.getElementById('evSelect').value || 0);
   if (!eventId) { document.getElementById('ttmsg').textContent = 'Please create/select an event first.'; return; }
@@ -253,13 +309,9 @@ async function addTT(){
   if (!isFinite(priceRand) || priceRand < 0) { document.getElementById('ttmsg').textContent = 'Invalid price.'; return; }
   const price_cents = Math.round(priceRand * 100); // 0 = FREE
 
-  const b = {
-    name,
-    price_cents,
-    requires_gender: document.getElementById('ttGen').checked
-  };
-
+  const b = { name, price_cents, requires_gender: document.getElementById('ttGen').checked };
   const r = await post('/api/admin/events/'+eventId+'/ticket-types', b);
+
   document.getElementById('ttmsg').textContent = r.ok ? (price_cents ? 'Added' : 'Added (FREE)') : (r.error||'Add failed');
   if (r.ok) {
     document.getElementById('ttName').value = '';
@@ -268,10 +320,10 @@ async function addTT(){
   }
 }
 
-// ----- Site settings helpers -----
+/* ---------- settings ---------- */
 async function loadSettingsAdmin(){
-  const res = await fetch('/api/admin/settings').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!res.ok) return;
+  const res = await safeGet('/api/admin/settings');
+  if (!res.ok){ document.getElementById('setmsg').textContent = 'Could not load settings: ' + (res.error||''); return; }
   const s = res.settings || {};
   document.getElementById('set_title').value = s.site_title || '';
   document.getElementById('set_logo').value  = s.logo_url   || '';
@@ -289,26 +341,6 @@ async function saveSettings(){
     body: JSON.stringify(body)
   }).then(r=>r.json()).catch(()=>({ok:false}));
   document.getElementById('setmsg').textContent = r.ok ? 'Saved' : 'Failed to save';
-}
-
-// ----- Shared helpers -----
-function v(id){return document.getElementById(id).value}
-function msg(id, o){ const el = document.getElementById(id); el.textContent = JSON.stringify(o,null,2); el.className = o.ok ? 'ok' : 'err'; }
-function tryParseJSON(s){ try{ return JSON.parse(s); }catch(_){ return null; } }
-
-// Improved fetch helper: handles non-JSON responses gracefully
-async function post(url, body){
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type':'application/json' },
-    body: JSON.stringify(body)
-  });
-  const text = await r.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { ok:false, error: text || (r.status+' '+r.statusText) };
-  }
 }
 
 load();
