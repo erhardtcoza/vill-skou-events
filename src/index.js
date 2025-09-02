@@ -12,6 +12,7 @@ import { shopHTML } from "./ui/shop.js";
 import { posHTML } from "./ui/pos.js";
 import { scannerHTML } from "./ui/scanner.js";
 import { checkoutHTML } from "./ui/checkout.js";
+import { ticketHTML } from "./ui/ticket.js";
 
 const router = Router();
 
@@ -42,6 +43,11 @@ router.add("GET", "/shop/:slug", async (req, env, ctx, { slug }) =>
 );
 router.add("GET", "/shop/:slug/checkout", async (req, env, ctx, { slug }) =>
   new Response(checkoutHTML(slug), { headers: { "content-type": "text/html" }})
+);
+
+// add ticket route
+router.add("GET", "/t/:code", async (req, env, ctx, { code }) =>
+  new Response(ticketHTML(code), { headers: { "content-type": "text/html" }})
 );
 
 export default {
