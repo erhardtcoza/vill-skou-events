@@ -11,6 +11,7 @@ import { adminHTML } from "./ui/admin.js";
 import { shopHTML } from "./ui/shop.js";
 import { posHTML } from "./ui/pos.js";
 import { scannerHTML } from "./ui/scanner.js";
+import { checkoutHTML } from "./ui/checkout.js";
 
 const router = Router();
 
@@ -26,8 +27,8 @@ router.add("GET", "/", async () => new Response(landingHTML(), { headers: { "con
 router.add("GET", "/admin", async () => new Response(adminHTML(), { headers: { "content-type": "text/html" }}));
 router.add("GET", "/pos", async () => new Response(posHTML(), { headers: { "content-type": "text/html" }}));
 router.add("GET", "/scan", async () => new Response(scannerHTML(), { headers: { "content-type": "text/html" }}));
-router.add("GET", "/shop/:slug", async (req, env, ctx, { slug }) =>
-  new Response(shopHTML(slug), { headers: { "content-type": "text/html" }})
+router.add("GET", "/shop/:slug/checkout", async (req, env, ctx, { slug }) =>
+  new Response(checkoutHTML(slug), { headers: { "content-type": "text/html" }})
 );
 
 export default {
