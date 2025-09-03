@@ -1,324 +1,443 @@
 // /src/ui/pos.js
-export const posHTML = () => `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+export const posHTML = () => `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>POS · Villiersdorp Skou</title>
 <style>
-  :root{--green:#176d2b;--bg:#f6f7f9;--card:#ffffff;--muted:#6b7280}
-  *{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  .wrap{max-width:1100px;margin:24px auto;padding:16px}
-  h1{margin:0 0 16px}
-  .card{background:var(--card);border:1px solid #e5e7eb;border-radius:14px;padding:16px;box-shadow:0 2px 0 rgba(0,0,0,.02)}
-  .row{display:flex;gap:10px;flex-wrap:wrap}
-  input,select,button{padding:10px 12px;border:1px solid #d1d5db;border-radius:10px;background:#fff}
-  input,select{min-width:140px}
-  button{background:#e8f1ea;border-color:#cfe3d4;cursor:pointer}
-  .btn{background:#e6efe8}
-  .btn-primary{background:var(--green);border-color:#0e571f;color:#fff}
-  .btn-ghost{background:#fff}
-  .pill{border-radius:999px;padding:10px 14px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
-  .pill:active{transform:scale(.98)}
-  .muted{color:var(--muted)}
-  .error{color:#b00020;margin-top:8px}
-  .grid{display:grid;grid-template-columns:1fr 320px;gap:16px}
-  .summary{position:sticky;top:12px}
-  .cart-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #eee}
-  .qty{display:inline-flex;border:1px solid #d1d5db;border-radius:999px;overflow:hidden}
-  .qty button{border:0;background:#f3f4f6;padding:6px 10px}
-  .qty span{display:inline-block;min-width:28px;text-align:center;padding:6px 8px}
-  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-  .ticket-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
-  .wide{min-width:220px}
-  .right{margin-left:auto}
-  dialog{border:0;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:0}
-  dialog .dlg{padding:16px}
-  .dlg-header{font-weight:600;margin-bottom:8px}
-  .footer{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+  :root{ --green:#0a7d2b; --bg:#f6f7f8; --muted:#6b7280; }
+  *{ box-sizing:border-box }
+  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  header{ display:flex; align-items:center; gap:8px; justify-content:space-between; padding:14px 16px; background:#fff; border-bottom:1px solid #e5e7eb; position:sticky; top:0; z-index:10 }
+  .brand{ font-weight:800; letter-spacing:.2px }
+  .tag{ font-size:12px; color:#fff; background:var(--green); padding:4px 8px; border-radius:999px }
+  .row{ display:flex; gap:16px; padding:16px; max-width:1200px; margin:0 auto }
+  .col{ flex:1; }
+  .panel{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px }
+  .pill{ display:flex; align-items:center; justify-content:center; min-height:68px; border:1px solid #e5e7eb; border-radius:14px; background:#fff; cursor:pointer; font-weight:700 }
+  .pill:hover{ outline:3px solid #e5e7eb }
+  .qty{ display:flex; align-items:center; gap:6px }
+  .qty button{ width:36px; height:36px; border-radius:10px; border:1px solid #d1d5db; background:#fff; font-size:20px; font-weight:700; cursor:pointer }
+  .line{ display:grid; grid-template-columns:1fr 90px 90px 110px 36px; align-items:center; gap:8px; padding:8px 0; border-bottom:1px dashed #f0f0f0 }
+  .muted{ color:var(--muted) }
+  .total{ font-size:28px; font-weight:800 }
+  .btn{ border:none; padding:12px 14px; border-radius:12px; cursor:pointer; font-weight:700 }
+  .btn.primary{ background:var(--green); color:#fff }
+  .btn.ghost{ background:#fff; border:1px solid #e5e7eb }
+  .btn.warn{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca }
+  .toolbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  select, input{ padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; }
+  .right{ text-align:right }
+  .center{ text-align:center }
+  .hidden{ display:none }
+  /* modal */
+  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; padding:16px; z-index:40 }
+  .card{ background:#fff; border-radius:16px; padding:16px; width:min(560px,96vw); box-shadow:0 30px 60px rgba(0,0,0,.2) }
+  .card h3{ margin:0 0 8px }
+  .split{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
+  @media (max-width:900px){ .row{ flex-direction:column } .line{ grid-template-columns:1fr 70px 80px 100px 36px } }
 </style>
-</head>
-<body>
-<div class="wrap">
-  <h1>POS</h1>
+</head><body>
 
-  <!-- START SHIFT -->
-  <section id="startView" class="card" style="display:none">
-    <h2 style="margin:0 0 12px">Start shift</h2>
-    <div class="row">
-      <input id="cashier_name" placeholder="Cashier name" class="wide"/>
-      <select id="event_id" class="wide"></select>
-      <select id="gate_name" class="wide"></select>
-    </div>
-    <div class="row" style="margin-top:8px">
-      <label class="muted">Opening float (R)</label>
-      <input id="opening_float" type="number" step="0.01" value="0" style="min-width:120px"/>
-      <button class="btn-primary" onclick="startShift()">Start</button>
-      <span id="start_err" class="error"></span>
-    </div>
-  </section>
+<header>
+  <div class="toolbar">
+    <span class="brand">POS</span>
+    <span id="shiftBadge" class="tag hidden">Shift open</span>
+    <button id="endShiftBtn" class="btn warn hidden">End Shift</button>
+  </div>
+  <div class="toolbar">
+    <button id="recallBtn" class="btn ghost">Recall order</button>
+    <select id="eventSel"></select>
+  </div>
+</header>
 
-  <!-- SELL VIEW -->
-  <section id="sellView" style="display:none">
-    <div class="toolbar">
-      <div>
-        <div class="muted" id="context_line"></div>
-        <div class="muted" id="session_line"></div>
+<div class="row">
+  <div class="col">
+    <div class="panel">
+      <div class="toolbar" style="margin-bottom:10px;">
+        <strong>Ticket Types</strong>
       </div>
-      <div class="row">
-        <button class="pill" onclick="openRecall()">Recall order</button>
-        <button class="pill" onclick="endShift()">End shift</button>
-      </div>
+      <div id="ttGrid" class="grid"></div>
     </div>
+  </div>
 
-    <div class="grid">
-      <div class="card">
-        <h3 style="margin:0 0 8px">Tickets</h3>
-        <div id="ticketGrid" class="ticket-grid"></div>
+  <div class="col" style="max-width:520px;">
+    <div class="panel">
+      <div class="toolbar" style="justify-content:space-between">
+        <strong>Current Sale</strong>
+        <button id="clearBtn" class="btn ghost">Clear</button>
       </div>
-
-      <div class="card summary">
-        <h3 style="margin:0 0 8px">Current sale</h3>
-        <div id="cartRows" class="muted">No items</div>
-        <div style="display:flex;justify-content:space-between;margin-top:10px">
-          <strong>Total</strong>
-          <strong id="totalCell">R0.00</strong>
-        </div>
-        <hr style="margin:12px 0">
-        <div class="row">
-          <label class="pill"><input type="radio" name="pay" value="cash" onclick="setPay('cash')"> Cash</label>
-          <label class="pill"><input type="radio" name="pay" value="card" onclick="setPay('card')"> Card</label>
-        </div>
-        <div class="row" style="margin-top:8px">
-          <input id="buyer_name" placeholder="Customer name" class="wide">
-          <input id="buyer_phone" placeholder="Mobile (WhatsApp)" class="wide">
-        </div>
-        <div class="row" style="margin-top:10px">
-          <button class="btn" onclick="clearCart()">Clear</button>
-          <button class="btn-primary right" onclick="finishSale()">Finish</button>
-        </div>
-        <div id="sell_err" class="error"></div>
+      <div id="lines"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:12px;">
+        <div class="muted">Items: <span id="itemsCount">0</span></div>
+        <div class="total">R <span id="grand">0.00</span></div>
       </div>
+      <div class="split" style="margin-top:12px">
+        <button id="checkoutBtn" class="btn primary" disabled>Proceed</button>
+        <button id="cashBtn" class="btn ghost">Cash</button>
+      </div>
+      <small class="muted">Tip: tap ticket buttons. Each tap adds one.</small>
     </div>
-  </section>
+  </div>
 </div>
 
-<!-- RECALL DIALOG -->
-<dialog id="recallDlg">
-  <div class="dlg">
-    <div class="dlg-header">Recall Order</div>
-    <div class="muted" style="margin-bottom:8px">Enter order code for “Pay at event”.</div>
-    <input id="recallCode" placeholder="Order code e.g. ABC123" style="width:100%">
-    <div class="footer">
-      <button class="btn-ghost" onclick="closeRecall()">Close</button>
-      <button class="btn-primary" onclick="lookupRecall()">Lookup</button>
+<!-- SHIFT MODAL -->
+<div id="shiftModal" class="modal">
+  <div class="card">
+    <h3>Open Shift</h3>
+    <div class="split">
+      <div>
+        <label class="muted">Cashier name</label>
+        <input id="mCashier" placeholder="e.g. Jaco"/>
+      </div>
+      <div>
+        <label class="muted">Gate</label>
+        <select id="mGate"></select>
+      </div>
+      <div>
+        <label class="muted">Opening float (R)</label>
+        <input id="mFloat" type="number" inputmode="decimal" step="0.01" value="0.00"/>
+      </div>
+      <div class="center" style="display:flex; align-items:end; justify-content:end">
+        <button id="openShiftBtn" class="btn primary">Start</button>
+      </div>
     </div>
-    <div id="recall_err" class="error"></div>
   </div>
-</dialog>
+</div>
+
+<!-- CHECKOUT MODAL -->
+<div id="checkoutModal" class="modal hidden" data-recall-code="">
+  <div class="card">
+    <h3>Finish Order</h3>
+    <div class="split">
+      <div>
+        <label class="muted">Payment method (required)</label>
+        <div class="toolbar">
+          <label><input type="radio" name="pay" value="cash"> Cash</label>
+          <label><input type="radio" name="pay" value="card"> Card (Yoco)</label>
+        </div>
+      </div>
+      <div class="right">
+        <div class="muted">Total</div>
+        <div class="total">R <span id="ckTotal">0.00</span></div>
+      </div>
+      <div>
+        <label class="muted">Buyer name</label>
+        <input id="ckName" placeholder="(optional)"/>
+      </div>
+      <div>
+        <label class="muted">Buyer phone (for WhatsApp)</label>
+        <input id="ckPhone" placeholder="+27…"/>
+      </div>
+    </div>
+    <div class="toolbar" style="justify-content:flex-end; margin-top:10px">
+      <button id="cancelCheckout" class="btn ghost">Cancel</button>
+      <button id="confirmCheckout" class="btn primary" disabled>Finish</button>
+    </div>
+  </div>
+</div>
+
+<!-- END SHIFT MODAL -->
+<div id="closeModal" class="modal hidden">
+  <div class="card">
+    <h3>End Shift</h3>
+    <p class="muted">Enter manager responsible for cash-up.</p>
+    <div class="split">
+      <input id="mgrName" placeholder="Manager name"/>
+      <div class="right">
+        <button id="cancelClose" class="btn ghost">Cancel</button>
+        <button id="confirmClose" class="btn warn">End Shift</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RECALL -->
+<div id="recallModal" class="modal hidden">
+  <div class="card">
+    <h3>Recall Order</h3>
+    <p class="muted">Enter order code for “Pay at event”.</p>
+    <div class="split">
+      <input id="recCode" placeholder="Order code e.g. ABC123"/>
+      <div class="right">
+        <button id="recCancel" class="btn ghost">Close</button>
+        <button id="recGo" class="btn">Lookup</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
-let BOOT = { events: [], gates: [] };
-let SESSION = null;           // { session_id, event_id, ... }
-let CATALOG = [];             // ticket types for event
-let CART = {};                // { ticket_type_id: qty }
-let PAY = null;               // 'cash'|'card'
+const centsToRand = c => (Number(c||0)/100).toFixed(2);
+const randsToCents = r => Math.round(Number(r||0)*100);
+let catalog = { events:[], ticket_types_by_event:{} };
+let currentEventId = null;
+let cart = new Map(); // ticket_type_id -> {tt, qty}
+let cashup = null; // { id, cashier_name, gate_name }
 
-const R = (c) => (c/100).toLocaleString('en-ZA',{style:'currency',currency:'ZAR'});
-
-// ---------- Boot ----------
-async function boot(){
-  // If we have a session in LS, load it and go straight to sell
-  try { SESSION = JSON.parse(localStorage.getItem('pos_session')||'null'); } catch {}
-  if (!SESSION) {
-    await loadBootstrap();
-    showStart();
-  } else {
-    await loadBootstrap(); // to render gate/event names in header
-    await loadCatalog(SESSION.event_id);
-    showSell();
-  }
+// ---- helpers
+function el(id){ return document.getElementById(id); }
+function show(e){ e.classList.remove('hidden'); }
+function hide(e){ e.classList.add('hidden'); }
+function hideAllModals(){
+  ['shiftModal','checkoutModal','closeModal','recallModal']
+    .forEach(id => el(id)?.classList.add('hidden'));
+}
+async function fetchJSON(url, opt){ 
+  const r = await fetch(url, opt);
+  if (!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
 }
 
-async function loadBootstrap(){
-  // Requires pos/admin role cookie
-  const r = await fetch('/api/pos/bootstrap');
-  if (!r.ok) { document.getElementById('start_err').textContent = 'Error: network'; return; }
-  const j = await r.json().catch(()=>({}));
-  if (!j.ok) { document.getElementById('start_err').textContent = 'Error: ' + (j.error||'unknown'); return; }
-  BOOT = j;
+// ---- bootstrap
+async function bootstrap(){
+  // gates for shift modal
+  try{
+    const gs = await fetchJSON('/api/admin/gates');
+    el('mGate').innerHTML = (gs.gates||[]).map(g=>\`<option>\${g.name}</option>\`).join('') || '<option>Main Gate</option>';
+  }catch{}
 
-  // Fill selects if start view will be used
-  const evSel = document.getElementById('event_id');
-  const gtSel = document.getElementById('gate_name');
-  if (evSel){
-    evSel.innerHTML = (BOOT.events||[]).map(e => 
-      \`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`
-    ).join('') || '<option value="">No events</option>';
-  }
-  if (gtSel){
-    gtSel.innerHTML = (BOOT.gates||[]).map(g => 
-      \`<option value="\${g.name}">\${g.name}</option>\`
-    ).join('') || '<option value="Main Gate">Main Gate</option>';
-  }
+  const boot = await fetchJSON('/api/pos/bootstrap', {method:'POST'});
+  catalog = boot;
+  const evSel = el('eventSel');
+  evSel.innerHTML = boot.events.map(e=>\`<option value="\${e.id}">\${e.name}</option>\`).join('');
+  currentEventId = boot.events[0]?.id || null;
+  evSel.value = currentEventId || '';
+  evSel.onchange = () => { currentEventId = Number(evSel.value||0)||null; renderTT(); resetSale(); };
+
+  renderTT();
 }
 
-function showStart(){
-  document.getElementById('startView').style.display = 'block';
-  document.getElementById('sellView').style.display = 'none';
+function renderTT(){
+  const grid = el('ttGrid');
+  const list = catalog.ticket_types_by_event[currentEventId] || [];
+  if (!list.length){ grid.innerHTML = '<div class="muted">No ticket types.</div>'; return; }
+  grid.innerHTML = list.map(t => \`
+    <button class="pill" data-tt="\${t.id}">
+      <div>
+        <div>\${t.name}</div>
+        <div class="muted">R \${centsToRand(t.price_cents||0)}</div>
+      </div>
+    </button>\`).join('');
+  [...grid.querySelectorAll('.pill')].forEach(btn=>{
+    btn.onclick = () => addItem(Number(btn.dataset.tt));
+  });
 }
 
-function showSell(){
-  document.getElementById('startView').style.display = 'none';
-  document.getElementById('sellView').style.display = 'block';
-
-  // Header context
-  const ev = (BOOT.events||[]).find(e => e.id === Number(SESSION.event_id));
-  document.getElementById('context_line').textContent =
-    ev ? \`\${ev.name} · \${new Date(ev.starts_at*1000).toLocaleDateString()} → \${new Date(ev.ends_at*1000).toLocaleDateString()}\` : '';
-  document.getElementById('session_line').textContent =
-    \`Cashier: \${SESSION.cashier_name} · Gate: \${SESSION.gate_name}\`;
-
-  // Tickets grid
-  const grid = document.getElementById('ticketGrid');
-  grid.innerHTML = CATALOG.map(tt => {
-    const price = tt.price_cents == null ? 'FREE' : R(tt.price_cents);
-    return \`<button class="pill" onclick="addItem(\${tt.id})">\${tt.name}<br><span class="muted">\${price}</span></button>\`;
-  }).join('') || '<div class="muted">No ticket types configured for this event.</div>';
-
+// ---- cart
+function addItem(ttId){
+  const tt = (catalog.ticket_types_by_event[currentEventId]||[]).find(x=>x.id===ttId);
+  if (!tt) return;
+  const key = String(ttId);
+  const cur = cart.get(key) || { tt, qty:0 };
+  cur.qty++;
+  cart.set(key, cur);
   renderCart();
 }
 
-async function loadCatalog(event_id){
-  const r = await fetch(\`/api/pos/catalog/\${event_id}\`);
-  const j = await r.json().catch(()=>({}));
-  CATALOG = j.ticket_types || [];
-}
-
-// ---------- Start shift ----------
-async function startShift(){
-  const name = document.getElementById('cashier_name').value.trim();
-  const event_id = Number(document.getElementById('event_id').value);
-  const gate_name = document.getElementById('gate_name').value.trim();
-  const opening_float_cents = Math.round(Number(document.getElementById('opening_float').value||0) * 100);
-  const err = document.getElementById('start_err'); err.textContent = '';
-
-  if (!name || !event_id || !gate_name){
-    err.textContent = 'Please fill all fields.'; return;
-  }
-
-  const r = await fetch('/api/pos/session/open', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ cashier_name:name, gate_name, opening_float_cents, event_id })
-  });
-  const j = await r.json().catch(()=>({}));
-  if (!j.ok){ err.textContent = 'Error: ' + (j.error || 'unknown'); return; }
-
-  SESSION = { session_id: j.session_id, cashier_name: name, gate_name, event_id };
-  localStorage.setItem('pos_session', JSON.stringify(SESSION));
-  await loadCatalog(event_id);
-  showSell();
-}
-
-// ---------- Cart ----------
-function addItem(ttId){ CART[ttId] = (CART[ttId]||0) + 1; renderCart(); }
-function decItem(ttId){ if (!CART[ttId]) return; CART[ttId]--; if (CART[ttId]<=0) delete CART[ttId]; renderCart(); }
-function clearCart(){ CART = {}; PAY = null; document.querySelectorAll('input[name="pay"]').forEach(el=>el.checked=false); renderCart(); }
-function setPay(v){ PAY = v; }
-
 function renderCart(){
-  const rowsEl = document.getElementById('cartRows');
-  const totalEl = document.getElementById('totalCell');
-  const items = Object.entries(CART).map(([id,qty])=>{
-    const tt = CATALOG.find(t=>t.id===Number(id)); 
-    return tt ? { tt, qty, line: (tt.price_cents||0)*qty } : null;
-  }).filter(Boolean);
-
-  if (!items.length){ rowsEl.innerHTML = '<span class="muted">No items</span>'; totalEl.textContent = 'R0.00'; return; }
-
-  rowsEl.innerHTML = items.map(({tt,qty,line}) => \`
-    <div class="cart-row">
-      <div>\${tt.name}</div>
-      <div>
-        <span class="qty">
-          <button onclick="decItem(\${tt.id})">−</button>
-          <span>\${qty}</span>
-          <button onclick="addItem(\${tt.id})">+</button>
-        </span>
-        <strong style="margin-left:10px">\${R(line)}</strong>
-      </div>
-    </div>\`
-  ).join('');
-
-  const total = items.reduce((a,b)=>a+b.line,0);
-  totalEl.textContent = R(total);
-}
-
-// ---------- Finish sale ----------
-async function finishSale(){
-  const err = document.getElementById('sell_err'); err.textContent = '';
-
-  const items = Object.entries(CART).map(([ticket_type_id, qty])=>({ ticket_type_id:Number(ticket_type_id), qty:Number(qty) }));
-  if (!items.length){ err.textContent = 'Add at least one ticket.'; return; }
-  if (!PAY){ err.textContent = 'Select Cash or Card.'; return; }
-
-  const body = {
-    session_id: SESSION.session_id,
-    event_id: SESSION.event_id,
-    items,
-    payment_method: PAY,
-    buyer_name: (document.getElementById('buyer_name').value||'').trim(),
-    buyer_phone:(document.getElementById('buyer_phone').value||'').trim()
-  };
-
-  const r = await fetch('/api/pos/order/sale', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
-  });
-  const j = await r.json().catch(()=>({}));
-  if (!j.ok){ err.textContent = 'Error: ' + (j.error||'unknown'); return; }
-
-  // Success – clear and show short toast
-  clearCart();
-  alert('Sale completed. Order #' + j.order_id + (j.payment_ref ? (' · ' + j.payment_ref) : ''));
-}
-
-// ---------- Recall ----------
-function openRecall(){ document.getElementById('recallDlg').showModal(); }
-function closeRecall(){ document.getElementById('recallDlg').close(); }
-async function lookupRecall(){
-  const code = (document.getElementById('recallCode').value||'').trim();
-  const out = document.getElementById('recall_err'); out.textContent = '';
-  if (!code) { out.textContent = 'Enter a code'; return; }
-
-  const r = await fetch('/api/pos/order/lookup/' + encodeURIComponent(code));
-  const j = await r.json().catch(()=>({}));
-  if (!j.ok){ out.textContent = j.error || 'Not found'; return; }
-
-  // Load items into cart for editing/payment
-  CART = {};
-  (j.order.items||[]).forEach(it => { CART[it.ticket_type_id] = (CART[it.ticket_type_id]||0) + Number(it.qty||0); });
-  // Ensure catalog for that order's event is loaded
-  if (Number(j.order.event_id) !== Number(SESSION.event_id)) {
-    SESSION.event_id = Number(j.order.event_id);
-    localStorage.setItem('pos_session', JSON.stringify(SESSION));
-    await loadCatalog(SESSION.event_id);
+  const lines = el('lines');
+  const arr = [...cart.values()].filter(v=>v.qty>0);
+  if (!arr.length){
+    lines.innerHTML = '<div class="muted">Nothing yet. Tap ticket buttons to add.</div>';
+    el('itemsCount').textContent = '0';
+    el('grand').textContent = '0.00';
+    el('checkoutBtn').disabled = true;
+    return;
   }
-  closeRecall();
-  showSell();
+  let total = 0, count = 0;
+  lines.innerHTML = arr.map(({tt, qty})=>{
+    const unit = Number(tt.price_cents||0);
+    const sub = unit*qty; total += sub; count += qty;
+    return \`
+    <div class="line">
+      <div><strong>\${tt.name}</strong><div class="muted">R \${centsToRand(unit)}</div></div>
+      <div class="qty">
+        <button data-minus="\${tt.id}">−</button>
+        <div>\${qty}</div>
+        <button data-plus="\${tt.id}">+</button>
+      </div>
+      <div class="muted right">R \${centsToRand(unit)}</div>
+      <div class="right"><strong>R \${centsToRand(sub)}</strong></div>
+      <button class="btn ghost" data-del="\${tt.id}">×</button>
+    </div>\`;
+  }).join('');
+  lines.querySelectorAll('[data-plus]').forEach(b=>b.onclick=()=>{ cart.get(String(+b.dataset.plus)).qty++; renderCart(); });
+  lines.querySelectorAll('[data-minus]').forEach(b=>b.onclick=()=>{ const it=cart.get(String(+b.dataset.minus)); it.qty=Math.max(0,it.qty-1); if(it.qty===0) cart.delete(String(+b.dataset.minus)); renderCart(); });
+  lines.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ cart.delete(String(+b.dataset.del)); renderCart(); });
+
+  el('itemsCount').textContent = String(count);
+  el('grand').textContent = centsToRand(total);
+  el('checkoutBtn').disabled = false;
 }
 
-async function endShift(){
-  if (!confirm('End shift?')) return;
-  await fetch('/api/pos/session/close', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ session_id: SESSION.session_id })
+function resetSale(){ cart.clear(); renderCart(); }
+
+// ---- shift open/close
+async function openShift(){
+  const cashier = el('mCashier').value.trim();
+  const gate = el('mGate').value.trim();
+  const f = el('mFloat').value;
+  if (!cashier || !gate) return;
+  const res = await fetchJSON('/api/pos/cashups/open',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ cashier_name:cashier, gate_name:gate, opening_float_rands:f })
   });
-  localStorage.removeItem('pos_session');
+  cashup = { id: res.id, cashier_name:cashier, gate_name:gate };
+  localStorage.setItem('pos_cashup', JSON.stringify(cashup));
+  hide(el('shiftModal'));
+  el('shiftBadge').classList.remove('hidden');
+  el('endShiftBtn').classList.remove('hidden');
+}
+
+async function closeShift(){
+  const mgr = el('mgrName').value.trim();
+  if (!mgr || !cashup?.id) return;
+  await fetchJSON('/api/pos/cashups/close',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ cashup_id: cashup.id, manager_name: mgr })
+  });
+  localStorage.removeItem('pos_cashup');
   location.reload();
 }
 
-boot();
+// ---- checkout flow
+function beginCheckout(){
+  const total = el('grand').textContent;
+  el('ckTotal').textContent = total;
+  // reset radios & button
+  document.querySelectorAll('input[name="pay"]').forEach(r=> r.checked=false );
+  el('ckName').value = ''; el('ckPhone').value='';
+  el('confirmCheckout').disabled = true;
+  hideAllModals();
+  show(el('checkoutModal'));
+}
+
+function onPayChange(){
+  const any = [...document.querySelectorAll('input[name="pay"]')].some(r=>r.checked);
+  el('confirmCheckout').disabled = !any;
+}
+
+async function confirmCheckout(){
+  const pay = [...document.querySelectorAll('input[name="pay"]')].find(r=>r.checked)?.value || '';
+  if (!pay) return;
+
+  const items = [...cart.values()].map(({tt, qty})=>({ ticket_type_id: tt.id, qty }));
+  const recallCode = el('checkoutModal').dataset.recallCode || '';
+
+  try {
+    let res;
+    if (recallCode) {
+      // Confirm a recalled pending order
+      res = await fetch('/api/pos/recall/confirm', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          code: recallCode,
+          cashup_id: cashup.id,
+          payment_method: pay,
+          buyer_name: el('ckName').value.trim(),
+          buyer_phone: el('ckPhone').value.trim(),
+          items
+        })
+      }).then(r=>r.json());
+    } else {
+      // Normal POS sale
+      res = await fetch('/api/pos/sale', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          cashup_id: cashup.id,
+          event_id: currentEventId,
+          items,
+          payment_method: pay,
+          buyer_name: el('ckName').value.trim(),
+          buyer_phone: el('ckPhone').value.trim()
+        })
+      }).then(r=>r.json());
+    }
+
+    if (!res.ok) { alert(res.error || 'Failed'); return; }
+
+    hide(el('checkoutModal'));
+    el('checkoutModal').dataset.recallCode = ''; // clear recall state
+    resetSale();
+    alert('Order #' + res.order_id + ' completed. Tickets: ' + (res.tickets?.length||0));
+  } catch (e) {
+    alert(String(e));
+  }
+}
+
+// ---- wire up UI
+el('openShiftBtn').onclick = openShift;
+el('endShiftBtn').onclick = ()=> { hideAllModals(); show(el('closeModal')); };
+el('cancelClose').onclick = ()=> hide(el('closeModal'));
+el('confirmClose').onclick = closeShift;
+
+// Recall modal handlers
+el('recallBtn').onclick = () => {
+  if (!cashup?.id) {
+    alert('Open a shift first');
+    hideAllModals();
+    show(el('shiftModal'));
+    return;
+  }
+  hideAllModals();
+  show(el('recallModal'));
+};
+el('recCancel').onclick = ()=> hide(el('recallModal'));
+el('recGo').onclick = async () => {
+  const code = el('recCode').value.trim();
+  if (!code) return;
+  try {
+    const res = await fetch(\`/api/pos/recall/\${encodeURIComponent(code)}\`).then(r=>r.json());
+    if (!res.ok) { alert(res.error || 'Not found'); return; }
+
+    // Hydrate POS with recalled items
+    currentEventId = res.event_id;
+    el('eventSel').value = String(currentEventId);
+    cart.clear();
+    for (const it of res.items || []) {
+      if (!it.qty) continue;
+      cart.set(String(it.ticket_type_id), { tt: { id: it.ticket_type_id, name: it.name, price_cents: it.price_cents }, qty: Number(it.qty) });
+    }
+    hide(el('recallModal'));
+    renderTT();
+    renderCart();
+
+    // store recall code for checkout confirmation
+    el('checkoutModal').dataset.recallCode = code;
+    // optionally jump straight to checkout
+    beginCheckout();
+  } catch (e) {
+    alert(String(e));
+  }
+};
+
+el('clearBtn').onclick = resetSale;
+el('checkoutBtn').onclick = beginCheckout;
+el('cancelCheckout').onclick = ()=> hide(el('checkoutModal'));
+document.querySelectorAll('input[name="pay"]').forEach(r=> r.addEventListener('change', onPayChange));
+el('confirmCheckout').onclick = confirmCheckout;
+el('cashBtn').onclick = ()=>{ 
+  beginCheckout(); 
+  const r = document.querySelector('input[name="pay"][value="cash"]');
+  if (r){ r.checked = true; onPayChange(); }
+};
+
+// ---- init
+(async ()=>{
+  hideAllModals(); // start clean – no modal visible
+
+  // Restore open shift if exists
+  try{ cashup = JSON.parse(localStorage.getItem('pos_cashup')||'null'); }catch{}
+  if (cashup?.id){
+    el('shiftBadge').classList.remove('hidden');
+    el('endShiftBtn').classList.remove('hidden');
+  } else {
+    show(el('shiftModal')); // force opening a shift first
+  }
+
+  await bootstrap();
+  resetSale();
+})();
 </script>
-</body>
-</html>`;
+
+</body></html>`;
