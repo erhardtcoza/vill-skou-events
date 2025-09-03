@@ -1,271 +1,311 @@
 // /src/services/orders.js
-//
-// Shared order helpers for Public checkout + POS
-// Exports:
-//  - computeTotalCents(items, ttById)
-//  - hydrateItems(db, eventId, items)
-//  - createOrderPayLater(db, body, env?)         (public web)
-//  - createOrderPayNow(db, body, env?)           (public web)
-//  - createPOSOrder(db, body)                    (POS sale, cash/card)
-//  - loadPendingOrderByCode(db, short_code)      (recall 'pay at event')
-// 
-// Assumes D1 schema with:
-//   orders(id, short_code, event_id, status, payment_method, payment_ref,
-//          total_cents, contact_json, created_at, paid_at, source,
-//          buyer_name, buyer_email, buyer_phone, items_json)
-//   order_items(id, order_id, ticket_type_id, qty, price_cents)
-//   ticket_types(id, event_id, name, price_cents)
-//
 import { sendOrderOnWhatsApp } from "./whatsapp.js";
-function nowSec() { return Math.floor(Date.now() / 1000); }
 
-// 6-char A–Z/0–9 short code (no ambiguous chars)
-function makeShortCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+/* -------------------------------------------------------------------------- */
+/* Utilities                                                                  */
+/* -------------------------------------------------------------------------- */
+
+function randBase36(len = 8) {
   let s = "";
-  for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-  return s;
+  while (s.length < len) s += Math.random().toString(36).slice(2);
+  return s.slice(0, len).toUpperCase();
 }
 
-async function loadTicketTypes(db, eventId) {
-  const rows = (await db
-    .prepare(`SELECT id, event_id, name, price_cents FROM ticket_types WHERE event_id=?1`)
-    .bind(eventId)
-    .all()).results || [];
-  const byId = new Map(rows.map(r => [r.id, r]));
-  return { rows, byId };
+function shortCode() {
+  // 6-char human-friendly code
+  return randBase36(6).replace(/O/g, "0").replace(/I/g, "1");
 }
 
-/** Normalise & total line items
- * items: [{ ticket_type_id, qty }]
- * ttById: Map(ticket_type_id -> ticket_type row)
- * returns { total_cents, lines:[{ticket_type_id, qty, price_cents}] }
- */
-export function computeTotalCents(items, ttById) {
-  let total = 0;
-  const lines = [];
-  for (const it of (items || [])) {
-    const id = Number(it.ticket_type_id);
-    const qty = Math.max(0, Number(it.qty || 0));
-    if (!id || !qty) continue;
-    const tt = ttById.get(id);
-    if (!tt) throw new Error(`Unknown ticket_type_id: ${id}`);
-    const price = Number(tt.price_cents || 0);
-    total += price * qty;
-    lines.push({ ticket_type_id: id, qty, price_cents: price });
+/** Parse items_json into array of {ticket_type_id, qty} */
+export function parseItems(items_json) {
+  try {
+    const arr = JSON.parse(items_json || "[]");
+    return Array.isArray(arr) ? arr.map(x => ({
+      ticket_type_id: Number(x.ticket_type_id),
+      qty: Number(x.qty)
+    })).filter(x => x.ticket_type_id && x.qty > 0) : [];
+  } catch { return []; }
+}
+
+/** Hydrate items with names/prices using provided map or DB */
+export async function hydrateItemsWithDB(db, items) {
+  const ids = [...new Set(items.map(i => i.ticket_type_id))];
+  if (!ids.length) return [];
+  const ph = ids.map((_,i)=>`?${i+1}`).join(",");
+  const rows = (await db.prepare(
+    `SELECT id, name, price_cents FROM ticket_types WHERE id IN (${ph})`
+  ).bind(...ids).all()).results || [];
+  const map = new Map(rows.map(r => [Number(r.id), r]));
+  return items.map(i => {
+    const tt = map.get(i.ticket_type_id) || {};
+    return {
+      ticket_type_id: i.ticket_type_id,
+      name: tt.name || `Type #${i.ticket_type_id}`,
+      price_cents: Number(tt.price_cents || 0),
+      qty: Number(i.qty || 0)
+    };
+  });
+}
+
+/** Public helper used by routes: hydrate from items_json string */
+export async function hydrateItems(dbOrString, maybeString) {
+  // Both shapes supported:
+  // hydrateItems(db, items_json) OR hydrateItems(items_json_string)
+  if (typeof dbOrString === "string" && maybeString === undefined) {
+    // Old signature: hydrateItems(items_json)
+    return parseItems(dbOrString); // minimal; caller may not need names
   }
-  if (!lines.length) throw new Error("No valid items");
-  return { total_cents: total, lines };
+  const db = dbOrString;
+  const items_json = maybeString || "[]";
+  const core = parseItems(items_json);
+  return hydrateItemsWithDB(db, core);
 }
 
-/** Convenience: loads ticket types for event and computes totals */
-export async function hydrateItems(db, eventId, items) {
-  const { byId } = await loadTicketTypes(db, eventId);
-  return computeTotalCents(items, byId);
+/** Compute total cents from hydrated items */
+export function computeTotalCents(hydrated) {
+  return hydrated.reduce((sum, it) =>
+    sum + Number(it.price_cents || 0) * Number(it.qty || 0), 0);
 }
 
-async function insertOrder(db, data) {
-  // data requires:
-  //  short_code, event_id, status, payment_method, total_cents, contact_json,
-  //  source, buyer_name, buyer_email, buyer_phone, items_json
+/* -------------------------------------------------------------------------- */
+/* Core DB helpers                                                             */
+/* -------------------------------------------------------------------------- */
+
+async function insertOrder(db, o) {
+  // o: { event_id, buyer_name?, buyer_email?, buyer_phone?, items_json, total_cents, status, payment_method? }
   const r = await db.prepare(
-    `INSERT INTO orders
-       (short_code, event_id, status, payment_method, payment_ref,
-        total_cents, contact_json, created_at, paid_at, source,
-        buyer_name, buyer_email, buyer_phone, items_json)
-     VALUES (?1, ?2, ?3, ?4, NULL,
-             ?5, ?6, ?7, ?8, ?9,
-             ?10, ?11, ?12, ?13)`
-  )
-  .bind(
-    data.short_code,
-    Number(data.event_id),
-    data.status,
-    data.payment_method,
-    Number(data.total_cents),
-    data.contact_json || null,
-    nowSec(),                               // created_at
-    data.paid_at || null,                   // paid_at
-    data.source || 'web',
-    data.buyer_name || '',
-    data.buyer_email || '',
-    data.buyer_phone || '',
-    data.items_json || null
-  )
-  .run();
+    `INSERT INTO orders (event_id, status,
+                         buyer_name, buyer_email, buyer_phone,
+                         short_code, items_json, total_cents, payment_method, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, COALESCE(?9,''), unixepoch())`
+  ).bind(
+    Number(o.event_id),
+    (o.status || "pending"),
+    o.buyer_name || "",
+    o.buyer_email || "",
+    o.buyer_phone || "",
+    shortCode(),
+    o.items_json || "[]",
+    Number(o.total_cents || 0),
+    o.payment_method || ""
+  ).run();
   return r.meta.last_row_id;
 }
 
-async function insertOrderItems(db, orderId, lines) {
-  if (!lines?.length) return;
-  const stmt = await db.prepare(
-    `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
-     VALUES (?1, ?2, ?3, ?4)`
-  );
-  for (const L of lines) {
-    await stmt.bind(orderId, L.ticket_type_id, L.qty, L.price_cents).run();
+async function insertOrderItems(db, order_id, hydratedItems) {
+  if (!hydratedItems.length) return;
+  await db.batch(hydratedItems.map(i =>
+    db.prepare(
+      `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
+       VALUES (?1, ?2, ?3, ?4)`
+    ).bind(order_id, i.ticket_type_id, Number(i.qty), Number(i.price_cents || 0))
+  ));
+}
+
+async function issueTickets(db, order_id, event_id, hydratedItems, buyer) {
+  const tickets = [];
+  for (const it of hydratedItems) {
+    for (let k = 0; k < Number(it.qty || 0); k++) {
+      const qr = `T-${order_id}-${it.ticket_type_id}-${k+1}-${randBase36(5)}`;
+      const r = await db.prepare(
+        `INSERT INTO tickets
+           (order_id, event_id, ticket_type_id, attendee_first, attendee_last,
+            gender, email, phone, qr, state, issued_at)
+         VALUES (?1, ?2, ?3, '', '', NULL, ?4, ?5, ?6, 'unused', unixepoch())`
+      ).bind(order_id, Number(event_id), it.ticket_type_id,
+             buyer?.buyer_email || "", buyer?.buyer_phone || "", qr).run();
+      tickets.push({ id: r.meta.last_row_id, qr });
+    }
   }
+  return tickets;
 }
 
-/* ---------- Public checkout flows ---------- */
+async function markOrderPaid(db, order_id, method) {
+  await db.prepare(
+    `UPDATE orders
+        SET status='paid', payment_method = COALESCE(NULLIF(?1,''), payment_method)
+      WHERE id=?2`
+  ).bind(method || "", order_id).run();
+}
 
+/* -------------------------------------------------------------------------- */
+/* Public API used by routes                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** Pay later (online) – creates a pending order, no tickets yet */
 export async function createOrderPayLater(db, body) {
-  // body: { event_id, items:[{ticket_type_id, qty}], buyer:{first,last,email,phone} }
-  const eventId = Number(body.event_id);
-  if (!eventId) throw new Error("Missing event_id");
+  // body: { event_id, items:[{ticket_type_id,qty}], buyer_name?, buyer_email?, buyer_phone? }
+  const event_id = Number(body.event_id || 0);
+  if (!event_id) throw new Error("event_id required");
+  const items = (Array.isArray(body.items) ? body.items : [])
+    .map(x => ({ ticket_type_id: Number(x.ticket_type_id), qty: Number(x.qty) }))
+    .filter(x => x.ticket_type_id && x.qty > 0);
+  if (!items.length) throw new Error("items required");
 
-  const { lines, total_cents } = await hydrateItems(db, eventId, body.items);
+  const hydrated = await hydrateItemsWithDB(db, items);
+  const total_cents = computeTotalCents(hydrated);
 
-  const short_code = makeShortCode();
-  const buyer = body.buyer || {};
-  const contact = {
-    first: buyer.first || "",
-    last: buyer.last || "",
-    email: buyer.email || "",
-    phone: buyer.phone || ""
-  };
-
-  const orderId = await insertOrder(db, {
-    short_code,
-    event_id: eventId,
-    status: "pending",               // unpaid, to be paid at gate
-    payment_method: "unpaid",
+  const items_json = JSON.stringify(items);
+  const order_id = await insertOrder(db, {
+    event_id,
+    buyer_name: body.buyer_name || "",
+    buyer_email: body.buyer_email || "",
+    buyer_phone: body.buyer_phone || "",
+    items_json,
     total_cents,
-    contact_json: JSON.stringify(contact),
-    source: "web",
-    buyer_name: [contact.first, contact.last].filter(Boolean).join(" "),
-    buyer_email: contact.email || "",
-    buyer_phone: contact.phone || "",
-    items_json: JSON.stringify(lines)
+    status: "pending",        // pay at gate, will be recalled by code
+    payment_method: ""        // unknown yet
   });
 
-  await insertOrderItems(db, orderId, lines);
-
-  return { order_id: orderId, short_code, total_cents };
+  const row = await db.prepare(`SELECT short_code FROM orders WHERE id=?1`).bind(order_id).first();
+  return { order_id, short_code: row?.short_code || "" };
 }
 
-export async function createOrderPayNow(db, body, _env) {
-  const eventId = Number(body.event_id);
-  if (!eventId) throw new Error("Missing event_id");
+/** Pay now (online) – stub: returns a payment URL, completes later by webhook */
+export async function createOrderPayNow(db, body, env) {
+  // Same as pay-later insert, but with intent to go pay
+  const res = await createOrderPayLater(db, body);
+  // Generate a stub payment URL; integrate Yoco Hosted Payments later
+  const base = (env && env.PUBLIC_BASE_URL) || "https://events.villiersdorpskou.co.za";
+  const payment_url = `${base}/pay/${encodeURIComponent(res.short_code)}`;
+  return { ...res, payment_url };
+}
 
-  const { lines, total_cents } = await hydrateItems(db, eventId, body.items);
+/** POS sale – immediate paid order + tickets; optionally sends WhatsApp */
+export async function createPOSOrder(db, body, env) {
+  // body: { session_id?, event_id, items:[{ticket_type_id,qty}],
+  //         payment_method:'cash'|'card', buyer_name?, buyer_email?, buyer_phone? }
+  const event_id = Number(body.event_id || 0);
+  if (!event_id) throw new Error("event_id required");
 
-  const short_code = makeShortCode();
-  const buyer = body.buyer || {};
-  const contact = {
-    first: buyer.first || "",
-    last: buyer.last || "",
-    email: buyer.email || "",
-    phone: buyer.phone || ""
-  };
+  const payment = (body.payment_method || "").toLowerCase();
+  if (!["cash","card"].includes(payment)) throw new Error("payment_method must be cash or card");
 
-  const orderId = await insertOrder(db, {
-    short_code,
-    event_id: eventId,
-    status: "awaiting_payment",
-    payment_method: "card_online",
+  const items = (Array.isArray(body.items) ? body.items : [])
+    .map(x => ({ ticket_type_id: Number(x.ticket_type_id), qty: Number(x.qty) }))
+    .filter(x => x.ticket_type_id && x.qty > 0);
+  if (!items.length) throw new Error("items required");
+
+  const hydrated = await hydrateItemsWithDB(db, items);
+  const total_cents = computeTotalCents(hydrated);
+  const items_json = JSON.stringify(items);
+
+  // Insert order as paid
+  const order_id = await insertOrder(db, {
+    event_id,
+    buyer_name: body.buyer_name || "",
+    buyer_email: body.buyer_email || "",
+    buyer_phone: body.buyer_phone || "",
+    items_json,
     total_cents,
-    contact_json: JSON.stringify(contact),
-    source: "web",
-    buyer_name: [contact.first, contact.last].filter(Boolean).join(" "),
-    buyer_email: contact.email || "",
-    buyer_phone: contact.phone || "",
-    items_json: JSON.stringify(lines)
+    status: "paid",
+    payment_method: payment
   });
 
-  await insertOrderItems(db, orderId, lines);
+  // Persist order_items and tickets
+  await insertOrderItems(db, order_id, hydrated);
+  const tickets = await issueTickets(db, order_id, event_id, hydrated, {
+    buyer_email: body.buyer_email || "",
+    buyer_phone: body.buyer_phone || ""
+  });
 
-  const payment_url = `/admin?pay=${encodeURIComponent(short_code)}`;
-  return { order_id: orderId, short_code, total_cents, payment_url };
-}
+  // Load order + event for downstream (WhatsApp, etc.)
+  const orderRow = await db.prepare(
+    `SELECT id, short_code, buyer_name, buyer_email, buyer_phone, event_id
+       FROM orders WHERE id=?1`
+  ).bind(order_id).first();
 
-/* ---------- POS flows ---------- */
+  const eventRow = await db.prepare(
+    `SELECT id, name, slug FROM events WHERE id=?1`
+  ).bind(event_id).first();
 
-/** Recall 'pay at event' order by code (short_code) */
-export async function loadPendingOrderByCode(db, short_code) {
-  const o = await db.prepare(
-    `SELECT id, short_code, event_id, status, payment_method, total_cents,
-            contact_json, buyer_name, buyer_email, buyer_phone, items_json
-     FROM orders
-     WHERE short_code=?1`
-  ).bind(short_code).first();
-
-  if (!o) return null;
-
-  // Allow recall for any unpaid/pending; cashier may convert to paid
-  const items = [];
-  try { if (o.items_json) items.push(...JSON.parse(o.items_json)); } catch {}
+  // Try WhatsApp (skip silently if no env or no phone/secrets)
+  try {
+    if (env && orderRow?.buyer_phone) {
+      await sendOrderOnWhatsApp(env, orderRow, tickets, eventRow || null);
+    }
+  } catch (_e) {
+    // non-fatal; you can log to a KV or console if needed
+  }
 
   return {
-    ...o,
-    items
+    order_id,
+    short_code: orderRow?.short_code || "",
+    total_cents,
+    tickets_issued: tickets.length,
+    payment_method: payment
   };
 }
 
-/** Create a POS order (cash/card) or settle a pending order */
-export async function createPOSOrder(db, body) {
-  // body:
-  //  - event_id
-  //  - items: [{ticket_type_id, qty}]     // if creating new sale
-  //  - short_code?: string                // if settling recalled pending order
-  //  - buyer: { name, phone }
-  //  - payment_method: 'cash' | 'card'
-  //  - source: 'pos'
-  //  - session_id?: number (optional, for reporting)
+/** Lookup a pending (pay at event) order by short_code */
+export async function loadPendingOrderByCode(db, code) {
+  const o = await db.prepare(
+    `SELECT id, event_id, status, buyer_name, buyer_email, buyer_phone,
+            short_code, items_json, total_cents, payment_method
+       FROM orders
+      WHERE short_code = ?1`
+  ).bind((code || "").trim().toUpperCase()).first();
+  if (!o) return null;
 
-  const method = (body.payment_method || '').toLowerCase();
-  if (!['cash','card'].includes(method)) throw new Error("payment_method must be 'cash' or 'card'");
+  // Hydrate items for UI convenience
+  const hydrated = await hydrateItems(db, o.items_json);
+  return {
+    ...o,
+    items: hydrated
+  };
+}
 
-  const buyer = body.buyer || {};
-  const contact = { first: '', last: '', email: '', phone: buyer.phone || '' };
+/* -------------------------------------------------------------------------- */
+/* Optional: convert a pending "pay later" into PAID at gate                   */
+/* (You can call this in your POS settle path if you keep a separate endpoint) */
+/* -------------------------------------------------------------------------- */
 
-  if (body.short_code) {
-    // Settle existing pending order
-    const o = await loadPendingOrderByCode(db, body.short_code);
-    if (!o) throw new Error("Order not found");
-    if (o.status === 'paid') return { order_id: o.id, short_code: o.short_code, total_cents: o.total_cents, already_paid: true };
+export async function settlePendingOrder(db, short_code, payment_method, buyer) {
+  const o = await db.prepare(
+    `SELECT id, event_id, items_json FROM orders
+      WHERE short_code=?1 AND status='pending'`
+  ).bind(short_code.toUpperCase()).first();
+  if (!o) throw new Error("Order not found or already settled");
 
-    // mark paid
-    await db.prepare(
-      `UPDATE orders
-         SET status='paid', payment_method=?1, paid_at=?2,
-             buyer_name=COALESCE(NULLIF(?3,''), buyer_name),
-             buyer_phone=COALESCE(NULLIF(?4,''), buyer_phone)
-       WHERE id=?5`
-    ).bind(
-      method === 'cash' ? 'cash_at_gate' : 'card_pos',
-      nowSec(),
-      buyer.name || '',
-      buyer.phone || '',
-      o.id
-    ).run();
+  const itemsCore = parseItems(o.items_json);
+  const hydrated = await hydrateItemsWithDB(db, itemsCore);
 
-    return { order_id: o.id, short_code: o.short_code, total_cents: o.total_cents };
-  }
+  await db.prepare(
+    `UPDATE orders
+        SET status='paid',
+            payment_method=?1,
+            buyer_name=COALESCE(NULLIF(?2,''), buyer_name),
+            buyer_email=COALESCE(NULLIF(?3,''), buyer_email),
+            buyer_phone=COALESCE(NULLIF(?4,''), buyer_phone)
+      WHERE id=?5`
+  ).bind(
+    (payment_method || "").toLowerCase(),
+    buyer?.buyer_name || "",
+    buyer?.buyer_email || "",
+    buyer?.buyer_phone || "",
+    o.id
+  ).run();
 
-  // Create a brand new POS order
-  const eventId = Number(body.event_id);
-  if (!eventId) throw new Error("Missing event_id");
+  // Ensure order_items exist (in case you want to track per type)
+  await insertOrderItems(db, o.id, hydrated);
 
-  const { lines, total_cents } = await hydrateItems(db, eventId, body.items);
-
-  const short_code = makeShortCode();
-  const orderId = await insertOrder(db, {
-    short_code,
-    event_id: eventId,
-    status: "paid",
-    payment_method: method === 'cash' ? 'cash_at_gate' : 'card_pos',
-    total_cents,
-    contact_json: JSON.stringify(contact),
-    paid_at: nowSec(),
-    source: "pos",
-    buyer_name: buyer.name || '',
-    buyer_email: '',
-    buyer_phone: buyer.phone || '',
-    items_json: JSON.stringify(lines)
+  // Issue tickets now
+  const tickets = await issueTickets(db, o.id, o.event_id, hydrated, {
+    buyer_email: buyer?.buyer_email || "",
+    buyer_phone: buyer?.buyer_phone || ""
   });
 
-  await insertOrderItems(db, orderId, lines);
+  // WhatsApp out
+  try {
+    if (buyer?.buyer_phone && buyer?.env) {
+      await sendOrderOnWhatsApp(buyer.env, {
+        id: o.id, event_id: o.event_id,
+        short_code, buyer_name: buyer?.buyer_name || "",
+        buyer_email: buyer?.buyer_email || "",
+        buyer_phone: buyer?.buyer_phone || ""
+      }, tickets, null);
+    }
+  } catch {}
 
-  return { order_id: orderId, short_code, total_cents };
+  return { ok:true, order_id: o.id, tickets_issued: tickets.length };
 }
