@@ -1,189 +1,169 @@
 // /src/services/orders.js
-// Core order helpers used by public checkout and POS flows
+//
+// Creates public web orders for:
+//  - Pay later (collect & pay at gate)
+//  - Pay now   (stub: returns a hosted-payment URL placeholder)
+//
+// Assumes D1 schema (columns confirmed in your screenshots):
+// orders(id, short_code, event_id, status, payment_method, payment_ref,
+//        total_cents, contact_json, created_at, paid_at, source,
+//        buyer_name, buyer_email, buyer_phone, items_json)
+// order_items(id, order_id, ticket_type_id, qty, price_cents)
+// ticket_types(id, event_id, name, price_cents)
+//
+// Tickets are NOT issued here; they’ll be generated after payment/collection.
+//
 
-function randCode(len = 6) {
-  const c = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+function nowSec() { return Math.floor(Date.now() / 1000); }
+
+// 6-char A–Z/0–9 short code
+function makeShortCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 1/0/O/I
   let s = "";
-  for (let i = 0; i < len; i++) s += c[Math.floor(Math.random() * c.length)];
+  for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
   return s;
 }
 
-export async function computeTotalCents(db, items) {
-  if (!Array.isArray(items) || items.length === 0) return 0;
+async function loadTicketTypes(db, eventId) {
+  const rows = (await db
+    .prepare(`SELECT id, event_id, name, price_cents FROM ticket_types WHERE event_id=?1`)
+    .bind(eventId)
+    .all()).results || [];
+  const byId = new Map(rows.map(r => [r.id, r]));
+  return { rows, byId };
+}
+
+function computeTotals(items, ttById) {
+  // items: [{ ticket_type_id, qty }]
   let total = 0;
-  for (const it of items) {
-    const row = await db
-      .prepare("SELECT price_cents FROM ticket_types WHERE id=?1")
-      .bind(it.ticket_type_id)
-      .first();
-    const price = Number(row?.price_cents || 0);
-    total += price * Number(it.qty || 0);
+  const norm = [];
+  for (const it of (items || [])) {
+    const id = Number(it.ticket_type_id);
+    const qty = Math.max(0, Number(it.qty || 0));
+    if (!id || !qty) continue;
+    const tt = ttById.get(id);
+    if (!tt) throw new Error(`Unknown ticket_type_id: ${id}`);
+    const line = { ticket_type_id: id, qty, price_cents: Number(tt.price_cents || 0) };
+    total += line.price_cents * qty;
+    norm.push(line);
   }
-  return total;
+  if (!norm.length) throw new Error("No valid items");
+  return { total_cents: total, lines: norm };
 }
 
-export async function hydrateItems(db, items) {
-  const out = [];
-  for (const it of items || []) {
-    const tt = await db
-      .prepare("SELECT id,name,price_cents FROM ticket_types WHERE id=?1")
-      .bind(it.ticket_type_id)
-      .first();
-    if (!tt) continue;
-    out.push({
-      ticket_type_id: tt.id,
-      name: tt.name,
-      price_cents: Number(tt.price_cents || 0),
-      qty: Number(it.qty || 0),
-    });
-  }
-  return out;
+async function insertOrder(db, data) {
+  // data: { event_id, status, payment_method, total_cents, source,
+  //         buyer_name, buyer_email, buyer_phone, items_json, contact_json, short_code }
+  const r = await db.prepare(
+    `INSERT INTO orders
+       (short_code, event_id, status, payment_method, payment_ref,
+        total_cents, contact_json, created_at, paid_at, source,
+        buyer_name, buyer_email, buyer_phone, items_json)
+     VALUES (?1, ?2, ?3, ?4, NULL,
+             ?5, ?6, ?7, NULL, ?8,
+             ?9, ?10, ?11, ?12)`
+  )
+  .bind(
+    data.short_code,
+    Number(data.event_id),
+    data.status,
+    data.payment_method,
+    Number(data.total_cents),
+    data.contact_json || null,
+    nowSec(),
+    data.source || 'web',
+    data.buyer_name || '',
+    data.buyer_email || '',
+    data.buyer_phone || '',
+    data.items_json || null
+  )
+  .run();
+  return r.meta.last_row_id;
 }
 
-async function issueTicketsForOrder(db, order_id, event_id, items, buyer_phone) {
-  const tickets = [];
-  for (const it of items || []) {
-    const qty = Number(it.qty || 0);
-    const ttId = Number(it.ticket_type_id);
-    if (!qty || !ttId) continue;
-    for (let i = 0; i < qty; i++) {
-      const qr = `O${order_id}-TT${ttId}-${i + 1}-${Math.random()
-        .toString(36)
-        .slice(2, 8)}`;
-      const ins = await db
-        .prepare(
-          `INSERT INTO tickets (order_id, event_id, ticket_type_id, attendee_first, attendee_last, email, phone, qr, state, issued_at)
-           VALUES (?1, ?2, ?3, '', '', '', ?4, ?5, 'unused', unixepoch())`
-        )
-        .bind(order_id, event_id, ttId, buyer_phone || "", qr)
-        .run();
-      tickets.push({ id: Number(ins.lastInsertRowid), qr });
-    }
-  }
-  return tickets;
-}
-
-/* =========================
- * PUBLIC CHECKOUT HELPERS
- * ========================= */
-
-// Pay later (reserve + pickup at event)
-export async function createOrderPayLater(db, body) {
-  // body: { event_id, items:[{ticket_type_id, qty}], buyer_name?, buyer_email?, buyer_phone? }
-  const items = Array.isArray(body.items) ? body.items : [];
-  const code = randCode();
-  const ins = await db
-    .prepare(
-      `INSERT INTO orders (event_id, source, status, buyer_name, buyer_email, buyer_phone, short_code, items_json, created_at)
-       VALUES (?1,'online','pending',?2,?3,?4,?5,?6,unixepoch())`
-    )
-    .bind(
-      body.event_id,
-      body.buyer_name || "",
-      body.buyer_email || "",
-      body.buyer_phone || "",
-      code,
-      JSON.stringify(items)
-    )
-    .run();
-
-  return { ok: true, order_id: Number(ins.lastInsertRowid), short_code: code };
-}
-
-// Pay now (stub payment URL; real Yoco hookup later)
-export async function createOrderPayNow(db, body, env) {
-  const items = Array.isArray(body.items) ? body.items : [];
-  const total_cents = await computeTotalCents(db, items);
-  const ins = await db
-    .prepare(
-      `INSERT INTO orders (event_id, source, status, buyer_name, buyer_email, buyer_phone, items_json, total_cents, created_at)
-       VALUES (?1,'online','awaiting_payment',?2,?3,?4,?5,?6,unixepoch())`
-    )
-    .bind(
-      body.event_id,
-      body.buyer_name || "",
-      body.buyer_email || "",
-      body.buyer_phone || "",
-      JSON.stringify(items),
-      total_cents
-    )
-    .run();
-
-  const order_id = Number(ins.lastInsertRowid);
-  // Placeholder hosted payment URL; replace with Yoco Hosted Payment once ready
-  const origin = env?.PUBLIC_ORIGIN || "";
-  const payment_url =
-    origin ? `${origin}/shop/${encodeURIComponent(body.slug || "")}/checkout?order=${order_id}` : `/shop/${encodeURIComponent(body.slug || "")}/checkout?order=${order_id}`;
-
-  return { ok: true, order_id, payment_url };
-}
-
-/* =========================
- * POS HELPERS
- * ========================= */
-
-// POS immediate-paid order (cash/card)
-export async function createPOSOrder(db, body) {
-  // body: { event_id, items, buyer_name?, buyer_phone?, payment_method: 'cash'|'card' }
-  const items = Array.isArray(body.items) ? body.items : [];
-  const total_cents = await computeTotalCents(db, items);
-  const ins = await db
-    .prepare(
-      `INSERT INTO orders (event_id, source, status, buyer_name, buyer_phone, payment_method, items_json, total_cents, created_at, paid_at)
-       VALUES (?1,'pos','paid',?2,?3,?4,?5,?6,unixepoch(),unixepoch())`
-    )
-    .bind(
-      body.event_id,
-      body.buyer_name || "",
-      body.buyer_phone || "",
-      body.payment_method || "cash",
-      JSON.stringify(items),
-      total_cents
-    )
-    .run();
-
-  const order_id = Number(ins.lastInsertRowid);
-  const tickets = await issueTicketsForOrder(
-    db,
-    order_id,
-    body.event_id,
-    items,
-    body.buyer_phone
+async function insertOrderItems(db, orderId, lines) {
+  if (!lines?.length) return;
+  const stmt = await db.prepare(
+    `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
+     VALUES (?1, ?2, ?3, ?4)`
   );
-
-  return { ok: true, order_id, total_cents, tickets };
-}
-
-/* =========================
- * NOTIFY HOOK
- * ========================= */
-
-export async function markOrderPaidAndNotify(env, order_id) {
-  const { notifyTicketsPaid } = await import("./notify.js");
-  try {
-    return await notifyTicketsPaid(env, order_id);
-  } catch (e) {
-    return { ok: false, error: String(e) };
+  for (const L of lines) {
+    await stmt.bind(orderId, L.ticket_type_id, L.qty, L.price_cents).run();
   }
 }
 
-/* =========================
- * RECALL HELPERS
- * ========================= */
+export async function createOrderPayLater(db, body) {
+  // body: { event_id, items:[{ticket_type_id, qty}], buyer:{first,last,email,phone} }
+  const eventId = Number(body.event_id);
+  if (!eventId) throw new Error("Missing event_id");
 
-export async function loadPendingOrderByCode(db, code) {
-  const ord = await db
-    .prepare(
-      `SELECT id, event_id, short_code, status, items_json, buyer_name, buyer_phone, buyer_email
-       FROM orders WHERE short_code=?1 LIMIT 1`
-    )
-    .bind(code)
-    .first();
-  if (!ord || ord.status !== "pending") return null;
+  const { byId } = await loadTicketTypes(db, eventId);
+  const { total_cents, lines } = computeTotals(body.items, byId);
 
-  let items = [];
-  try {
-    items = JSON.parse(ord.items_json || "[]");
-  } catch {}
-  return { order: ord, items };
+  const short_code = makeShortCode();
+  const buyer = body.buyer || {};
+  const contact = {
+    first: buyer.first || "",
+    last: buyer.last || "",
+    email: buyer.email || "",
+    phone: buyer.phone || ""
+  };
+
+  const orderId = await insertOrder(db, {
+    short_code,
+    event_id: eventId,
+    status: "pending",               // unpaid, to be paid at gate
+    payment_method: "unpaid",
+    total_cents,
+    contact_json: JSON.stringify(contact),
+    source: "web",
+    buyer_name: [contact.first, contact.last].filter(Boolean).join(" "),
+    buyer_email: contact.email || "",
+    buyer_phone: contact.phone || "",
+    items_json: JSON.stringify(lines)
+  });
+
+  await insertOrderItems(db, orderId, lines);
+
+  return { order_id: orderId, short_code, total_cents };
+}
+
+export async function createOrderPayNow(db, body, _env) {
+  // Same as pay_later but status indicates awaiting online payment
+  const eventId = Number(body.event_id);
+  if (!eventId) throw new Error("Missing event_id");
+
+  const { byId } = await loadTicketTypes(db, eventId);
+  const { total_cents, lines } = computeTotals(body.items, byId);
+
+  const short_code = makeShortCode();
+  const buyer = body.buyer || {};
+  const contact = {
+    first: buyer.first || "",
+    last: buyer.last || "",
+    email: buyer.email || "",
+    phone: buyer.phone || ""
+  };
+
+  const orderId = await insertOrder(db, {
+    short_code,
+    event_id: eventId,
+    status: "awaiting_payment",
+    payment_method: "card_online",
+    total_cents,
+    contact_json: JSON.stringify(contact),
+    source: "web",
+    buyer_name: [contact.first, contact.last].filter(Boolean).join(" "),
+    buyer_email: contact.email || "",
+    buyer_phone: contact.phone || "",
+    items_json: JSON.stringify(lines)
+  });
+
+  await insertOrderItems(db, orderId, lines);
+
+  // Placeholder: once Yoco Hosted Payments is integrated, return their redirect URL here.
+  // For now, link to a simple preview page or echo order code.
+  const payment_url = `/admin?pay=${encodeURIComponent(short_code)}`;
+
+  return { order_id: orderId, short_code, total_cents, payment_url };
 }
