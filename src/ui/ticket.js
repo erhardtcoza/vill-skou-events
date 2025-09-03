@@ -1,77 +1,88 @@
 // /src/ui/ticket.js
-import { qrImg } from "./qr.js";
+//
+// Public ticket view at /t/:code
+// Fetches ticket details then renders a printable pass with a QR.
+// Uses the same QR helper format we use elsewhere (CDN).
 
-/**
- * Public ticket page at /t/:code
- * Looks up ticket by code using /api/public/tickets/:code
- */
-export function ticketHTML(code) {
-  return `<!doctype html><html><head>
+import { qrIMG } from "./qr.js";
+
+export const ticketHTML = (code) => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Ticket</title>
+<title>Kaartjie · ${code}</title>
 <style>
-  :root{--green:#0a7d2b;--muted:#667085;--bg:#f7f7f8}
-  *{box-sizing:border-box} body{font-family:system-ui;margin:0;background:var(--bg)}
-  .wrap{max-width:900px;margin:22px auto;padding:0 16px}
-  .card{background:#fff;border-radius:16px;box-shadow:0 20px 40px rgba(0,0,0,.07);padding:16px}
-  .head{display:flex;gap:12px;align-items:center}
-  .title{font-weight:800;font-size:22px;margin:0}
+  :root{--green:#0a7d2b;--bg:#f7f7f8;--text:#111;--muted:#667085}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui}
+  .wrap{max-width:860px;margin:24px auto;padding:0 16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 18px 42px rgba(0,0,0,.08);padding:16px}
+  .header{display:flex;gap:14px;align-items:center}
+  .event{font-size:22px;font-weight:800}
   .muted{color:var(--muted)}
-  .grid{display:grid;grid-template-columns:1fr 260px;gap:18px}
-  .qr{text-align:center}
-  button{padding:10px 14px;border:1px solid #d1d5db;border-radius:10px;background:#fff}
-  .primary{background:var(--green);color:#fff;border-color:var(--green)}
-</style></head><body>
-<div class="wrap">
-  <div class="card">
-    <div class="head"><h1 class="title">Jou kaartjie</h1><span class="muted" id="code"></span></div>
-    <div id="state" class="muted" style="margin:4px 0 12px;"></div>
-    <div class="grid">
-      <div id="left"></div>
-      <div class="qr" id="qr"></div>
-    </div>
+  .grid{display:grid;grid-template-columns:220px 1fr;gap:18px;margin-top:14px}
+  @media (max-width:760px){.grid{grid-template-columns:1fr}}
+  .pill{border:1px solid #e6e7eb;border-radius:999px;padding:6px 10px;display:inline-block}
+  .btn{padding:10px 14px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+  @media print{
+    body{background:#fff}
+    .btnbar{display:none}
+    .card{box-shadow:none;border:1px solid #ddd}
+  }
+</style>
+</head><body><div class="wrap">
+
+  <div class="btnbar" style="margin-bottom:12px">
+    <button class="btn" onclick="window.print()">Druk/Print</button>
   </div>
-</div>
+
+  <div id="ticket" class="card">Laai kaartjie…</div>
 
 <script>
 const code = ${JSON.stringify(code)};
-document.getElementById('code').textContent = code;
 
-function rands(c){ return 'R'+( (c||0)/100 ).toFixed(2); }
+function rands(c){ return 'R'+((c||0)/100).toFixed(2); }
+function fmtDateRange(s,e){
+  const S=new Date((s||0)*1000), E=new Date((e||0)*1000);
+  const opts = { weekday:'short', day:'2-digit', month:'short' };
+  const t = { hour:'2-digit', minute:'2-digit' };
+  const sd = S.toLocaleDateString('af-ZA',opts)+' '+S.toLocaleTimeString('af-ZA',t);
+  const ed = E.toLocaleDateString('af-ZA',opts)+' '+E.toLocaleTimeString('af-ZA',t);
+  return sd.split(' ').slice(0,3).join(' ') + ' · ' + ed.split(' ').slice(0,3).join(' ');
+}
 
 async function load(){
-  const res = await fetch('/api/public/tickets/'+encodeURIComponent(code));
-  if(!res.ok){
-    document.getElementById('left').innerHTML = '<p>Kaartjie nie gevind nie.</p>';
-    return;
-  }
-  const data = await res.json();
-  const t = data.ticket, tt=data.ticket_type||{}, ev=data.event||{}, ord=data.order||{};
-  const when = (s,e) => {
-    const sd=new Date((s||0)*1000), ed=new Date((e||0)*1000);
-    const fmt = d=> d.toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'short'});
-    return fmt(sd)+' – '+fmt(ed);
-  };
+  const el = document.getElementById('ticket');
+  const res = await fetch('/api/public/tickets/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
+  if(!res.ok){ el.innerHTML = '<div class="muted">Kon nie kaartjie kry nie.</div>'; return; }
 
-  document.getElementById('state').textContent =
-    (t.state==='unused'?'Geldig – nog nie gescan nie': t.state==='in'?'In terrein': t.state==='out'?'Uit terrein':'Ongeldig');
+  const t = res.ticket || {};
+  const tt = res.ticket_type || {};
+  const ev = res.event || {};
+  const who = t.holder_name || [t.attendee_first||'', t.attendee_last||''].filter(Boolean).join(' ') || '(onbekend)';
+  const when = fmtDateRange(ev.starts_at, ev.ends_at);
+  const price = rands((tt.price_cents||0));
+  const qr = ${JSON.stringify(qrIMG('${CODE_PLACEHOLDER}', 220))}.replace('${CODE_PLACEHOLDER}', code);
 
-  document.getElementById('left').innerHTML = \`
-    <h3>\${ev.name||'Event'}</h3>
-    <div class="muted">\${when(ev.starts_at,ev.ends_at)} · \${ev.venue||''}</div>
-    <hr/>
-    <p><strong>Ticket:</strong> \${tt.name||''}</p>
-    <p><strong>Naam:</strong> \${t.holder_name || (ord.buyer_name||'')}</p>
-    <p class="muted">Bestel nommer: \${ord.short_code || ord.id || ''}</p>
-    <p class="muted">Prys: \${rands(tt.price_cents)}</p>
-    <div style="margin-top:12px"><button onclick="window.print()">Print</button></div>
+  el.innerHTML = \`
+    <div class="header">
+      <div class="event">\${ev.name || 'Event'}</div>
+      <span class="pill">\${ev.venue || ''}</span>
+    </div>
+    <div class="muted" style="margin-top:4px">\${when}</div>
+
+    <div class="grid">
+      <div>\${qr}</div>
+      <div>
+        <h3 style="margin:0 0 6px">Kaartjie</h3>
+        <div><strong>Tipe:</strong> \${tt.name || ''}</div>
+        <div><strong>Houernaam:</strong> \${who}</div>
+        <div><strong>Status:</strong> \${t.state || 'unused'}</div>
+        <div><strong>Serie/Code:</strong> \${t.code || t.qr || code}</div>
+        <div style="margin-top:8px"><strong>Betaal:</strong> \${price}</div>
+        <div class="muted" style="margin-top:10px">Wys hierdie QR by die hek vir toegang.</div>
+      </div>
+    </div>
   \`;
-
-  // QR
-  const qrHTML = ${JSON.stringify(qrImg("PLACEHOLDER"))}.replace('PLACEHOLDER', encodeURIComponent(t.qr || t.code || ''));
-  document.getElementById('qr').innerHTML = qrHTML + '<div class="muted" style="margin-top:6px">'+(t.qr||t.code||'')+'</div>';
 }
+
 load();
 </script>
-</body></html>`;
-}
+</div></body></html>`;
