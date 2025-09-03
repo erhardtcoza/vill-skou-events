@@ -19,6 +19,8 @@ import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
 import { loginHTML } from "./ui/login.js";
 
+import { loginHTML } from "./ui/login.js";
+
 const router = Router();
 
 /* APIs */
@@ -37,16 +39,11 @@ router.add("GET", "/", async () =>
   new Response(landingHTML(), { headers: { "content-type": "text/html" }})
 );
 
-// Role logins
-router.add("GET", "/admin/login", async () =>
-  new Response(loginHTML("admin"), { headers: { "content-type": "text/html" }})
-);
-router.add("GET", "/pos/login", async () =>
-  new Response(loginHTML("pos"), { headers: { "content-type": "text/html" }})
-);
-router.add("GET", "/scan/login", async () =>
-  new Response(loginHTML("scan"), { headers: { "content-type": "text/html" }})
-);
+
+router.add("GET", "/admin/login", async () => new Response(loginHTML("admin"), { headers: { "content-type": "text/html" }}));
+router.add("GET", "/pos/login",   async () => new Response(loginHTML("pos"),   { headers: { "content-type": "text/html" }}));
+router.add("GET", "/scan/login",  async () => new Response(loginHTML("scan"),  { headers: { "content-type": "text/html" }}));
+
 
 // Protected UIs
 router.add("GET", "/admin", requireRole("admin", async () =>
