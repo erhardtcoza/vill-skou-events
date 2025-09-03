@@ -11,6 +11,7 @@ export const posHTML = `<!doctype html><html><head>
   input, select{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
   .btn{ padding:10px 14px; border-radius:10px; border:0; background:#0a7d2b; color:#fff; cursor:pointer; font-weight:600 }
   .muted{ color:var(--muted) } .error{ color:#b42318; font-weight:600 }
+  .warn{ color:#8a5a00; font-weight:600 }
 </style>
 </head><body>
 <div class="wrap">
@@ -30,6 +31,7 @@ export const posHTML = `<!doctype html><html><head>
       <button id="startBtn" class="btn">Start</button>
       <div id="err" class="error"></div>
     </div>
+    <div id="hint" class="warn" style="margin-top:8px; display:none"></div>
   </div>
 </div>
 
@@ -48,15 +50,22 @@ async function load() {
 
     // Events
     const ev = $('event');
-    ev.innerHTML = j.events.map(e => 
+    ev.innerHTML = (j.events||[]).map(e =>
       \`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`
     ).join('') || '<option value="0">No events</option>';
 
-    // Gates
+    // Gates (may be empty if table missing)
     const gt = $('gate');
-    gt.innerHTML = j.gates.map(g => 
-      \`<option value="\${g.id}">\${g.name}</option>\`
-    ).join('');
+    if ((j.gates||[]).length) {
+      gt.innerHTML = j.gates.map(g => \`<option value="\${g.id}">\${g.name}</option>\`).join('');
+    } else {
+      gt.innerHTML = '<option value="0">No gates</option>';
+      if (j.gates_error) {
+        const h = $('hint');
+        h.style.display = 'block';
+        h.textContent = 'Note: no gates returned (' + j.gates_error + ').';
+      }
+    }
   } catch (e) {
     $('err').textContent = 'Error: ' + (e.message || 'network');
   }
@@ -81,7 +90,7 @@ $('startBtn').onclick = async () => {
     });
     const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'unknown');
-    // For now just reload to continue to the selling screen once it exists
+    // Ready to navigate to the selling screen (to be implemented)
     location.reload();
   } catch (e) {
     $('err').textContent = 'Error: ' + (e.message || 'unknown');
