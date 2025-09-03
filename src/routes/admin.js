@@ -1,6 +1,9 @@
 // /src/routes/admin.js
 import { json, bad } from "../utils/http.js";
 import { requireRole } from "../utils/auth.js";
+// ADD to /src/routes/admin.js (after existing exports/imports)
+import { requireRole } from "../utils/auth.js";
+import { newSalt, hashPassword } from "../utils/auth.js";
 
 /**
  * Helper: run a statement and return first row or all rows
@@ -46,6 +49,77 @@ export function mountAdmin(router) {
     })
   );
 
+
+
+  // ── Users CRUD ───────────────────────────────────────────────────────────
+  router.add(
+    "GET",
+    "/api/admin/users",
+    requireRole("admin", async (_req, env) => {
+      const rows = (await env.DB.prepare(
+        `SELECT id, username, display_name, role, is_active, created_at FROM users ORDER BY id ASC`
+      ).all()).results || [];
+      return json({ ok:true, users: rows });
+    })
+  );
+
+  router.add(
+    "POST",
+    "/api/admin/users",
+    requireRole("admin", async (req, env) => {
+      const b = await req.json().catch(()=>null);
+      const username = (b?.username||"").trim();
+      const display = (b?.display_name||"").trim();
+      const role = (b?.role||"").trim();
+      const password = (b?.password||"").trim();
+      if (!username || !password || !["admin","pos","scan"].includes(role)) return bad("Invalid fields");
+      const salt = newSalt();
+      const pwHash = await hashPassword(env, password, salt);
+      try {
+        const r = await env.DB.prepare(
+          `INSERT INTO users (username, display_name, role, salt, password_hash, is_active)
+           VALUES (?1, ?2, ?3, ?4, ?5, 1)`
+        ).bind(username, display, role, salt, pwHash).run();
+        return json({ ok:true, id: r.meta.last_row_id });
+      } catch (e) {
+        return json({ ok:false, error: String(e) }, 400);
+      }
+    })
+  );
+
+  router.add(
+    "PUT",
+    "/api/admin/users/:id",
+    requireRole("admin", async (req, env, _ctx, { id }) => {
+      const b = await req.json().catch(()=>null);
+      const updates = [];
+      const binds = [];
+      if (b?.display_name != null) { updates.push("display_name=?"); binds.push(b.display_name); }
+      if (b?.role && ["admin","pos","scan"].includes(b.role)) { updates.push("role=?"); binds.push(b.role); }
+      if (typeof b?.is_active === "number") { updates.push("is_active=?"); binds.push(b.is_active ? 1 : 0); }
+      if (b?.password) {
+        const salt = newSalt();
+        const hash = await hashPassword(env, b.password, salt);
+        updates.push("salt=?", "password_hash=?"); binds.push(salt, hash);
+      }
+      if (!updates.length) return json({ ok:true, updated:0 });
+      binds.push(Number(id));
+      await env.DB.prepare(`UPDATE users SET ${updates.join(", ")} WHERE id=?`).bind(...binds).run();
+      return json({ ok:true, updated:1 });
+    })
+  );
+
+  router.add(
+    "DELETE",
+    "/api/admin/users/:id",
+    requireRole("admin", async (_req, env, _ctx, { id }) => {
+      await env.DB.prepare(`UPDATE users SET is_active=0 WHERE id=?1`).bind(Number(id)).run();
+      return json({ ok:true });
+    })
+  );
+
+// … end of mountAdmin
+  
   // ── Events CRUD ──────────────────────────────────────────────────────────
   router.add(
     "GET",
