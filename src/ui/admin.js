@@ -6,7 +6,7 @@ export const adminHTML = () => `<!doctype html><html><head>
   :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8 }
   *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:20px auto; padding:0 16px }
-  .tabs{ display:flex; gap:8px; margin-bottom:16px }
+  .tabs{ display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap }
   .tab{ padding:8px 12px; border-radius:999px; background:#e7f0ea; color:#0a7d2b; cursor:pointer; font-weight:600 }
   .tab.active{ background:#0a7d2b; color:#fff }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px; margin-bottom:16px }
@@ -19,6 +19,7 @@ export const adminHTML = () => `<!doctype html><html><head>
   .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
   .muted{ color:var(--muted) } .error{ color:#b42318; font-weight:600 }
   .right{ text-align:right }
+  .pill{ padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; font-size:12px }
 </style>
 </head><body>
 <div class="wrap">
@@ -26,6 +27,7 @@ export const adminHTML = () => `<!doctype html><html><head>
 
   <div class="tabs">
     <div class="tab active" data-tab="events">Events</div>
+    <div class="tab" data-tab="tickets">Tickets</div>
     <div class="tab" data-tab="pos">POS Admin</div>
     <div class="tab" data-tab="vendors">Vendors</div>
     <div class="tab" data-tab="users">Users</div>
@@ -33,6 +35,7 @@ export const adminHTML = () => `<!doctype html><html><head>
   </div>
 
   <div id="events" class="tabpanes"></div>
+  <div id="tickets" class="tabpanes" style="display:none"></div>
   <div id="pos" class="tabpanes" style="display:none"></div>
   <div id="vendors" class="tabpanes" style="display:none"></div>
   <div id="users" class="tabpanes" style="display:none"></div>
@@ -54,11 +57,18 @@ document.querySelectorAll(".tab").forEach(t=>{
     if (t.dataset.tab==="pos") loadPOS();
     if (t.dataset.tab==="users") loadUsers();
     if (t.dataset.tab==="vendors") loadVendors();
+    if (t.dataset.tab==="tickets") loadTickets();
   };
 });
 
-/* ========== EVENTS (existing list + ticket types) ========== */
+/* ---------- Helpers ---------- */
+function toEpoch(s){ if(!s) return 0; const d=new Date(s); return Math.floor(d.getTime()/1000); }
+function fmtDate(ts){ if(!ts) return "-"; const d=new Date(ts*1000); return d.toISOString().slice(0,10); }
+function fmtDT(ts){ if(!ts) return "-"; const d=new Date(ts*1000); return d.toISOString().replace('T',' ').slice(0,16); }
 
+/* =========================================================
+ * EVENTS (same as previous working version) + Ticket Types
+ * ========================================================= */
 async function loadEvents(){
   const wrap = $("#events");
   wrap.innerHTML = '<div class="card">Loading…</div>';
@@ -197,7 +207,9 @@ async function showTicketTypes(eventId, slug, name){
   }
 }
 
-/* ========== POS SESSIONS (existing summary) ========== */
+/* =========================================================
+ * POS SESSIONS (summary)
+ * ========================================================= */
 async function loadPOS(){
   const wrap = $("#pos");
   wrap.innerHTML = '<div class="card">Loading…</div>';
@@ -232,7 +244,9 @@ async function loadPOS(){
   }
 }
 
-/* ========== USERS (NEW) ========== */
+/* =========================================================
+ * USERS
+ * ========================================================= */
 async function loadUsers(){
   const wrap = $("#users");
   wrap.innerHTML = '<div class="card">Loading…</div>';
@@ -296,12 +310,13 @@ async function loadUsers(){
   }
 }
 
-/* ========== VENDORS (NEW) ========== */
+/* =========================================================
+ * VENDORS + PASSES
+ * ========================================================= */
 async function loadVendors(){
   const wrap = $("#vendors");
   wrap.innerHTML = '<div class="card">Loading…</div>';
   try{
-    // load events for selector
     const evs = await fetch('/api/admin/events').then(r=>r.json());
     if(!evs.ok) throw new Error('events load failed');
     const options = (evs.events||[]).map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join("");
@@ -469,12 +484,121 @@ async function loadVendorPasses(vendorId, eventId){
   }
 }
 
-/* ========== helpers ========== */
-function toEpoch(s){ if(!s) return 0; const d = new Date(s); return Math.floor(d.getTime()/1000); }
-function fmtDate(ts){ if(!ts) return "-"; const d = new Date(ts*1000); return d.toISOString().slice(0,10); }
-function fmtDT(ts){ if(!ts) return "-"; const d = new Date(ts*1000); return d.toISOString().replace('T',' ').slice(0,16); }
+/* =========================================================
+ * TICKETS ANALYTICS (NEW)
+ * ========================================================= */
+async function loadTickets(){
+  const wrap = $("#tickets");
+  wrap.innerHTML = '<div class="card">Loading…</div>';
+  try{
+    const evs = await fetch('/api/admin/events').then(r=>r.json());
+    if(!evs.ok) throw new Error('events load failed');
+    const opts = (evs.events||[]).map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join("");
 
-// initial load
+    wrap.innerHTML = `
+      <div class="card">
+        <h2>Tickets</h2>
+        <div class="row" style="margin:8px 0 12px">
+          <select id="tEvent">${opts}</select>
+          <button class="btn" id="tLoad">Load</button>
+          <span id="tErr" class="error"></span>
+        </div>
+        <div id="tSummary"></div>
+        <div id="tDetails" style="margin-top:12px"></div>
+      </div>
+    `;
+
+    $("#tLoad").onclick = ()=> loadTicketSummary(Number($("#tEvent").value||0));
+  }catch(e){
+    wrap.innerHTML = `<div class="card"><div class="error">Error: ${esc(e.message||'load')}</div></div>`;
+  }
+}
+
+async function loadTicketSummary(eventId){
+  const box = $("#tSummary");
+  box.innerHTML = 'Loading summary…';
+  $("#tDetails").innerHTML = '';
+  try{
+    const r = await fetch(`/api/admin/tickets/summary?event_id=${eventId}`).then(r=>r.json());
+    if(!r.ok) throw new Error(r.error||'load failed');
+
+    const head = r.totals
+      ? `<div class="row" style="margin:8px 0">
+           <span class="pill">Total: ${r.totals.total||0}</span>
+           <span class="pill">In: ${r.totals.in_count||0}</span>
+           <span class="pill">Out: ${r.totals.out_count||0}</span>
+           <span class="pill">Unused: ${r.totals.unused_count||0}</span>
+           <span class="pill">Void: ${r.totals.void_count||0}</span>
+         </div>` : '';
+
+    const rows = (r.rows||[]).map(x=>`
+      <tr>
+        <td>${x.ticket_type_id}</td>
+        <td>${esc(x.ticket_type_name)}</td>
+        <td>${x.total||0}</td>
+        <td>${x.in_count||0}</td>
+        <td>${x.out_count||0}</td>
+        <td>${x.unused_count||0}</td>
+        <td>${x.void_count||0}</td>
+      </tr>
+    `).join("");
+
+    box.innerHTML = `
+      ${head}
+      <table>
+        <thead><tr><th>Type ID</th><th>Name</th><th>Total</th><th>In</th><th>Out</th><th>Unused</th><th>Void</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" class="muted">No tickets</td></tr>'}</tbody>
+      </table>
+      <div class="row" style="margin-top:10px">
+        <span class="muted">Details:</span>
+        <button class="btn secondary" data-tstate="">All</button>
+        <button class="btn secondary" data-tstate="in">In</button>
+        <button class="btn secondary" data-tstate="out">Out</button>
+        <button class="btn secondary" data-tstate="unused">Unused</button>
+        <button class="btn secondary" data-tstate="void">Void</button>
+      </div>
+    `;
+
+    document.querySelectorAll("[data-tstate]").forEach(b=>{
+      b.onclick = ()=> loadTicketDetails(eventId, b.dataset.tstate);
+    });
+
+  }catch(e){
+    box.innerHTML = `<div class="error">Error: ${esc(e.message||'load')}</div>`;
+  }
+}
+
+async function loadTicketDetails(eventId, state){
+  const box = $("#tDetails");
+  box.innerHTML = 'Loading details…';
+  try{
+    const r = await fetch(`/api/admin/tickets?event_id=${eventId}${state?`&state=${encodeURIComponent(state)}`:''}`).then(r=>r.json());
+    if(!r.ok) throw new Error(r.error||'load failed');
+
+    const rows = (r.tickets||[]).map(t=>`
+      <tr>
+        <td>${t.id}</td>
+        <td>${t.ticket_type_id}</td>
+        <td>${esc(t.ticket_type_name||'')}</td>
+        <td>${esc(t.state||'')}</td>
+        <td>${t.issued_at? fmtDT(t.issued_at): '-'}</td>
+        <td>${t.first_in_at? fmtDT(t.first_in_at): '-'}</td>
+        <td>${t.last_out_at? fmtDT(t.last_out_at): '-'}</td>
+      </tr>
+    `).join("");
+
+    box.innerHTML = `
+      <table>
+        <thead><tr><th>ID</th><th>Type ID</th><th>Type</th><th>State</th><th>Issued</th><th>First in</th><th>Last out</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" class="muted">No rows</td></tr>'}</tbody>
+      </table>
+    `;
+  }catch(e){
+    box.innerHTML = `<div class="error">Error: ${esc(e.message||'load')}</div>`;
+  }
+}
+
+/* initial */
 loadEvents();
 </script>
 </body></html>`;
