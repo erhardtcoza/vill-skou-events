@@ -1,216 +1,232 @@
 // /src/ui/checkout.js
-export function checkoutHTML(slug) {
+import { css } from "./style.js";
+
+function fmtR(cents) {
+  return "R" + (cents / 100).toFixed(2);
+}
+
+function getSlugFromPath() {
+  // matches /shop/:slug/checkout
+  const m = location.pathname.match(/\/shop\/([^/]+)\/checkout$/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+function loadCart(slug) {
+  try {
+    const raw = localStorage.getItem(`vs_cart_${slug}`) || "[]";
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    // normalize: [{ticket_type_id, name, price_cents, qty}]
+    return arr
+      .filter(x => x && x.ticket_type_id && x.qty > 0)
+      .map(x => ({
+        ticket_type_id: Number(x.ticket_type_id),
+        name: String(x.name || ""),
+        price_cents: Number(x.price_cents || 0),
+        qty: Number(x.qty || 0),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function computeTotals(lines) {
+  let total = 0;
+  for (const ln of lines) total += (ln.price_cents * ln.qty);
+  return { total_cents: total };
+}
+
+function linesHTML(lines) {
+  if (!lines.length) {
+    return `
+      <div class="muted">Geen kaartjies gekies nie.</div>
+      <div class="row space"></div>
+      <div class="row between">
+        <div class="muted">Totaal</div>
+        <div class="price">R0.00</div>
+      </div>
+    `;
+  }
+  const rows = lines.map(ln => `
+    <div class="row between line">
+      <div>${ln.name} &times; ${ln.qty}</div>
+      <div>${ln.price_cents === 0 ? "FREE" : fmtR(ln.price_cents * ln.qty)}</div>
+    </div>`).join("");
+
+  const { total_cents } = computeTotals(lines);
+
+  return `
+    ${rows}
+    <div class="row space"></div>
+    <div class="row between total">
+      <div class="muted">Totaal</div>
+      <div class="price">${fmtR(total_cents)}</div>
+    </div>
+  `;
+}
+
+export function checkoutHTML(slugParam) {
+  const slug = slugParam || getSlugFromPath();
+  const lines = loadCart(slug);
+  const hasItems = lines.length > 0;
+
   return `<!doctype html>
 <html lang="af">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Checkout</title>
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <style>
-    :root{--green:#157347;--grey:#f2f3f5;--border:#e5e7eb}
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;margin:0;background:#fff;color:#0f172a}
-    .wrap{max-width:960px;margin:28px auto;padding:0 16px}
-    h1{font-size:34px;margin:0 0 16px}
-    a.back{font-size:14px;color:#0f172a;text-decoration:none;display:inline-flex;gap:6px;align-items:center;margin-bottom:10px}
-    .grid{display:grid;grid-template-columns:1fr 360px;gap:18px}
-    .card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:18px}
-    .row{display:flex;gap:10px;margin-bottom:10px}
-    .row input{flex:1;padding:10px 12px;border:1px solid var(--border);border-radius:10px;font-size:14px}
-    .btn{border:1px solid var(--border);background:#fff;border-radius:10px;padding:10px 14px;font-weight:600;cursor:pointer}
-    .btn.primary{background:var(--green);color:#fff;border-color:var(--green)}
-    .btn:disabled{opacity:.5;cursor:not-allowed}
-    .sum-title{font-weight:700;margin:0 0 10px}
-    .sum-row{display:flex;justify-content:space-between;margin:6px 0}
-    .muted{color:#475569;font-size:13px}
-    .total{font-weight:800;font-size:20px}
-    ul.clean{margin:0;padding-left:18px}
-    .ok{color:#157347}
-    .err{color:#b91c1c}
+    ${css()}
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 16px; }
+    .grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 18px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card { background:#fff; border:1px solid #e6e6e6; border-radius:12px; padding:18px; }
+    h1 { margin: 10px 0 16px 0; }
+    .row { display:flex; gap:12px; align-items:center; }
+    .between { justify-content: space-between; }
+    .space { height: 8px; }
+    .muted { color:#6b7280; }
+    .price { font-weight:700; }
+    .line { padding:6px 0; border-bottom:1px dashed #eee; }
+    .total { padding-top:8px; }
+    .btn { border-radius:10px; padding:10px 14px; border:1px solid #d1d5db; background:#f9fafb; }
+    .btn.primary { background:#0f7b3a; color:#fff; border-color:#0f7b3a; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .tag { display:inline-block; background:#e7f5ee; color:#0f7b3a; border-radius:999px; padding:6px 10px; font-weight:600; }
+    .error { color:#b91c1c; margin-top:10px; }
+    .ok { color:#065f46; margin-top:10px; }
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .input { width:100%; border:1px solid #d1d5db; border-radius:10px; padding:11px 12px; }
+    .link { color:#0f7b3a; text-decoration:none; }
+    .link:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <a class="back" href="/shop/${slug}">← Terug na event</a>
+    <div class="row" style="gap:10px">
+      <a class="link" href="/shop/${slug}">← Terug na event</a>
+    </div>
     <h1>Checkout</h1>
+
     <div class="grid">
       <div class="card">
-        <h2 style="margin:0 0 12px">Jou besonderhede</h2>
+        <h3 style="margin-top:0">Jou besonderhede</h3>
+        <div class="two">
+          <input id="first" class="input" placeholder="Naam"/>
+          <input id="last" class="input" placeholder="Van"/>
+        </div>
+        <div class="two" style="margin-top:12px">
+          <input id="email" class="input" placeholder="E-pos" type="email"/>
+          <input id="phone" class="input" placeholder="Selfoon" inputmode="tel"/>
+        </div>
 
-        <div class="row">
-          <input id="first" placeholder="Naam">
-          <input id="last" placeholder="Van">
+        <div class="row" style="margin-top:14px; gap:10px">
+          <button id="payNow" class="btn primary" ${hasItems ? "" : "disabled"}>Pay now</button>
+          <button id="payLater" class="btn" ${hasItems ? "" : "disabled"}>(Pay at event)</button>
+          <span id="msg" class="muted"></span>
         </div>
-        <div class="row">
-          <input id="email" placeholder="E-pos" inputmode="email">
-          <input id="phone" placeholder="Selfoon" inputmode="tel">
-        </div>
-
-        <div class="row" style="margin-top:8px">
-          <button id="payNow" class="btn primary" disabled>Pay now</button>
-          <button id="payLater" class="btn" disabled>Pay at event</button>
-          <div id="msg" class="muted"></div>
-        </div>
+        <div id="flash" class="ok" style="display:none"></div>
+        <div id="err" class="error" style="display:none"></div>
       </div>
 
       <div class="card">
-        <h2 style="margin:0 0 12px">Jou keuse</h2>
-        <div id="lines"></div>
-        <div class="sum-row" style="margin-top:10px">
-          <div class="total">Totaal</div>
-          <div class="total" id="total">R0.00</div>
-        </div>
-        <p class="muted" style="margin-top:10px">Let wel: pryse word bevestig en herbereken op die volgende stap.</p>
+        <h3 style="margin-top:0">Jou keuse</h3>
+        <div id="lines">${linesHTML(lines)}</div>
+        <div class="muted" style="margin-top:8px;">Let wel: pryse word bevestig en herbereken op die volgende stap.</div>
       </div>
     </div>
   </div>
 
-  <script>
-  (async function(){
+  <script type="module">
     const slug = ${JSON.stringify(slug)};
-    const el = (id)=>document.getElementById(id);
-    const fmtR = (c)=>'R' + (c/100).toFixed(2);
+    const cartKey = "vs_cart_" + slug;
 
-    function parseMaybeBase64(str) {
-      try {
-        // try raw JSON first
-        return JSON.parse(str);
-      } catch {}
-      try {
-        // try base64 / base64url
-        const pad = (s)=> s + "===".slice((s.length+3)%4);
-        const norm = str.replace(/-/g,'+').replace(/_/g,'/');
-        return JSON.parse(atob(pad(norm)));
-      } catch {}
-      return null;
+    function readCart() {
+      try { return JSON.parse(localStorage.getItem(cartKey) || "[]"); }
+      catch { return []; }
     }
 
-    function loadCartCandidates() {
-      const keys = [
-        'vs_cart_' + slug,
-        'cart:' + slug,
-        'cart_' + slug
-      ];
-      for (const k of keys) {
-        const v = localStorage.getItem(k);
-        if (v) {
-          const j = parseMaybeBase64(v) || (()=>{ try{return JSON.parse(v)}catch{return null} })();
-          if (j) return j;
-        }
-      }
-      const u = new URL(location.href);
-      const cartQ = u.searchParams.get('cart') || '';
-      if (cartQ) {
-        const j = parseMaybeBase64(cartQ);
-        if (j) return j;
-      }
-      return null;
+    function postJSON(url, body) {
+      return fetch(url, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify(body) });
     }
 
-    function normalizeCart(raw, ticketTypes) {
-      if (!raw) return [];
-      // allow array or object map
-      const arr = Array.isArray(raw) ? raw : Object.entries(raw).map(([k,v])=>{
-        if (typeof v === 'number') return { id: Number(k)||k, qty: v };
-        return { ...v };
-      });
-
-      const byId = new Map(ticketTypes.map(t=>[String(t.id), t]));
-      const byName = new Map(ticketTypes.map(t=>[t.name.toLowerCase(), t]));
-
-      const items = [];
-      for (const it of arr) {
-        let tt = null;
-        if (it.ticket_type_id != null) tt = byId.get(String(it.ticket_type_id));
-        if (!tt && it.id != null)      tt = byId.get(String(it.id));
-        if (!tt && it.name)            tt = byName.get(String(it.name).toLowerCase());
-        const qty = Number(it.qty || it.quantity || it.count || 0);
-        if (tt && qty > 0) items.push({ ticket_type_id: tt.id, name: tt.name, price_cents: tt.price_cents, qty });
-      }
-      return items;
+    function setBusy(on) {
+      document.getElementById("payNow").disabled = on;
+      document.getElementById("payLater").disabled = on;
+      document.getElementById("err").style.display = "none";
+      document.getElementById("flash").style.display = "none";
     }
 
-    function renderSummary(items){
-      const box = document.getElementById('lines');
-      box.innerHTML = '';
-      if (!items.length) {
-        box.innerHTML = '<p class="muted" id="empty">Geen kaartjies gekies nie.</p>';
-      } else {
-        const ul = document.createElement('ul'); ul.className='clean';
-        for (const it of items) {
-          const li = document.createElement('li');
-          li.className = 'sum-row';
-          li.innerHTML = \`<div>\${it.name} × \${it.qty}</div><div>\${fmtR(it.price_cents * it.qty)}</div>\`;
-          ul.appendChild(li);
-        }
-        box.appendChild(ul);
-      }
-      const totalC = items.reduce((s,it)=>s + it.price_cents*it.qty, 0);
-      el('total').textContent = fmtR(totalC);
-      el('payNow').disabled  = totalC <= 0;
-      el('payLater').disabled = totalC <= 0;
-      return totalC;
+    function showErr(t) {
+      const el = document.getElementById("err");
+      el.textContent = "Error: " + t;
+      el.style.display = "block";
+    }
+    function showOk(t) {
+      const el = document.getElementById("flash");
+      el.textContent = t;
+      el.style.display = "block";
     }
 
-    // 1) Load event + ticket types
-    let eventId = null, ticketTypes = [];
-    try {
-      const r = await fetch(\`/api/public/events/\${slug}\`);
-      const j = await r.json();
-      if (j.ok) {
-        eventId = j.event.id;
-        ticketTypes = j.ticket_types || [];
-      } else {
-        el('msg').className='err'; el('msg').textContent = 'Kon nie event laai nie.';
-        return;
-      }
-    } catch(e){
-      el('msg').className='err'; el('msg').textContent = 'Netwerkfout: kan nie event laai nie.';
-      return;
-    }
-
-    // 2) Recover cart and normalize against live ticket types
-    const raw = loadCartCandidates();
-    const items = normalizeCart(raw, ticketTypes);
-    const totalCents = renderSummary(items);
-
-    // 3) Wire buttons
-    async function doCheckout(mode){
-      el('msg').className='muted'; el('msg').textContent='Verwerking…';
-      const body = {
-        mode: mode === 'later' ? 'pay_later' : 'pay_now',
-        event_id: eventId,
-        items: items.map(it => ({ ticket_type_id: it.ticket_type_id, qty: it.qty })),
-        contact: {
-          first: el('first').value.trim(),
-          last:  el('last').value.trim(),
-          email: el('email').value.trim(),
-          phone: el('phone').value.trim()
-        }
+    function collectContact() {
+      return {
+        first: document.getElementById("first").value.trim(),
+        last:  document.getElementById("last").value.trim(),
+        email: document.getElementById("email").value.trim(),
+        phone: document.getElementById("phone").value.trim()
       };
+    }
+
+    async function submit(mode) {
+      const items = readCart().filter(x => x && x.qty > 0);
+      if (!items.length) return showErr("Kies ten minste een kaartjie.");
+      setBusy(true);
       try {
-        const r = await fetch('/api/public/checkout', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
-        const j = await r.json();
-        if (!j.ok) throw new Error(j.error || 'server');
-        if (body.mode === 'pay_later') {
-          el('msg').className='ok';
-          el('msg').innerHTML = 'Bestelling geskep. Jou bestel nommer is as volg: <b>' + (j.pickup_code || j.short_code || '—') + '</b>. Wys dit by die hek om te betaal en jou kaartjies te ontvang.';
+        // fetch event id for slug to keep server authoritative
+        const evRes = await fetch("/api/public/events/" + encodeURIComponent(slug));
+        const evJson = await evRes.json();
+        if (!evJson?.ok || !evJson.event?.id) throw new Error("Kon nie event laai nie.");
+        const event_id = evJson.event.id;
+
+        const contact = collectContact();
+        const payload = {
+          mode: mode === "later" ? "pay_later" : "pay_now",
+          event_id,
+          buyer_name: (contact.first + " " + contact.last).trim(),
+          buyer_email: contact.email,
+          buyer_phone: contact.phone,
+          items: items.map(it => ({
+            ticket_type_id: Number(it.ticket_type_id),
+            qty: Number(it.qty)
+          }))
+        };
+
+        const r = await postJSON("/api/public/checkout", payload);
+        const j = await r.json().catch(() => ({}));
+
+        if (!r.ok || !j.ok) throw new Error(j.error || r.statusText || "server");
+
+        if (payload.mode === "pay_later") {
+          // keep the cart for now; show pickup code
+          showOk("Bestelling geskep. Jou bestel nommer is as volg: " + (j.pickup_code || j.short_code || "—") + ". Wys dit by die hek om te betaal en jou kaartjies te ontvang.");
         } else {
-          // pay now – until Yoco hosted payments is wired up:
-          el('msg').className='ok';
-          el('msg').textContent = 'Bestelling geskep. Betaalbladsy sal binnekort beskikbaar wees.';
-          if (j.payment_url) location.href = j.payment_url;
+          // pay now -> go to payment url (stub for Yoco)
+          if (j.payment_url) {
+            location.href = j.payment_url;
+          } else {
+            showOk("Bestelling geskep. Volg die betalingskakel om te betaal.");
+          }
         }
-      } catch(e){
-        el('msg').className='err';
-        el('msg').textContent = 'Fout tydens afrekening: ' + (e.message || 'onbekend');
+      } catch (e) {
+        showErr(String(e.message || e));
+      } finally {
+        setBusy(false);
       }
     }
 
-    el('payNow').addEventListener('click', ()=>doCheckout('now'));
-    el('payLater').addEventListener('click', ()=>doCheckout('later'));
-
-  })();
+    document.getElementById("payNow").addEventListener("click", () => submit("now"));
+    document.getElementById("payLater").addEventListener("click", () => submit("later"));
   </script>
 </body>
 </html>`;
