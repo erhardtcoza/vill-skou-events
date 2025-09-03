@@ -1,9 +1,6 @@
 // /src/routes/admin.js
 import { json, bad } from "../utils/http.js";
-import { requireRole } from "../utils/auth.js";
-// ADD to /src/routes/admin.js (after existing exports/imports)
-import { requireRole } from "../utils/auth.js";
-import { newSalt, hashPassword } from "../utils/auth.js";
+import { requireRole } from "../utils/auth.js";   // <— keep only this one
 
 /**
  * Helper: run a statement and return first row or all rows
