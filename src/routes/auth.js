@@ -10,37 +10,47 @@ function tokenForRole(env, role) {
 }
 
 export function mountAuth(router) {
-  // Login: { role: 'admin'|'pos'|'scan', token, name?, gate_name? }
+  // POST /api/auth/login  { role: 'admin'|'pos'|'scan', token, name? }
   router.add("POST", "/api/auth/login", async (req, env) => {
     const b = await req.json().catch(()=>null);
     const role = String(b?.role || "").toLowerCase().trim();
     const token = String(b?.token || "").trim();
     const name  = String(b?.name  || "").trim();
-    const gate  = role === "scan" ? String(b?.gate_name || "").trim() : "";
 
     if (!["admin","pos","scan"].includes(role)) return bad("Invalid role");
     const good = tokenForRole(env, role);
     if (!good || token !== good) return bad("Unauthorized", 401);
 
-    // Store gate in session only for scanners
-    const sess = await signSession(env, { role, name, gate, ts: Date.now() });
+    const sess = await signSession(env, { role, name, ts: Date.now() });
+
+    // Allow insecure cookie for local dev if you really need it
+    const insecure = (env.COOKIE_INSECURE === "1");
     const headers = new Headers({ "content-type": "application/json" });
-    headers.append("Set-Cookie", setCookie("vs_sess", sess));
-    return new Response(JSON.stringify({ ok:true, role, name, gate }), { status: 200, headers });
+    headers.append("Set-Cookie", setCookie("vs_sess", sess, { secure: !insecure }));
+
+    return new Response(JSON.stringify({ ok:true, role, name }), { status: 200, headers });
   });
 
-  // Logout
-  router.add("GET", "/api/auth/logout", async (_req, _env) => {
-    const headers = new Headers({ "content-type": "application/json" });
-    headers.append("Set-Cookie", "vs_sess=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure");
+  // GET /api/auth/logout  → clears cookie
+  router.add("GET", "/api/auth/logout", async (_req, env) => {
+    const insecure = (env.COOKIE_INSECURE === "1");
+    const parts = [
+      "vs_sess=",
+      "Path=/",
+      "Max-Age=0",
+      "HttpOnly",
+      "SameSite=Lax",
+    ];
+    if (!insecure) parts.push("Secure");
+    const headers = new Headers({ "content-type": "application/json", "Set-Cookie": parts.join("; ") });
     return new Response(JSON.stringify({ ok:true }), { status: 200, headers });
   });
 
-  // Who am I (now returns gate if present)
+  // GET /api/auth/whoami  → returns current session (role/name) or 401
   router.add("GET", "/api/auth/whoami", async (req, env) => {
     const raw = getCookie(req, "vs_sess");
     const sess = await verifySession(env, raw);
     if (!sess) return bad("Unauthorized", 401);
-    return json({ ok:true, role: sess.role, name: sess.name || "", gate: sess.gate || "" });
+    return json({ ok:true, role: sess.role, name: sess.name || "" });
   });
 }
