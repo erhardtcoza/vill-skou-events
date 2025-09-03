@@ -36,6 +36,24 @@ export function mountWhatsApp(router) {
     return bad("Missing params", 400);
   });
 
+// TEMP DEBUG: shows masked tokens (remove after verifying)
+export function mountWhatsAppDebug(router) {
+  router.add("GET", "/api/whatsapp/debug", async (req, env) => {
+    const url = new URL(req.url);
+    const got = url.searchParams.get("hub.verify_token") || "";
+    const have = env.WA_VERIFY_TOKEN || "";
+    const mask = s => s ? `${s[0]}***${s[s.length-1]} (${s.length})` : "(empty)";
+    const body = {
+      seen_query_token: mask(got),
+      worker_secret_token: mask(have),
+      equal: got === have
+    };
+    return new Response(JSON.stringify(body, null, 2), {
+      headers: { "content-type": "application/json" }
+    });
+  });
+}
+  
   // POST: message/status notifications (we just 200 OK)
   router.add("POST", "/api/whatsapp/webhook", async (req /*, env */) => {
     // If you want to debug, uncomment to read:
