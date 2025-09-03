@@ -123,18 +123,18 @@ export const adminHTML = () => `<!doctype html><html><head>
       const r = await fetch('/api/admin/events');
       if (r.status===401) throw new Error('Unauthorized');
       const j = await r.json();
-      const rows = (j.events||[]).map(e => `
+      const rows = (j.events||[]).map(e => \`
         <tr>
-          <td>${e.id}</td>
-          <td>${e.slug}</td>
-          <td>${e.name}<div class="muted">${e.venue||''}</div></td>
-          <td>${fmtDate(e.starts_at)}</td>
-          <td>${fmtDate(e.ends_at)}</td>
-          <td class="right"><button data-id="${e.id}" class="editBtn">Edit</button></td>
-        </tr>`).join('');
+          <td>\${e.id}</td>
+          <td>\${e.slug}</td>
+          <td>\${e.name}<div class="muted">\${e.venue||''}</div></td>
+          <td>\${fmtDate(e.starts_at)}</td>
+          <td>\${fmtDate(e.ends_at)}</td>
+          <td class="right"><button data-id="\${e.id}" class="editBtn">Edit</button></td>
+        </tr>\`).join('');
       $('eventsBody').innerHTML = rows || '<tr><td colspan="6" class="muted">No events yet.</td></tr>';
       // also fill POS dropdown
-      $('posEventSel').innerHTML = (j.events||[]).map(e=>`<option value="${e.id}">${e.name} (${e.slug})</option>`).join('') || '<option value="">No events</option>';
+      $('posEventSel').innerHTML = (j.events||[]).map(e=>\`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`).join('') || '<option value="">No events</option>';
     }catch(err){
       $('eventsBody').innerHTML = '<tr><td colspan="6" class="err">Error: '+(err.message||err)+'</td></tr>';
     }
@@ -167,19 +167,19 @@ export const adminHTML = () => `<!doctype html><html><head>
     try{
       const j = await fetch('/api/admin/pos/cashups?event_id='+encodeURIComponent(evId)+'&from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to)).then(r=>r.json());
       if(!j.ok) throw new Error(j.error||'Failed');
-      const rows = (j.cashups||[]).map(c=>`
+      const rows = (j.cashups||[]).map(c=>\`
         <tr>
-          <td>${c.id}</td>
-          <td>${c.event_id}</td>
-          <td>${c.cashier_name||''}</td>
-          <td>${c.gate_name||''}</td>
-          <td>${c.opened_at ? new Date(c.opened_at*1000).toLocaleString() : ''}</td>
-          <td>${c.closed_at ? new Date(c.closed_at*1000).toLocaleString() : ''}</td>
-          <td class="right">R${(c.opening_float_cents||0/100).toFixed ? (c.opening_float_cents/100).toFixed(2) : '0.00'}</td>
-          <td class="right">R${((c.cash_total_cents||0)/100).toFixed(2)}</td>
-          <td class="right">R${((c.card_total_cents||0)/100).toFixed(2)}</td>
-          <td class="right">R${((c.total_cents||0)/100).toFixed(2)}</td>
-        </tr>`).join('');
+          <td>\${c.id}</td>
+          <td>\${c.event_id}</td>
+          <td>\${c.cashier_name||''}</td>
+          <td>\${c.gate_name||''}</td>
+          <td>\${c.opened_at ? new Date(c.opened_at*1000).toLocaleString() : ''}</td>
+          <td>\${c.closed_at ? new Date(c.closed_at*1000).toLocaleString() : ''}</td>
+          <td class="right">R\${((c.opening_float_cents||0)/100).toFixed(2)}</td>
+          <td class="right">R\${((c.cash_total_cents||0)/100).toFixed(2)}</td>
+          <td class="right">R\${((c.card_total_cents||0)/100).toFixed(2)}</td>
+          <td class="right">R\${((c.total_cents||0)/100).toFixed(2)}</td>
+        </tr>\`).join('');
       $('cashupsBody').innerHTML = rows || '<tr><td colspan="10" class="muted">No cashups yet.</td></tr>';
       $('cashupsTbl').style.display='table';
 
