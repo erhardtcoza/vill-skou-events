@@ -5,163 +5,119 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
 <style>
   :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
   *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  a{ color:#111; text-decoration:none }
-  .muted{ color:var(--muted) }
-  .grid{ display:grid; grid-template-columns:1fr .9fr; gap:16px; margin-top:10px }
+  .wrap{ max-width:980px; margin:18px auto; padding:0 14px }
+  .grid{ display:grid; grid-template-columns:1.1fr .9fr; gap:16px }
   @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
-  h1{ margin:0 0 8px }
-  label{ font-size:13px; color:#475467; display:block; margin-bottom:6px }
-  input{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit }
+  h1{ margin:8px 0 14px } .muted{ color:#9aa3af }
+  input{ width:100%; padding:12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
   .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
-  .btn{ padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer }
-  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
-  .btn:disabled{ opacity:.5; cursor:not-allowed }
-  .totals{ font-weight:700; font-size:20px; text-align:right }
-  .line{ display:flex; justify-content:space-between; margin:6px 0 }
-  .note{ font-size:13px; color:#667085 }
+  .btn{ padding:12px 14px; border-radius:10px; border:0; background:var(--green); color:#fff; cursor:pointer; font-weight:700 }
+  .btn.ghost{ background:#fff; color:#111; border:1px solid #e5e7eb }
+  .totals{ display:flex; justify-content:space-between; margin-top:10px; font-weight:700; font-size:20px }
+  .err{ color:#b42318; margin-top:8px; font-weight:600 }
+  .ok{ color:#0f7b2e; margin-top:8px; font-weight:700 }
 </style>
 </head><body>
 <div class="wrap">
-  <div style="margin-bottom:8px"><a href="/shop/${encodeURIComponent(slug)}">← Terug na event</a></div>
+  <a href="/shop/${encodeURIComponent(slug)}" style="text-decoration:none;color:#0a7d2b">← Terug na event</a>
   <h1>Checkout</h1>
 
   <div class="grid">
     <div class="card">
-      <h2 style="margin:0 0 12px">Jou besonderhede</h2>
+      <h2>Jou besonderhede</h2>
       <div class="row" style="margin-bottom:10px">
         <input id="first" placeholder="Naam"/>
         <input id="last" placeholder="Van"/>
       </div>
-      <div class="row" style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:10px">
         <input id="email" placeholder="E-pos"/>
         <input id="phone" placeholder="Selfoon"/>
       </div>
-      <div style="display:flex; gap:8px">
-        <button id="payNow" class="btn primary">Pay now</button>
-        <button id="payAt" class="btn">(Pay at event)</button>
+      <div class="row" style="gap:8px">
+        <button id="payNow" type="button" class="btn">Pay now</button>
+        <button id="payEvent" type="button" class="btn ghost">(Pay at event)</button>
       </div>
-      <div id="msg" class="note" style="margin-top:10px"></div>
+      <div id="msg" class="err"></div>
+      <div id="ok" class="ok" style="display:none"></div>
     </div>
 
     <div class="card">
-      <h2 style="margin:0 0 12px">Jou keuse</h2>
-      <div id="cartEmpty" class="muted">Geen kaartjies gekies nie.</div>
-      <div id="cartList"></div>
-      <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
-        <span style="font-weight:700">Totaal</span>
-        <span id="total" class="totals">R0.00</span>
+      <h2>Jou keuse</h2>
+      <div id="list" class="muted">Geen kaartjies gekies nie.</div>
+      <div class="totals">
+        <span>Totaal</span>
+        <span id="total">R0.00</span>
       </div>
-      <p class="note" style="margin-top:12px">Let wel: pryse word bevestig en herbereken op die volgende stap.</p>
+      <p class="muted">Let wel: pryse word bevestig en herbereken op die volgende stap.</p>
     </div>
   </div>
 </div>
 
 <script>
 const slug = ${JSON.stringify(slug)};
-function rands(c){ return 'R' + ((c||0)/100).toFixed(2); }
+const R = c => 'R' + ((c||0)/100).toFixed(2);
+const $ = id => document.getElementById(id);
 
-let state = { event:null, items:[], ttypes:new Map(), total:0 };
-
-function loadFromSession(){
+function loadCart() {
   try {
-    const s = sessionStorage.getItem('pending_cart');
-    if (!s) return null;
-    const j = JSON.parse(s);
-    if (!Array.isArray(j.items) || !j.event_id) return null;
-    return j;
+    const c = JSON.parse(sessionStorage.getItem('pending_cart')||'null');
+    return (c && Array.isArray(c.items) && c.event_id) ? c : null;
   } catch { return null; }
 }
 
-function renderCart(){
-  const list = document.getElementById('cartList');
-  const empty = document.getElementById('cartEmpty');
-  if (!state.items.length){
-    list.innerHTML = '';
-    empty.style.display = 'block';
-    document.getElementById('total').textContent = rands(0);
-    return;
-  }
-  empty.style.display = 'none';
-  let total = 0;
-  list.innerHTML = state.items.map(it=>{
-    const tt = state.ttypes.get(it.ticket_type_id) || {name:'', price_cents:0};
-    const line = (tt.price_cents||0) * (it.qty||0);
-    total += line;
-    return \`<div class="line"><div>\${escapeHtml(tt.name)} × \${it.qty}</div><div>\${(tt.price_cents||0)?rands(line):'FREE'}</div></div>\`;
-  }).join('');
-  state.total = total;
-  document.getElementById('total').textContent = rands(total);
+function renderCart(cart) {
+  if (!cart || !cart.items.length) { $('list').textContent = 'Geen kaartjies gekies nie.'; $('total').textContent = 'R0.00'; return; }
+  $('list').innerHTML = cart.items.map(i => 
+    '<div style="display:flex;justify-content:space-between;margin:6px 0"><div>Type #'+i.ticket_type_id+' × '+i.qty+'</div><div>—</div></div>'
+  ).join('');
 }
 
-function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-
-async function bootstrap(){
-  const cart = loadFromSession();
-  if (!cart){
-    // nothing selected
-    renderCart();
-    return;
-  }
-
-  // fetch event + ticket types to hydrate names/prices
-  const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!res.ok){ document.getElementById('msg').textContent='Kon nie data laai nie.'; return; }
-
-  state.event = res.event || {};
-  const types = res.ticket_types || [];
-  state.ttypes = new Map(types.map(t=>[t.id, t]));
-  state.items = cart.items || [];
-  renderCart();
-}
-
-function details(){
-  return {
-    first: document.getElementById('first').value.trim(),
-    last:  document.getElementById('last').value.trim(),
-    email: document.getElementById('email').value.trim(),
-    phone: document.getElementById('phone').value.trim(),
-  };
-}
-
-async function createOrder(settle){
-  const d = details();
-  if (!state.items.length){ document.getElementById('msg').textContent='Kies ten minste één kaartjie.'; return; }
+async function createOrder(method) {
+  $('msg').textContent = ''; $('ok').style.display='none';
+  const cart = loadCart();
+  if (!cart) { $('msg').textContent = 'Geen kaartjies in jou mandjie nie.'; return; }
 
   const body = {
-    event_id: state.event?.id,
-    items: state.items,
-    customer: d,
-    payment: settle ? { method:'paynow' } : { method:'pay_at_event' }
+    event_id: cart.event_id,
+    items: cart.items,
+    method,
+    buyer_name: ($('first').value||'').trim(),
+    buyer_surname: ($('last').value||'').trim(),
+    email: ($('email').value||'').trim(),
+    phone: ($('phone').value||'').trim(),
   };
 
-  const r = await fetch('/api/orders/create', { // endpoint you already have server-side
-    method:'POST',
-    headers:{ 'content-type':'application/json' },
-    body: JSON.stringify(body)
-  }).then(r=>r.json()).catch(()=>({ok:false,error:'network'}));
+  try {
+    const r = await fetch('/api/public/orders/create', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify(body)
+    });
 
-  if (!r.ok){
-    document.getElementById('msg').textContent = 'Fout: ' + (r.error||'kon nie bestel nie');
-    return;
+    // If the server responded with HTML (e.g. CF error or redirect), show it plainly
+    const ct = r.headers.get('content-type')||'';
+    if (!ct.includes('application/json')) {
+      const txt = await r.text();
+      throw new Error('Unexpected response: ' + String(txt).slice(0,140));
+    }
+
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error||'server');
+    $('ok').textContent = 'Order created (' + j.order.short_code + ').';
+    $('ok').style.display = 'block';
+
+    // For "pay_event" we could redirect to the ticket page once paid/issued;
+    // for now we just confirm.
+  } catch (e) {
+    $('msg').textContent = 'Fout: ' + (e.message || 'network');
   }
-
-  if (settle && r.pay_url){
-    location.href = r.pay_url; // redirect to payment
-    return;
-  }
-
-  // Pay at event → show code and copy it
-  document.getElementById('msg').innerHTML =
-    'Bestelling geskep.<br/>Jou bestel nommer is as volg: <b>'+escapeHtml(r.code||'')+'</b>.<br/>Wys dit by die hek om te betaal en jou kaartjies te ontvang.';
-  // Clear cart after order
-  sessionStorage.removeItem('pending_cart');
 }
 
-document.getElementById('payNow').onclick = ()=> createOrder(true);
-document.getElementById('payAt').onclick  = ()=> createOrder(false);
+$('payNow').onclick = () => createOrder('pay_now');
+$('payEvent').onclick = () => createOrder('pay_event');
 
-bootstrap();
+// Render initial cart (totals are confirmed server-side on create)
+renderCart(loadCart());
 </script>
 </body></html>`;
