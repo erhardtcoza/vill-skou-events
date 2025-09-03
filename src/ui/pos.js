@@ -174,16 +174,21 @@ let currentEventId = null;
 let cart = new Map(); // ticket_type_id -> {tt, qty}
 let cashup = null; // { id, cashier_name, gate_name }
 
+// ---- helpers
 function el(id){ return document.getElementById(id); }
 function show(e){ e.classList.remove('hidden'); }
 function hide(e){ e.classList.add('hidden'); }
-
+function hideAllModals(){
+  ['shiftModal','checkoutModal','closeModal','recallModal']
+    .forEach(id => el(id)?.classList.add('hidden'));
+}
 async function fetchJSON(url, opt){ 
   const r = await fetch(url, opt);
   if (!r.ok) throw new Error('HTTP '+r.status);
   return r.json();
 }
 
+// ---- bootstrap
 async function bootstrap(){
   // gates for shift modal
   try{
@@ -218,6 +223,7 @@ function renderTT(){
   });
 }
 
+// ---- cart
 function addItem(ttId){
   const tt = (catalog.ticket_types_by_event[currentEventId]||[]).find(x=>x.id===ttId);
   if (!tt) return;
@@ -266,7 +272,7 @@ function renderCart(){
 
 function resetSale(){ cart.clear(); renderCart(); }
 
-// SHIFT open/close
+// ---- shift open/close
 async function openShift(){
   const cashier = el('mCashier').value.trim();
   const gate = el('mGate').value.trim();
@@ -278,7 +284,9 @@ async function openShift(){
   });
   cashup = { id: res.id, cashier_name:cashier, gate_name:gate };
   localStorage.setItem('pos_cashup', JSON.stringify(cashup));
-  hide(el('shiftModal')); el('shiftBadge').classList.remove('hidden'); el('endShiftBtn').classList.remove('hidden');
+  hide(el('shiftModal'));
+  el('shiftBadge').classList.remove('hidden');
+  el('endShiftBtn').classList.remove('hidden');
 }
 
 async function closeShift(){
@@ -292,7 +300,7 @@ async function closeShift(){
   location.reload();
 }
 
-// CHECKOUT flow
+// ---- checkout flow
 function beginCheckout(){
   const total = el('grand').textContent;
   el('ckTotal').textContent = total;
@@ -300,8 +308,10 @@ function beginCheckout(){
   document.querySelectorAll('input[name="pay"]').forEach(r=> r.checked=false );
   el('ckName').value = ''; el('ckPhone').value='';
   el('confirmCheckout').disabled = true;
+  hideAllModals();
   show(el('checkoutModal'));
 }
+
 function onPayChange(){
   const any = [...document.querySelectorAll('input[name="pay"]')].some(r=>r.checked);
   el('confirmCheckout').disabled = !any;
@@ -327,13 +337,23 @@ async function confirmCheckout(){
   alert('Order #' + res.order_id + ' completed. Tickets: ' + (res.tickets?.length||0));
 }
 
-// wire up
+// ---- wire up UI
 el('openShiftBtn').onclick = openShift;
-el('endShiftBtn').onclick = ()=> show(el('closeModal'));
+el('endShiftBtn').onclick = ()=> { hideAllModals(); show(el('closeModal')); };
 el('cancelClose').onclick = ()=> hide(el('closeModal'));
 el('confirmClose').onclick = closeShift;
 
-el('recallBtn').onclick = ()=> show(el('recallModal'));
+el('recallBtn').onclick = () => {
+  // Only allow after a shift is open
+  if (!cashup?.id) {
+    alert('Open a shift first');
+    hideAllModals();
+    show(el('shiftModal'));
+    return;
+  }
+  hideAllModals();
+  show(el('recallModal'));
+};
 el('recCancel').onclick = ()=> hide(el('recallModal'));
 el('recGo').onclick = ()=> alert('Lookup coming in next step.');
 
@@ -341,13 +361,26 @@ el('clearBtn').onclick = resetSale;
 el('checkoutBtn').onclick = beginCheckout;
 el('cancelCheckout').onclick = ()=> hide(el('checkoutModal'));
 document.querySelectorAll('input[name="pay"]').forEach(r=> r.addEventListener('change', onPayChange));
-el('cashBtn').onclick = ()=>{ /* quick-add cash button could open modal preset to cash */ beginCheckout(); document.querySelector('input[name="pay"][value="cash"]').checked = true; onPayChange(); };
+el('cashBtn').onclick = ()=>{ 
+  // Quick cash: open modal pre-selected to cash
+  beginCheckout(); 
+  const r = document.querySelector('input[name="pay"][value="cash"]');
+  if (r){ r.checked = true; onPayChange(); }
+};
 
-// init
+// ---- init
 (async ()=>{
+  hideAllModals(); // start clean – no modal visible
+
   // Restore open shift if exists
   try{ cashup = JSON.parse(localStorage.getItem('pos_cashup')||'null'); }catch{}
-  if (cashup?.id){ el('shiftBadge').classList.remove('hidden'); el('endShiftBtn').classList.remove('hidden'); hide(el('shiftModal')); }
+  if (cashup?.id){
+    el('shiftBadge').classList.remove('hidden');
+    el('endShiftBtn').classList.remove('hidden');
+  } else {
+    show(el('shiftModal')); // force opening a shift first
+  }
+
   await bootstrap();
   resetSale();
 })();
