@@ -70,7 +70,7 @@ export function mountAdmin(router) {
   );
 
   /* =========================
-   * POS ADMIN (existing summary)
+   * POS ADMIN (summary)
    * ========================= */
   router.add("GET", "/api/admin/pos/sessions",
     requireRole("admin", async (req, env) => {
@@ -88,7 +88,6 @@ export function mountAdmin(router) {
           ORDER BY s.id DESC`
       ).bind(from, to).all();
 
-      // cash/card totals by session
       const totals = await env.DB.prepare(
         `SELECT session_id,
                 SUM(CASE WHEN method='pos_cash' THEN amount_cents ELSE 0 END) AS cash_cents,
@@ -108,7 +107,7 @@ export function mountAdmin(router) {
   );
 
   /* =========================
-   * USERS (NEW)
+   * USERS
    * ========================= */
   router.add("GET", "/api/admin/users",
     requireRole("admin", async (_req, env) => {
@@ -123,7 +122,7 @@ export function mountAdmin(router) {
     requireRole("admin", async (req, env) => {
       let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
       const username = String(b?.username || "").trim();
-      const role = String(b?.role || "").trim(); // 'admin' | 'pos' | 'scan'
+      const role = String(b?.role || "").trim();
       const password_hash = (b?.password_hash ?? null) ? String(b.password_hash) : null;
 
       if (!username || !role) return bad("Missing username/role");
@@ -145,10 +144,8 @@ export function mountAdmin(router) {
   );
 
   /* =========================
-   * VENDORS (NEW)
+   * VENDORS + PASSES
    * ========================= */
-
-  // list vendors per event
   router.add("GET", "/api/admin/vendors",
     requireRole("admin", async (req, env) => {
       const u = new URL(req.url);
@@ -167,7 +164,6 @@ export function mountAdmin(router) {
     })
   );
 
-  // create vendor
   router.add("POST", "/api/admin/vendors",
     requireRole("admin", async (req, env) => {
       let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
@@ -198,7 +194,6 @@ export function mountAdmin(router) {
     })
   );
 
-  // vendor passes
   router.add("GET", "/api/admin/vendor-passes",
     requireRole("admin", async (req, env) => {
       const u = new URL(req.url);
@@ -220,7 +215,7 @@ export function mountAdmin(router) {
     requireRole("admin", async (req, env) => {
       let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
       const vendor_id = Number(b?.vendor_id || 0);
-      const type = String(b?.type || "staff"); // 'staff' | 'vehicle'
+      const type = String(b?.type || "staff");
       const label = (b?.label ?? null) ? String(b.label).trim() : null;
       const vehicle_reg = (b?.vehicle_reg ?? null) ? String(b.vehicle_reg).trim() : null;
       const qr = String(b?.qr || "").trim();
@@ -240,6 +235,80 @@ export function mountAdmin(router) {
     requireRole("admin", async (_req, env, _ctx, p) => {
       await env.DB.prepare(`DELETE FROM vendor_passes WHERE id=?1`).bind(Number(p.id)).run();
       return json({ ok: true });
+    })
+  );
+
+  /* =========================
+   * TICKETS ANALYTICS (NEW)
+   * ========================= */
+
+  // Per ticket-type counts for one event
+  router.add("GET", "/api/admin/tickets/summary",
+    requireRole("admin", async (req, env) => {
+      const u = new URL(req.url);
+      const event_id = Number(u.searchParams.get("event_id") || 0);
+      if (!event_id) return bad("event_id required");
+
+      // Aggregate ticket states by ticket_type
+      const agg = await env.DB.prepare(
+        `SELECT tt.id AS ticket_type_id, tt.name AS ticket_type_name,
+                COUNT(t.id) AS total,
+                SUM(CASE WHEN t.state='in'     THEN 1 ELSE 0 END) AS in_count,
+                SUM(CASE WHEN t.state='out'    THEN 1 ELSE 0 END) AS out_count,
+                SUM(CASE WHEN t.state='unused' THEN 1 ELSE 0 END) AS unused_count,
+                SUM(CASE WHEN t.state='void'   THEN 1 ELSE 0 END) AS void_count
+           FROM ticket_types tt
+           LEFT JOIN tickets t
+                  ON t.ticket_type_id = tt.id
+                 AND t.event_id = tt.event_id
+          WHERE tt.event_id = ?1
+          GROUP BY tt.id, tt.name
+          ORDER BY tt.id ASC`
+      ).bind(event_id).all();
+
+      // Grand totals (optional)
+      const grand = await env.DB.prepare(
+        `SELECT
+            COUNT(id) AS total,
+            SUM(CASE WHEN state='in'     THEN 1 ELSE 0 END) AS in_count,
+            SUM(CASE WHEN state='out'    THEN 1 ELSE 0 END) AS out_count,
+            SUM(CASE WHEN state='unused' THEN 1 ELSE 0 END) AS unused_count,
+            SUM(CASE WHEN state='void'   THEN 1 ELSE 0 END) AS void_count
+         FROM tickets
+        WHERE event_id = ?1`
+      ).bind(event_id).all();
+
+      return json({
+        ok: true,
+        rows: agg.results || [],
+        totals: (grand.results && grand.results[0]) ? grand.results[0] : { total:0,in_count:0,out_count:0,unused_count:0,void_count:0 }
+      });
+    })
+  );
+
+  // Detail list (optional state filter)
+  router.add("GET", "/api/admin/tickets",
+    requireRole("admin", async (req, env) => {
+      const u = new URL(req.url);
+      const event_id = Number(u.searchParams.get("event_id") || 0);
+      const state = (u.searchParams.get("state") || "").trim(); // '', 'in','out','unused','void'
+      if (!event_id) return bad("event_id required");
+
+      const sql =
+        `SELECT t.id, t.ticket_type_id, tt.name AS ticket_type_name, t.state,
+                t.issued_at, t.first_in_at, t.last_out_at
+           FROM tickets t
+           LEFT JOIN ticket_types tt ON tt.id = t.ticket_type_id
+          WHERE t.event_id = ?1
+            ${state ? "AND t.state = ?2" : ""}
+          ORDER BY t.id DESC
+          LIMIT 500`;
+
+      const q = state
+        ? await env.DB.prepare(sql).bind(event_id, state).all()
+        : await env.DB.prepare(sql).bind(event_id).all();
+
+      return json({ ok: true, tickets: q.results || [] });
     })
   );
 }
