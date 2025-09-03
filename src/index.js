@@ -2,6 +2,7 @@
 import { Router } from "./router.js";
 import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
+import { mountWATest } from "./routes/wa_test.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -35,6 +36,8 @@ mountPOS(router);        // /api/pos/*
 mountScan(router);       // /api/scan/*
 mountSync(router);       // /api/sync/*
 mountWhatsApp(router);   // /api/whatsapp/webhook, /api/whatsapp/send, /api/whatsapp/debug
+mountWATest(router);
+
 
 /* ---------------------- UI ROUTES ----------------------- */
 
