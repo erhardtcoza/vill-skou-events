@@ -2,7 +2,7 @@
 import { Router } from "./router.js";
 import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
-import { mountWATest } from "./routes/wa_test.js";
+import { requireRole } from "./utils/auth.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -12,6 +12,7 @@ import { mountScan } from "./routes/scan.js";
 import { mountSync } from "./routes/sync.js";
 import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
+import { mountWATest } from "./routes/wa_test.js";
 
 // UI
 import { landingHTML } from "./ui/landing.js";
@@ -23,10 +24,11 @@ import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
 import { loginHTML } from "./ui/login.js";
 
-// Auth guard for UI pages
-import { requireRole } from "./utils/auth.js";
-
 const router = Router();
+
+// --- helper: allow UI modules to export either a function or a string
+const render = (tpl, ...args) =>
+  (typeof tpl === "function" ? tpl(...args) : tpl);
 
 /* ---------------------- API ROUTES ---------------------- */
 mountAuth(router);       // /api/auth/login, /api/auth/logout
@@ -35,60 +37,54 @@ mountAdmin(router);      // /api/admin/*
 mountPOS(router);        // /api/pos/*
 mountScan(router);       // /api/scan/*
 mountSync(router);       // /api/sync/*
-mountWhatsApp(router);   // /api/whatsapp/webhook, /api/whatsapp/send, /api/whatsapp/debug
+mountWhatsApp(router);   // /api/whatsapp/*
 mountWATest(router);
-
 
 /* ---------------------- UI ROUTES ----------------------- */
 
 // Landing
 router.add("GET", "/", async () =>
-  new Response(landingHTML(), { headers: { "content-type": "text/html" }})
+  new Response(render(landingHTML), { headers: { "content-type": "text/html" } })
 );
 
-// Admin UI (guarded)
+// Admin UI (guarded) + login
 router.add("GET", "/admin", requireRole("admin", async () =>
-  new Response(adminHTML(), { headers: { "content-type": "text/html" }})
+  new Response(render(adminHTML), { headers: { "content-type": "text/html" } })
 ));
-// Admin login UI
 router.add("GET", "/admin/login", async () =>
-  new Response(loginHTML("admin"), { headers: { "content-type": "text/html" }})
+  new Response(render(loginHTML, "admin"), { headers: { "content-type": "text/html" } })
 );
 
-// POS UI (guarded)
+// POS UI (guarded) + login
 router.add("GET", "/pos", requireRole("pos", async () =>
-  new Response(posHTML(), { headers: { "content-type": "text/html" }})
+  new Response(render(posHTML), { headers: { "content-type": "text/html" } })
 ));
-// POS login UI
 router.add("GET", "/pos/login", async () =>
-  new Response(loginHTML("pos"), { headers: { "content-type": "text/html" }})
+  new Response(render(loginHTML, "pos"), { headers: { "content-type": "text/html" } })
 );
 
-// Scanner UI (guarded)
+// Scanner UI (guarded) + login
 router.add("GET", "/scan", requireRole("scan", async () =>
-  new Response(scannerHTML(), { headers: { "content-type": "text/html" }})
+  new Response(render(scannerHTML), { headers: { "content-type": "text/html" } })
 ));
-// Scanner login UI
 router.add("GET", "/scan/login", async () =>
-  new Response(loginHTML("scan"), { headers: { "content-type": "text/html" }})
+  new Response(render(loginHTML, "scan"), { headers: { "content-type": "text/html" } })
 );
 
 // Event shop + checkout
 router.add("GET", "/shop/:slug", async (_req, _env, _ctx, { slug }) =>
-  new Response(shopHTML(slug), { headers: { "content-type": "text/html" }})
+  new Response(render(shopHTML, slug), { headers: { "content-type": "text/html" } })
 );
-
 router.add("GET", "/shop/:slug/checkout", async (_req, _env, _ctx, { slug }) =>
-  new Response(checkoutHTML(slug), { headers: { "content-type": "text/html" }})
+  new Response(render(checkoutHTML, slug), { headers: { "content-type": "text/html" } })
 );
 
 // Ticket display
 router.add("GET", "/t/:code", async (_req, _env, _ctx, { code }) =>
-  new Response(ticketHTML(code), { headers: { "content-type": "text/html" }})
+  new Response(render(ticketHTML, code), { headers: { "content-type": "text/html" } })
 );
 
 /* ---------------------- WORKER EXPORT ------------------- */
-
 export default {
   async fetch(req, env, ctx) {
     const handler = withCORS((rq, e, c, p) => router.handle(rq, e, c, p));
