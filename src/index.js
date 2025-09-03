@@ -11,6 +11,7 @@ import { mountScan } from "./routes/scan.js";
 import { mountSync } from "./routes/sync.js";
 import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
+import { mountWhatsAppDebug } from "./routes/whatsapp.js";
 
 // UIs
 import { landingHTML } from "./ui/landing.js";
@@ -32,6 +33,8 @@ mountPOS(router);
 mountScan(router);
 mountSync(router);
 mountWhatsApp(router);
+mountWhatsAppDebug(router);
+
 
 /* Static UI (public) */
 router.add("GET", "/", async () =>
