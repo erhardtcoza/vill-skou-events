@@ -1,87 +1,77 @@
 // /src/ui/ticket.js
-export const ticketHTML = (code) => `<!doctype html><html lang="en"><head>
+import { qrImg } from "./qr.js";
+
+/**
+ * Public ticket page at /t/:code
+ * Looks up ticket by code using /api/public/tickets/:code
+ */
+export function ticketHTML(code) {
+  return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Ticket • ${code.slice(0, 8)}</title>
+<title>Ticket</title>
 <style>
-  :root{ --green:#0a7d2b; --yellow:#ffd900; --bg:#f6f7f8; --ink:#111; --muted:#6b7280 }
-  *{ box-sizing:border-box }
-  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink) }
-  header{ display:flex; gap:10px; align-items:center; padding:14px 16px; background:#fff; border-bottom:1px solid #e5e7eb }
-  header img{ height:32px }
-  .wrap{ max-width:840px; margin:18px auto; padding:0 14px }
-  .card{ background:#fff; border:1px solid #e5e7eb; border-radius:16px; overflow:hidden }
-  .hero{ background:linear-gradient(90deg,var(--green),var(--yellow)); min-height:88px; display:flex; align-items:center; gap:12px; padding:16px; color:#fff }
-  .hero img{ height:56px; width:auto; border-radius:8px; background:#fff; padding:4px }
-  .hero h1{ font-size:18px; margin:0 }
-  .hero small{ opacity:.95 }
-  .inner{ padding:16px; display:grid; grid-template-columns:1fr 280px; gap:16px }
-  .kv{ display:grid; grid-template-columns:120px 1fr; gap:6px 10px; align-items:center; font-size:14px }
-  .kv .k{ color:var(--muted) }
-  .big{ text-align:center }
-  #qr{ display:inline-block; }
-  .terms{ color:var(--muted); font-size:12px; margin-top:10px }
-  @media (max-width:800px){ .inner{ grid-template-columns:1fr } .hero{ min-height:64px } }
-</style>
-</head><body>
-<header><img id="logo" alt="logo" /></header>
+  :root{--green:#0a7d2b;--muted:#667085;--bg:#f7f7f8}
+  *{box-sizing:border-box} body{font-family:system-ui;margin:0;background:var(--bg)}
+  .wrap{max-width:900px;margin:22px auto;padding:0 16px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 20px 40px rgba(0,0,0,.07);padding:16px}
+  .head{display:flex;gap:12px;align-items:center}
+  .title{font-weight:800;font-size:22px;margin:0}
+  .muted{color:var(--muted)}
+  .grid{display:grid;grid-template-columns:1fr 260px;gap:18px}
+  .qr{text-align:center}
+  button{padding:10px 14px;border:1px solid #d1d5db;border-radius:10px;background:#fff}
+  .primary{background:var(--green);color:#fff;border-color:var(--green)}
+</style></head><body>
 <div class="wrap">
   <div class="card">
-    <div class="hero">
-      <img id="poster" alt="poster"/>
-      <div>
-        <h1 id="evName">Loading…</h1>
-        <small id="evMeta"></small>
-      </div>
-    </div>
-    <div class="inner">
-      <div>
-        <div class="kv">
-          <div class="k">Ticket</div><div id="ttName">—</div>
-          <div class="k">Holder</div><div id="holder">—</div>
-          <div class="k">Order</div><div id="order">—</div>
-          <div class="k">When</div><div id="when">—</div>
-          <div class="k">Venue</div><div id="venue">—</div>
-          <div class="k">Link</div><div><a id="plink" href="#">Open ticket</a></div>
-        </div>
-        <p class="terms">Keep this QR visible on your phone. One scan = one entry. Re-entry is tracked as IN/OUT at the gate.</p>
-      </div>
-      <div class="big">
-        <div id="qr"></div>
-        <div style="margin-top:8px"><small id="short" class="muted"></small></div>
-      </div>
+    <div class="head"><h1 class="title">Jou kaartjie</h1><span class="muted" id="code"></span></div>
+    <div id="state" class="muted" style="margin:4px 0 12px;"></div>
+    <div class="grid">
+      <div id="left"></div>
+      <div class="qr" id="qr"></div>
     </div>
   </div>
 </div>
 
 <script>
-// Super-compact QR (qrcode-generator) – MIT © Kazuhiko Arase
-// Minified subset (typeNumber=4, errorCorrectionLevel='M') good for our payload sizes.
-!function(o){function t(o,t){this._el=o,this._htOption=t}t.prototype.draw=function(o){var t=this._htOption,e=t.width||256,r=t.colorDark||"#000000",n=t.colorLight||"#ffffff",i=o.getModuleCount(),d=Math.floor(e/i),a=e-d*i,s=document.createElement("canvas");s.width=s.height=e;var l=s.getContext("2d");l.fillStyle=n,l.fillRect(0,0,e,e);for(var h=0;h<i;h++)for(var c=0;c<i;c++){l.fillStyle=o.isDark(h,c)?r:n;var f=c*d+(c< a?c: a),u=h*d+(h< a?h: a),v=d+(c< a?1:0),p=d+(h< a?1:0);l.fillRect(f,u,v,p)}this._el.innerHTML="",this._el.appendChild(s)};function e(o,t){var e=window.qrcode(0,"M");e.addData(o),e.make();new t(document.getElementById("qr"),{width:280}).draw(e)}function load(){const code=${JSON.stringify(code)}; Promise.all([
-  fetch('/api/public/tickets/'+encodeURIComponent(code)).then(r=>r.json()),
-  fetch('/api/admin/settings').then(r=>r.json()).catch(()=>({ok:true,settings:{}}))
-]).then(([a,b])=>{
-  if(!a.ok){ document.body.innerHTML='Ticket not found'; return; }
-  const T=a.ticket, TT=a.ticket_type||{}, O=a.order||{}, EV=a.event||{}, S=b.settings||{};
-  document.getElementById('logo').src = S.logo_url || EV.hero_url || '';
-  document.getElementById('poster').src = EV.poster_url || EV.hero_url || '';
-  document.getElementById('evName').textContent = EV.name || 'Ticket';
-  document.getElementById('evMeta').textContent =
-    (EV.starts_at? new Date(EV.starts_at*1000).toLocaleString() : '') + (EV.venue? ' · '+EV.venue : '');
-  document.getElementById('ttName').textContent = TT.name || 'General';
-  const holder = (T.holder_name && T.holder_name.trim()) || (O.buyer_name||'—');
-  document.getElementById('holder').textContent = holder || '—';
-  document.getElementById('order').textContent = (O.short_code? O.short_code+' · ':'') + '#'+(O.id||'');
-  document.getElementById('when').textContent = document.getElementById('evMeta').textContent || '—';
-  document.getElementById('venue').textContent = EV.venue || '—';
-  const link = location.origin + '/t/' + encodeURIComponent(T.qr);
-  document.getElementById('plink').href = link;
-  document.getElementById('short').textContent = T.qr;
-  // Draw QR (payload = ticket.qr)
-  window.qrcode || (function(){ // tiny loader for qrcode-generator
-    var s=document.createElement('script'); s.src='https://cdn.jsdelivr.net/gh/kazuhikoarase/qrcode-generator/js/qrcode.min.js';
-    s.onload=()=>e(T.qr, t); document.head.appendChild(s);
-  })();
-});}
-window.addEventListener('load', load);
+const code = ${JSON.stringify(code)};
+document.getElementById('code').textContent = code;
+
+function rands(c){ return 'R'+( (c||0)/100 ).toFixed(2); }
+
+async function load(){
+  const res = await fetch('/api/public/tickets/'+encodeURIComponent(code));
+  if(!res.ok){
+    document.getElementById('left').innerHTML = '<p>Kaartjie nie gevind nie.</p>';
+    return;
+  }
+  const data = await res.json();
+  const t = data.ticket, tt=data.ticket_type||{}, ev=data.event||{}, ord=data.order||{};
+  const when = (s,e) => {
+    const sd=new Date((s||0)*1000), ed=new Date((e||0)*1000);
+    const fmt = d=> d.toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'short'});
+    return fmt(sd)+' – '+fmt(ed);
+  };
+
+  document.getElementById('state').textContent =
+    (t.state==='unused'?'Geldig – nog nie gescan nie': t.state==='in'?'In terrein': t.state==='out'?'Uit terrein':'Ongeldig');
+
+  document.getElementById('left').innerHTML = \`
+    <h3>\${ev.name||'Event'}</h3>
+    <div class="muted">\${when(ev.starts_at,ev.ends_at)} · \${ev.venue||''}</div>
+    <hr/>
+    <p><strong>Ticket:</strong> \${tt.name||''}</p>
+    <p><strong>Naam:</strong> \${t.holder_name || (ord.buyer_name||'')}</p>
+    <p class="muted">Bestel nommer: \${ord.short_code || ord.id || ''}</p>
+    <p class="muted">Prys: \${rands(tt.price_cents)}</p>
+    <div style="margin-top:12px"><button onclick="window.print()">Print</button></div>
+  \`;
+
+  // QR
+  const qrHTML = ${JSON.stringify(qrImg("PLACEHOLDER"))}.replace('PLACEHOLDER', encodeURIComponent(t.qr || t.code || ''));
+  document.getElementById('qr').innerHTML = qrHTML + '<div class="muted" style="margin-top:6px">'+(t.qr||t.code||'')+'</div>';
+}
+load();
 </script>
 </body></html>`;
+}
