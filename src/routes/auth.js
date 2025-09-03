@@ -1,46 +1,48 @@
 // /src/routes/auth.js
 import { json, bad } from "../utils/http.js";
-import { signSession, setCookie, getCookie, verifySession } from "../utils/auth.js";
+import { signSession, setCookie, hashPassword, verifyPassword, newSalt } from "../utils/auth.js";
 
-function tokenForRole(env, role) {
-  if (role === "admin") return env.ADMIN_TOKEN || "";
-  if (role === "pos")   return env.POS_TOKEN || "";
-  if (role === "scan")  return env.SCAN_TOKEN || "";
-  return "";
+async function getUserByUsername(db, username) {
+  return await db.prepare(
+    `SELECT id, username, display_name, role, salt, password_hash, is_active FROM users WHERE username=?1`
+  ).bind(username).first();
 }
 
 export function mountAuth(router) {
-  // Login: { role: 'admin'|'pos'|'scan', token, name?, gate_name? }
+  // Login with username/password
   router.add("POST", "/api/auth/login", async (req, env) => {
     const b = await req.json().catch(()=>null);
-    const role = String(b?.role || "").toLowerCase().trim();
-    const token = String(b?.token || "").trim();
-    const name  = String(b?.name  || "").trim();
-    const gate  = role === "scan" ? String(b?.gate_name || "").trim() : "";
+    const u = (b?.username || "").trim();
+    const p = (b?.password || "").trim();
+    if (!u || !p) return bad("Missing credentials", 400);
 
-    if (!["admin","pos","scan"].includes(role)) return bad("Invalid role");
-    const good = tokenForRole(env, role);
-    if (!good || token !== good) return bad("Unauthorized", 401);
+    const user = await getUserByUsername(env.DB, u);
+    if (!user || !user.is_active) return bad("Unauthorized", 401);
 
-    // Store gate in session only for scanners
-    const sess = await signSession(env, { role, name, gate, ts: Date.now() });
+    const ok = await verifyPassword(env, p, user.salt, user.password_hash);
+    if (!ok) return bad("Unauthorized", 401);
+
+    const sess = await signSession(env, {
+      user_id: user.id,
+      role: user.role,
+      name: user.display_name || user.username,
+      ts: Date.now()
+    });
     const headers = new Headers({ "content-type": "application/json" });
     headers.append("Set-Cookie", setCookie("vs_sess", sess));
-    return new Response(JSON.stringify({ ok:true, role, name, gate }), { status: 200, headers });
+    return new Response(JSON.stringify({ ok:true, role: user.role, name: user.display_name || user.username }), { status: 200, headers });
   });
 
   // Logout
-  router.add("GET", "/api/auth/logout", async (_req, _env) => {
+  router.add("GET", "/api/auth/logout", async () => {
     const headers = new Headers({ "content-type": "application/json" });
     headers.append("Set-Cookie", "vs_sess=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure");
     return new Response(JSON.stringify({ ok:true }), { status: 200, headers });
   });
 
-  // Who am I (now returns gate if present)
-  router.add("GET", "/api/auth/whoami", async (req, env) => {
-    const raw = getCookie(req, "vs_sess");
-    const sess = await verifySession(env, raw);
-    if (!sess) return bad("Unauthorized", 401);
-    return json({ ok:true, role: sess.role, name: sess.name || "", gate: sess.gate || "" });
+  // Small ping for scanner/pos UIs
+  router.add("GET", "/api/scan/ping", async (_req, env) => {
+    // If cookie exists and role is scan, return ok; else 401 handled by requireRole when used
+    return json({ ok: true });
   });
 }
