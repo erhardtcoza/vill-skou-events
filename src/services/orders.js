@@ -16,7 +16,7 @@
 //   order_items(id, order_id, ticket_type_id, qty, price_cents)
 //   ticket_types(id, event_id, name, price_cents)
 //
-
+import { sendOrderOnWhatsApp } from "./whatsapp.js";
 function nowSec() { return Math.floor(Date.now() / 1000); }
 
 // 6-char A–Z/0–9 short code (no ambiguous chars)
