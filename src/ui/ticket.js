@@ -1,77 +1,139 @@
-// /src/ui/ticket.js
-import { qrImg } from "./qr.js";
+// /src/ui/badge.js
+import { qrClientScripts } from "./qr.js";
 
-/**
- * Public ticket page at /t/:code
- * Looks up ticket by code using /api/public/tickets/:code
- */
-export function ticketHTML(code) {
+export function singleVendorPassBadgeHTML({ pass, vendor, settings }) {
+  const title = (settings?.name) || "Villiersdorp Skou";
+  const logo = settings?.logo_url ? `<img src="${settings.logo_url}" alt="logo" style="height:26px">` : title;
+
   return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Ticket</title>
+<title>Badge · ${vendor?.name || "Vendor"}</title>
 <style>
-  :root{--green:#0a7d2b;--muted:#667085;--bg:#f7f7f8}
-  *{box-sizing:border-box} body{font-family:system-ui;margin:0;background:var(--bg)}
-  .wrap{max-width:900px;margin:22px auto;padding:0 16px}
-  .card{background:#fff;border-radius:16px;box-shadow:0 20px 40px rgba(0,0,0,.07);padding:16px}
-  .head{display:flex;gap:12px;align-items:center}
-  .title{font-weight:800;font-size:22px;margin:0}
-  .muted{color:var(--muted)}
-  .grid{display:grid;grid-template-columns:1fr 260px;gap:18px}
-  .qr{text-align:center}
-  button{padding:10px 14px;border:1px solid #d1d5db;border-radius:10px;background:#fff}
-  .primary{background:var(--green);color:#fff;border-color:var(--green)}
-</style></head><body>
-<div class="wrap">
-  <div class="card">
-    <div class="head"><h1 class="title">Jou kaartjie</h1><span class="muted" id="code"></span></div>
-    <div id="state" class="muted" style="margin:4px 0 12px;"></div>
-    <div class="grid">
-      <div id="left"></div>
-      <div class="qr" id="qr"></div>
+  :root{ --green:#0a7d2b; --border:#d1d5db }
+  @page{ size: A6; margin: 8mm }
+  *{ box-sizing:border-box }
+  body{ font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:0; padding:0; background:#fff; }
+  .card{ width:100%; height:100%; border:1px dashed var(--border); display:flex; flex-direction:column; justify-content:space-between; padding:10mm; }
+  .head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .meta{ font-size:12px; color:#374151; }
+  .qr-wrap{ display:flex; align-items:center; gap:12px; }
+  #qr{ width:168px; height:168px; border:1px solid var(--border); }
+  .big{ font-size:22px; font-weight:800; letter-spacing:.3px; word-break:break-all; }
+  .tag{ display:inline-block; border:1px solid var(--border); border-radius:999px; padding:4px 8px; font-size:12px; margin-right:6px; }
+  .foot{ display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#6b7280; }
+  .print{ position:fixed; right:10px; top:10px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer }
+  .warn{ color:#b45309; font-size:12px; display:none }
+  @media print{ .print{ display:none } }
+</style>
+</head><body>
+<button class="print" onclick="window.print()">Print / Save PDF</button>
+<div class="card">
+  <div class="head">
+    <div>${logo}</div>
+    <div class="meta">
+      <div><span class="tag">${pass.type.toUpperCase()}</span><span class="tag">${vendor?.stall_no ? ('Stall '+vendor.stall_no) : 'Vendor'}</span></div>
+      <div>${vendor?.name || ''}</div>
+      ${pass.type === 'vehicle' && pass.vehicle_reg ? `<div>Reg: <strong>${pass.vehicle_reg}</strong></div>` : ''}
+      ${pass.type === 'staff' && pass.label ? `<div>Staff: <strong>${pass.label}</strong></div>` : ''}
     </div>
+  </div>
+
+  <div class="qr-wrap">
+    <canvas id="qr" width="168" height="168" aria-label="QR code"></canvas>
+    <div>
+      <div class="big">${pass.qr}</div>
+      <div class="meta">Show this QR at the gate for IN / OUT scanning.</div>
+      <div id="qrWarn" class="warn">QR library failed to load.</div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div>Issued: ${fmtTs(pass.issued_at)}</div>
+    <div>State: ${pass.state}</div>
   </div>
 </div>
 
 <script>
-const code = ${JSON.stringify(code)};
-document.getElementById('code').textContent = code;
-
-function rands(c){ return 'R'+( (c||0)/100 ).toFixed(2); }
-
-async function load(){
-  const res = await fetch('/api/public/tickets/'+encodeURIComponent(code));
-  if(!res.ok){
-    document.getElementById('left').innerHTML = '<p>Kaartjie nie gevind nie.</p>';
-    return;
+function fmtTs(s){ if(!s) return '—'; const d=new Date(s*1000); return d.toLocaleDateString()+' '+d.toLocaleTimeString(); }
+</script>
+${qrClientScripts()}
+<script>
+(function(){
+  const code = ${JSON.stringify(pass.qr)};
+  function render(){
+    const ok = window.QR && window.QR.drawCanvas(document.getElementById('qr'), code, 4, 10, 'M');
+    if (!ok) document.getElementById('qrWarn').style.display = '';
   }
-  const data = await res.json();
-  const t = data.ticket, tt=data.ticket_type||{}, ev=data.event||{}, ord=data.order||{};
-  const when = (s,e) => {
-    const sd=new Date((s||0)*1000), ed=new Date((e||0)*1000);
-    const fmt = d=> d.toLocaleDateString(undefined,{weekday:'short',day:'2-digit',month:'short'});
-    return fmt(sd)+' – '+fmt(ed);
-  };
-
-  document.getElementById('state').textContent =
-    (t.state==='unused'?'Geldig – nog nie gescan nie': t.state==='in'?'In terrein': t.state==='out'?'Uit terrein':'Ongeldig');
-
-  document.getElementById('left').innerHTML = \`
-    <h3>\${ev.name||'Event'}</h3>
-    <div class="muted">\${when(ev.starts_at,ev.ends_at)} · \${ev.venue||''}</div>
-    <hr/>
-    <p><strong>Ticket:</strong> \${tt.name||''}</p>
-    <p><strong>Naam:</strong> \${t.holder_name || (ord.buyer_name||'')}</p>
-    <p class="muted">Bestel nommer: \${ord.short_code || ord.id || ''}</p>
-    <p class="muted">Prys: \${rands(tt.price_cents)}</p>
-    <div style="margin-top:12px"><button onclick="window.print()">Print</button></div>
-  \`;
-
-  // QR
-  const qrHTML = ${JSON.stringify(qrImg("PLACEHOLDER"))}.replace('PLACEHOLDER', encodeURIComponent(t.qr || t.code || ''));
-  document.getElementById('qr').innerHTML = qrHTML + '<div class="muted" style="margin-top:6px">'+(t.qr||t.code||'')+'</div>';
+  if (window.qrcode) render();
+  else {
+    document.addEventListener('qr:ready', render, { once:true });
+    document.addEventListener('qr:error', ()=>{ document.getElementById('qrWarn').style.display=''; }, { once:true });
+  }
+})();
+</script>
+</body></html>`;
 }
-load();
+
+export function bulkVendorBadgesHTML({ vendor, passes, settings }) {
+  const title = (settings?.name) || "Villiersdorp Skou";
+  const logo = settings?.logo_url ? `<img src="${settings.logo_url}" alt="logo" style="height:18px">` : title;
+
+  return `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Badges · ${vendor?.name || "Vendor"}</title>
+<style>
+  :root{ --border:#d1d5db }
+  @page{ size: A4; margin: 10mm }
+  body{ font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin:0; }
+  .print{ position:fixed; right:10px; top:10px; padding:8px 10px; border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer }
+  .warn{ color:#b45309; font-size:12px; position:fixed; left:10px; top:12px; display:none }
+  @media print{ .print,.warn{ display:none } }
+  .grid{ display:grid; grid-template-columns: repeat(2, 1fr); gap:10mm; padding-top:34px; }
+  .badge{ border:1px dashed var(--border); padding:8mm; break-inside:avoid; }
+  .row{ display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  .qr{ width:120px; height:120px; border:1px solid var(--border) }
+  .qrwrap{ display:flex; gap:10px; align-items:center; }
+  .big{ font-weight:800; font-size:18px; word-break:break-all; }
+  .meta{ font-size:12px; color:#374151 }
+</style>
+</head><body>
+<button class="print" onclick="window.print()">Print / Save PDF</button>
+<div id="offlineWarn" class="warn">QR library failed to load.</div>
+<h3 style="margin:12px 10mm 0;">${logo}</h3>
+<h2 style="margin:4px 10mm 10px;">${vendor?.name || "Vendor"} — Badges</h2>
+<div class="grid" id="grid">
+  ${(passes||[]).map(p => `
+    <div class="badge">
+      <div class="row"><div class="meta">${(p.type||'').toUpperCase()}</div><div class="meta">${p.issued_at? new Date(p.issued_at*1000).toLocaleDateString() : ''}</div></div>
+      <div class="qrwrap">
+        <canvas class="qr" data-code="${String(p.qr)}" width="120" height="120"></canvas>
+        <div>
+          <div class="big">${p.qr}</div>
+          <div class="meta">${p.type==='vehicle' && p.vehicle_reg ? ('Reg: '+p.vehicle_reg) : (p.label||'')}</div>
+        </div>
+      </div>
+    </div>
+  `).join('')}
+</div>
+
+${qrClientScripts()}
+<script>
+(function(){
+  function renderAll(){
+    var okAny = false;
+    document.querySelectorAll('canvas.qr').forEach(function(cv){
+      var code = cv.getAttribute('data-code') || '';
+      var ok = window.QR && window.QR.drawCanvas(cv, code, 3, 8, 'M');
+      okAny = okAny || ok;
+    });
+    if (!okAny) document.getElementById('offlineWarn').style.display = '';
+  }
+  if (window.qrcode) renderAll();
+  else {
+    document.addEventListener('qr:ready', renderAll, { once:true });
+    document.addEventListener('qr:error', function(){ document.getElementById('offlineWarn').style.display = ''; }, { once:true });
+  }
+})();
 </script>
 </body></html>`;
 }
