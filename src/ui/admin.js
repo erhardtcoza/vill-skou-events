@@ -3,318 +3,291 @@ export const adminHTML = () => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --bg:#f7f7f8; --muted:#6b7280 }
-  body{font-family:system-ui;margin:0;background:var(--bg);color:#111}
-  header{background:#fff;border-bottom:1px solid #e5e7eb;padding:14px 16px}
-  .wrap{max-width:1200px;margin:0 auto;padding:16px}
-  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 16px}
-  .tab{padding:10px 14px;border:1px solid #e5e7eb;border-radius:999px;background:#fff;cursor:pointer}
-  .tab.active{background:var(--green);color:#fff;border-color:var(--green)}
-  .panel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px;margin-bottom:16px}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:8px;border-bottom:1px solid #f1f5f9;text-align:left;vertical-align:top}
-  .muted{color:var(--muted)}
-  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
-  .tile{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px}
-  .tile b{display:block;font-size:22px}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .btn{padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer}
-  .btn.primary{background:var(--green);color:#fff;border-color:var(--green)}
-  input,select{padding:10px;border:1px solid #d1d5db;border-radius:10px}
-  .right{display:flex;gap:8px;align-items:center;margin-left:auto}
-  dialog{border:none;border-radius:14px;max-width:800px;width:92vw;padding:0;box-shadow:0 20px 40px rgba(0,0,0,.2)}
-  dialog .hd{padding:14px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
-  dialog .bd{padding:14px 16px;max-height:70vh;overflow:auto}
+  :root{--green:#0a7d2b;--muted:#667085;--bg:#f7f7f8}
+  *{box-sizing:border-box} body{font-family:system-ui;margin:0;background:#fff}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+  h1{margin:0 0 16px}
+  .tabs{display:flex;gap:8px;margin:8px 0 20px;flex-wrap:wrap}
+  .tab{padding:8px 14px;border:1px solid #e5e7eb;border-radius:999px;background:#f3f4f6;cursor:pointer}
+  .tab.active{background:#e7f7ec;border-color:#bfe5c8;color:#064d1a;font-weight:600}
+  .panel{display:none} .panel.active{display:block}
+  input,button,select,textarea{padding:10px;border:1px solid #d1d5db;border-radius:10px;margin:4px}
+  button.primary{background:var(--green);color:#fff;border-color:var(--green)}
+  table{width:100%;border-collapse:collapse;margin-top:8px}
+  th,td{padding:10px;border-bottom:1px solid #eee;vertical-align:top}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .muted{color:var(--muted)} .right{float:right}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  @media (max-width:800px){.grid2{grid-template-columns:1fr}}
 </style>
-</head><body>
-<header><div class="wrap"><strong>Admin</strong></div></header>
-<div class="wrap">
+</head><body><div class="wrap">
+<h1>Admin</h1>
 
-  <!-- Tabs -->
-  <div class="tabs">
-    <button class="tab" data-tab="site">Site Settings</button>
-    <button class="tab" data-tab="events">Events</button>
-    <button class="tab" data-tab="posadmin">POS Admin</button>
-    <button class="tab" data-tab="visitors">Visitors (live)</button>
-  </div>
-
-  <!-- Site settings placeholder -->
-  <section class="panel" data-sec="site">
-    <h2>Site Settings</h2>
-    <p class="muted">Your existing settings UI stays here.</p>
-  </section>
-
-  <!-- Events placeholder -->
-  <section class="panel" data-sec="events" style="display:none">
-    <h2>Events</h2>
-    <p class="muted">Event management UI here (create/edit, ticket types, gates, images).</p>
-  </section>
-
-  <!-- POS Admin Dashboard -->
-  <section class="panel" data-sec="posadmin" style="display:none">
-    <div class="row" style="justify-content:space-between">
-      <h2>POS Admin Dashboard</h2>
-      <div class="right">
-        <select id="paEvent"><option value="0">All events</option></select>
-        <input type="datetime-local" id="paFrom">
-        <input type="datetime-local" id="paTo">
-        <label class="row"><input type="checkbox" id="paOnline"> Include online</label>
-        <button class="btn" id="paApply">Apply</button>
-        <a class="btn" id="paCSV" target="_blank">Export CSV</a>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="tile"><small>Total Cash</small><b id="paCash">R 0.00</b></div>
-      <div class="tile"><small>Total Card</small><b id="paCard">R 0.00</b></div>
-      <div class="tile"><small>All Payments</small><b id="paAll">R 0.00</b></div>
-      <div class="tile"><small>Last Update</small><b id="paWhen" class="muted">—</b></div>
-    </div>
-
-    <h3 style="margin-top:16px">Cashups</h3>
-    <div class="panel" style="padding:0">
-      <table id="paCashups"><thead>
-        <tr><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Cash</th><th>Card</th><th>Total</th><th>Manager</th></tr>
-      </thead><tbody></tbody></table>
-    </div>
-
-    <h3>Ticket Types (Issued)</h3>
-    <div class="panel" style="padding:0">
-      <table id="paTT"><thead>
-        <tr><th>Event</th><th>Ticket Type</th><th>Sold</th><th>Revenue</th></tr>
-      </thead><tbody></tbody></table>
-    </div>
-
-    <h3>Scans (Live)</h3>
-    <div class="panel" style="padding:0">
-      <table id="paScans"><thead>
-        <tr><th>Event</th><th>IN</th><th>OUT</th><th>Inside</th></tr>
-      </thead><tbody></tbody></table>
-    </div>
-
-    <h3>Orders</h3>
-    <div class="panel" style="padding:0">
-      <div class="row" style="padding:10px">
-        <label>Source
-          <select id="paSrc">
-            <option value="pos">POS only</option>
-            <option value="online">Online only</option>
-            <option value="all">POS + Online</option>
-          </select>
-        </label>
-        <button class="btn" id="paLoadOrders">Load Orders</button>
-        <a class="btn" id="paOrdersCSV" target="_blank">Orders CSV</a>
-      </div>
-      <table id="paOrders"><thead>
-        <tr><th>#</th><th>Event</th><th>Source</th><th>Method</th><th>Total</th><th>Buyer</th><th>Phone</th><th>Paid At</th></tr>
-      </thead><tbody></tbody></table>
-    </div>
-  </section>
-
-  <!-- Visitors placeholder -->
-  <section class="panel" data-sec="visitors" style="display:none">
-    <h2>Visitors (live)</h2>
-    <p class="muted">Coming soon — live gate view, IN/OUT flow, dwell times.</p>
-  </section>
+<div class="tabs">
+  <div class="tab active" data-tab="site">Site Settings</div>
+  <div class="tab" data-tab="events">Events</div>
+  <div class="tab" data-tab="pos">POS Admin</div>
+  <div class="tab" data-tab="visitors">Visitors</div>
+  <div class="tab" data-tab="yoco">Yoco</div>
+  <div class="tab" data-tab="tickets">Tickets</div>
+  <div class="tab" data-tab="vendors">Vendors</div>
 </div>
 
-<!-- Drilldown modal -->
-<dialog id="dlg">
-  <div class="hd">
-    <div id="dlgTitle"><strong>Details</strong></div>
-    <button class="btn" onclick="document.getElementById('dlg').close()">Close</button>
+<!-- SITE SETTINGS -->
+<section id="site" class="panel active">
+  <h2>Site Settings</h2>
+  <div class="row">
+    <input id="site_name" placeholder="Site name"/>
+    <input id="logo_url" placeholder="Logo URL"/>
   </div>
-  <div class="bd" id="dlgBody">Loading…</div>
-</dialog>
+  <div class="row">
+    <input id="banner_url" placeholder="Banner URL"/>
+    <button class="primary" onclick="saveSettings()">Save</button>
+    <span id="sitestatus" class="muted"></span>
+  </div>
+</section>
 
-<script>
-const Z = (id)=>document.getElementById(id);
-const $$ = (sel)=>Array.from(document.querySelectorAll(sel));
-function moneyR(c){ return "R "+(Number(c||0)/100).toFixed(2); }
-function ts2(dt){ if(!dt) return '—'; const d=new Date(dt*1000); return d.toLocaleString(); }
-function toUnix(s){ if(!s) return 0; const d=new Date(s); return Math.floor(d.getTime()/1000); }
+<!-- EVENTS -->
+<section id="events" class="panel">
+  <h2 class="row">Events <small class="muted">Create & edit</small></h2>
 
-function switchTab(name){
-  $$(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
-  $$("section[data-sec]").forEach(s=>s.style.display = (s.dataset.sec===name ? "" : "none"));
-  localStorage.setItem("admin_tab", name);
-  if (name==="posadmin") loadPOSSummary(true);
-}
-$$(".tab").forEach(t=>t.onclick=()=>switchTab(t.dataset.tab));
-switchTab(localStorage.getItem("admin_tab") || "site");
+  <details style="margin:6px 0;">
+    <summary><strong>Create Event</strong></summary>
+    <div class="row">
+      <input id="slug" placeholder="slug (e.g. skou-2025)"/>
+      <input id="name" placeholder="Event name"/>
+      <input id="venue" placeholder="Venue"/>
+      <label>Start <input id="startDate" type="date"/></label>
+      <label>End <input id="endDate" type="date"/></label>
+      <button onclick="createEvt()">Create</button>
+    </div>
+    <pre id="evmsg" class="muted"></pre>
+  </details>
 
-/* -------- Filters wiring -------- */
-async function loadEventsForFilter(){
-  const res = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
-  if (res.ok){
-    Z('paEvent').innerHTML = '<option value="0">All events</option>' + (res.events||[]).map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
-  }
-}
-loadEventsForFilter();
-
-function currentFilter(){
-  const event_id = Number(Z('paEvent').value||0);
-  const from = toUnix(Z('paFrom').value);
-  const to = toUnix(Z('paTo').value);
-  const include_online = Z('paOnline').checked;
-  return { event_id, from, to, include_online };
-}
-Z('paApply').onclick = ()=>loadPOSSummary(true);
-
-/* -------- POS Admin Summary (auto-refresh) -------- */
-let _timer = null;
-async function loadPOSSummary(resetTimer){
-  if (resetTimer){ clearInterval(_timer); }
-  await refreshPOS();
-  if (resetTimer){ _timer = setInterval(refreshPOS, 30000); }
-}
-async function refreshPOS(){
-  const f = currentFilter();
-  const qs = new URLSearchParams({
-    event_id: String(f.event_id||0),
-    from: String(f.from||0),
-    to: String(f.to||0),
-    include_online: f.include_online ? "1":"0"
-  });
-  const res = await fetch('/api/admin/pos/summary?'+qs.toString()).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!res.ok) return;
-
-  Z('paCash').textContent = moneyR(res.payments.cash_cents);
-  Z('paCard').textContent = moneyR(res.payments.card_cents);
-  Z('paAll').textContent  = moneyR(res.payments.total_cents);
-  Z('paWhen').textContent = new Date(res.updated_at*1000).toLocaleTimeString();
-
-  // Cashups table (clickable)
-  const ctb = Z('paCashups').querySelector('tbody');
-  ctb.innerHTML = (res.cashups||[]).map(c=>`
-    <tr data-cashup="${c.id}" class="click">
-      <td>${c.cashier_name||''}</td>
-      <td>${c.gate_name||''}</td>
-      <td>${ts2(c.opened_at)}</td>
-      <td>${c.closed_at?ts2(c.closed_at):'<span class="muted">open</span>'}</td>
-      <td>${moneyR(c.total_cash_cents)}</td>
-      <td>${moneyR(c.total_card_cents)}</td>
-      <td>${moneyR(c.total_cents)}</td>
-      <td>${c.manager_name||''}</td>
-    </tr>
-  `).join('') || '<tr><td colspan="8" class="muted">No cashups yet</td></tr>';
-  // wire clicks
-  Array.from(ctb.querySelectorAll('tr[data-cashup]')).forEach(tr=>{
-    tr.style.cursor='pointer';
-    tr.onclick = ()=> openCashup(tr.dataset.cashup);
-  });
-
-  // Ticket types table
-  const ttb = Z('paTT').querySelector('tbody');
-  ttb.innerHTML = (res.by_ticket_type||[]).map(t=>`
-    <tr>
-      <td>${t.event_name||('Event #'+t.event_id)}</td>
-      <td>${t.name||('Type #'+t.ticket_type_id)}</td>
-      <td>${t.sold_qty||0}</td>
-      <td>${moneyR(t.revenue_cents||0)}</td>
-    </tr>
-  `).join('') || '<tr><td colspan="4" class="muted">No tickets issued</td></tr>';
-
-  // Scans
-  const stb = Z('paScans').querySelector('tbody');
-  stb.innerHTML = (res.scans||[]).map(s=>`
-    <tr>
-      <td>${s.name||('Event #'+s.event_id)}</td>
-      <td>${s.in||0}</td>
-      <td>${s.out||0}</td>
-      <td>${s.inside||0}</td>
-    </tr>
-  `).join('') || '<tr><td colspan="4" class="muted">No scans yet</td></tr>';
-
-  // CSV links (summary orders)
-  Z('paCSV').href = '/api/admin/pos/export.csv';
-  updateOrdersLinks(); // refresh orders CSV link also
-}
-
-/* -------- Orders table (filtered) -------- */
-Z('paLoadOrders').onclick = loadOrders;
-function updateOrdersLinks(){
-  const f = currentFilter();
-  const source = Z('paSrc').value;
-  const qs = new URLSearchParams({
-    event_id: String(f.event_id||0),
-    from: String(f.from||0),
-    to: String(f.to||0),
-    source
-  });
-  Z('paOrdersCSV').href = '/api/admin/pos/orders.csv?'+qs.toString();
-}
-Z('paSrc').onchange = updateOrdersLinks;
-
-async function loadOrders(){
-  const f = currentFilter();
-  const source = Z('paSrc').value;
-  const qs = new URLSearchParams({
-    event_id: String(f.event_id||0),
-    from: String(f.from||0),
-    to: String(f.to||0),
-    source
-  });
-  const res = await fetch('/api/admin/pos/orders?'+qs.toString()).then(r=>r.json()).catch(()=>({ok:false}));
-  const tb = Z('paOrders').querySelector('tbody');
-  if (!res.ok){ tb.innerHTML = '<tr><td colspan="8" class="muted">Could not load</td></tr>'; return; }
-  tb.innerHTML = (res.orders||[]).map(o=>`
-    <tr>
-      <td>${o.id}</td>
-      <td>${o.event_name||('Event #'+o.event_id)}</td>
-      <td>${o.source}</td>
-      <td>${o.payment_method||''}</td>
-      <td>${moneyR(o.total_cents||0)}</td>
-      <td>${o.buyer_name||''}</td>
-      <td>${o.buyer_phone||''}</td>
-      <td>${o.paid_at? new Date(o.paid_at*1000).toLocaleString():'—'}</td>
-    </tr>
-  `).join('') || '<tr><td colspan="8" class="muted">No orders</td></tr>';
-  updateOrdersLinks();
-}
-
-/* -------- Cashup drill-down modal -------- */
-async function openCashup(id){
-  Z('dlgTitle').innerHTML = '<strong>Cashup #'+id+'</strong>';
-  Z('dlgBody').textContent = 'Loading…';
-  Z('dlg').showModal();
-  const res = await fetch('/api/admin/pos/cashups/'+id).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!res.ok){ Z('dlgBody').textContent='Could not load'; return; }
-
-  const c = res.cashup;
-  const orders = res.orders||[];
-  const br = res.breakdown||[];
-
-  const body = `
-    <div class="grid" style="margin-bottom:12px">
-      <div class="tile"><small>Cashier</small><b>${c.cashier_name||''}</b></div>
-      <div class="tile"><small>Gate</small><b>${c.gate_name||''}</b></div>
-      <div class="tile"><small>Opened</small><b>${c.opened_at? new Date(c.opened_at*1000).toLocaleString() : '—'}</b></div>
-      <div class="tile"><small>Closed</small><b>${c.closed_at? new Date(c.closed_at*1000).toLocaleString() : 'Open'}</b></div>
-      <div class="tile"><small>Cash</small><b>${moneyR(c.total_cash_cents)}</b></div>
-      <div class="tile"><small>Card</small><b>${moneyR(c.total_card_cents)}</b></div>
-      <div class="tile"><small>Opening Float</small><b>${moneyR(c.opening_float_cents)}</b></div>
+  <div id="editPanel" class="panel" style="display:none;padding:12px;border:1px solid #eee;border-radius:12px;background:#fafafa">
+    <h3>Edit Event</h3>
+    <input id="ed_id" type="hidden"/>
+    <div class="grid2">
+      <input id="ed_slug" placeholder="slug"/>
+      <input id="ed_name" placeholder="name"/>
+      <input id="ed_venue" placeholder="venue"/>
+      <label>Start <input id="ed_start" type="date"/></label>
+      <label>End <input id="ed_end" type="date"/></label>
+    </div>
+    <div class="grid2">
+      <input id="ed_hero" placeholder="Hero image URL"/>
+      <input id="ed_poster" placeholder="Poster image URL"/>
+    </div>
+    <label class="muted">Gallery URLs (max 8, one per line)
+      <textarea id="ed_gallery" rows="4" placeholder="https://.../img1.jpg\nhttps://.../img2.jpg"></textarea>
+    </label>
+    <div class="row">
+      <button class="primary" onclick="saveEdit()">Save</button>
+      <button onclick="cancelEdit()">Cancel</button>
+      <span id="edmsg" class="muted"></span>
     </div>
 
-    <h4>Ticket Breakdown</h4>
-    <table><thead><tr><th>Event</th><th>Type</th><th>Qty</th><th>Revenue</th></tr></thead>
-      <tbody>
-        ${br.map(x=>`<tr><td>${x.event_name||''}</td><td>${x.ticket_type||''}</td><td>${x.qty||0}</td><td>${moneyR(x.revenue_cents||0)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">No tickets in this window</td></tr>'}
-      </tbody>
-    </table>
+    <hr/>
+    <h4>Gates</h4>
+    <div class="row">
+      <input id="gatename" placeholder="New gate name"/>
+      <button onclick="addGate()">Add gate</button>
+    </div>
+    <ul id="gates" class="muted"></ul>
 
-    <h4 style="margin-top:12px">Orders (${orders.length})</h4>
-    <table><thead><tr><th>#</th><th>Event</th><th>Buyer</th><th>Phone</th><th>Method</th><th>Total</th><th>Paid</th></tr></thead>
-      <tbody>
-        ${orders.map(o=>`<tr>
-            <td>${o.id}</td><td>${o.event_id}</td><td>${o.buyer_name||''}</td>
-            <td>${o.buyer_phone||''}</td><td>${o.payment_method||''}</td>
-            <td>${moneyR(o.total_cents||0)}</td><td>${o.paid_at? new Date(o.paid_at*1000).toLocaleString():'—'}</td>
-        </tr>`).join('') || '<tr><td colspan="7" class="muted">No orders in this window</td></tr>'}
-      </tbody>
-    </table>
-  `;
-  Z('dlgBody').innerHTML = body;
+    <h4>Add Ticket Type</h4>
+    <div class="row">
+      <input id="ttName" placeholder="name (e.g. Vrydag – Laerskool)"/>
+      <input id="ttPriceRand" type="number" step="0.01" placeholder="price (R) — blank = FREE"/>
+      <label>Gender? <input id="ttGen" type="checkbox"/></label>
+      <button onclick="addTT()">Add</button>
+      <span id="ttmsg" class="muted"></span>
+    </div>
+  </div>
+
+  <table id="evtable"></table>
+</section>
+
+<!-- POS ADMIN -->
+<section id="pos" class="panel">
+  <h2>POS Admin</h2>
+  <div class="row">
+    <label>From <input id="posFrom" type="date"/></label>
+    <label>To <input id="posTo" type="date"/></label>
+    <button onclick="loadPOS()">Reload</button>
+  </div>
+  <div id="posTotals" class="muted"></div>
+  <table id="posShifts"></table>
+</section>
+
+<!-- PLACEHOLDERS -->
+<section id="visitors" class="panel"><h2>Visitors</h2><p class="muted">Live in/out dashboard (coming soon).</p></section>
+<section id="yoco" class="panel"><h2>Yoco</h2><p class="muted">Hosted payments + settlement logs (coming soon).</p></section>
+<section id="tickets" class="panel"><h2>Tickets</h2><p class="muted">Search tickets, resend, revoke (coming soon).</p></section>
+<section id="vendors" class="panel"><h2>Vendors</h2><p class="muted">Vendor onboarding and passes (phase 1 next).</p></section>
+
+<script>
+let _events = [];
+
+function pick(id){return document.getElementById(id)}
+function msg(id, o){ pick(id).textContent = (typeof o==='string')?o:JSON.stringify(o,null,2) }
+
+function parseDateToMs(v, end=false){
+  if(!v) return NaN;
+  const [y,m,d] = v.split('-').map(n=>+n);
+  const dt = end? new Date(y,m-1,d,23,59,0) : new Date(y,m-1,d,0,0,0);
+  return dt.getTime();
 }
+function msToDate(ms){
+  const d = new Date(ms); const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), da=String(d.getDate()).padStart(2,'0');
+  return \`\${y}-\${m}-\${da}\`;
+}
+
+async function getJSON(u){ return fetch(u).then(r=>r.json()) }
+async function post(u,b){ return fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()) }
+async function put(u,b){ return fetch(u,{method:'PUT', headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()) }
+async function del(u){ return fetch(u,{method:'DELETE'}).then(r=>r.json()) }
+
+async function loadSettings(){
+  const res = await getJSON('/api/admin/settings');
+  if(res.ok){
+    pick('site_name').value = res.settings.site_name||'';
+    pick('logo_url').value = res.settings.logo_url||'';
+    pick('banner_url').value = res.settings.banner_url||'';
+  } else msg('sitestatus','Could not load settings');
+}
+async function saveSettings(){
+  const res = await post('/api/admin/settings',{
+    site_name: pick('site_name').value,
+    logo_url: pick('logo_url').value,
+    banner_url: pick('banner_url').value
+  });
+  msg('sitestatus', res.ok ? 'Saved' : 'Failed to save');
+}
+
+async function loadEvents(){
+  const res = await getJSON('/api/admin/events');
+  if(!res.ok) return;
+  _events = res.events||[];
+  renderEvents();
+  // also preload gates list
+  const gs = await getJSON('/api/admin/gates');
+  pick('gates').innerHTML = (gs.gates||[]).map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
+}
+function renderEvents(){
+  const rows = _events.map(e=>\`
+    <tr>
+      <td>\${e.id}</td>
+      <td>\${e.slug}</td>
+      <td>\${e.name}<div class="muted">\${e.venue||''}</div></td>
+      <td>\${new Date(e.starts_at*1000).toLocaleDateString()}</td>
+      <td>\${new Date(e.ends_at*1000).toLocaleDateString()}</td>
+      <td><button onclick="editEvent(\${e.id})">Edit</button>
+          <button onclick="deleteEvent(\${e.id})">Delete</button></td>
+    </tr>\`).join('');
+  pick('evtable').innerHTML = '<tr><th>ID</th><th>Slug</th><th>Name</th><th>Starts</th><th>Ends</th><th></th></tr>'+rows;
+}
+
+async function createEvt(){
+  const b = {
+    slug: pick('slug').value,
+    name: pick('name').value,
+    venue: pick('venue').value,
+    starts_at: Math.floor(parseDateToMs(pick('startDate').value,false)/1000),
+    ends_at: Math.floor(parseDateToMs(pick('endDate').value,true)/1000),
+    status: 'active'
+  };
+  const r = await post('/api/admin/events', b); msg('evmsg', r);
+  if(r.ok){ await loadEvents(); ['slug','name','venue','startDate','endDate'].forEach(i=>pick(i).value=''); }
+}
+
+async function editEvent(id){
+  const res = await getJSON('/api/admin/events/'+id);
+  if(!res.ok) return alert('Not found');
+  const e = res.event;
+  pick('ed_id').value=e.id; pick('ed_slug').value=e.slug||''; pick('ed_name').value=e.name||'';
+  pick('ed_venue').value=e.venue||''; pick('ed_start').value=msToDate(e.starts_at*1000); pick('ed_end').value=msToDate(e.ends_at*1000);
+  pick('ed_hero').value=e.hero_url||''; pick('ed_poster').value=e.poster_url||'';
+  const g = e.gallery_urls ? (Array.isArray(e.gallery_urls)?e.gallery_urls:JSON.parse(e.gallery_urls||'[]')) : [];
+  pick('ed_gallery').value=(g||[]).slice(0,8).join('\\n');
+  pick('editPanel').style.display='block';
+}
+function cancelEdit(){ pick('editPanel').style.display='none'; pick('edmsg').textContent=''; }
+
+async function saveEdit(){
+  const id = Number(pick('ed_id').value||0); if(!id) return;
+  const b = {
+    slug: pick('ed_slug').value, name: pick('ed_name').value, venue: pick('ed_venue').value,
+    starts_at: Math.floor(parseDateToMs(pick('ed_start').value,false)/1000),
+    ends_at: Math.floor(parseDateToMs(pick('ed_end').value,true)/1000),
+    hero_url: pick('ed_hero').value, poster_url: pick('ed_poster').value,
+    gallery_urls: pick('ed_gallery').value.split(/\\n+/).map(s=>s.trim()).filter(Boolean)
+  };
+  const r = await put('/api/admin/events/'+id, b);
+  pick('edmsg').textContent = r.ok ? 'Saved' : 'Failed to save';
+  if(r.ok){ await loadEvents(); }
+}
+async function deleteEvent(id){
+  if(!confirm('Delete event?')) return;
+  const r = await del('/api/admin/events/'+id);
+  if(r.ok){ await loadEvents(); cancelEdit(); }
+}
+
+async function addGate(){
+  const name = pick('gatename').value.trim(); if(!name) return;
+  const r = await post('/api/admin/gates',{name}); if(r.ok){ pick('gatename').value=''; const gs=await getJSON('/api/admin/gates'); pick('gates').innerHTML=(gs.gates||[]).map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join(''); }
+}
+
+async function addTT(){
+  const id = Number(pick('ed_id').value||0); if(!id) return alert('Open an event to edit first');
+  const name = pick('ttName').value.trim(); const price = pick('ttPriceRand').value; const gender = document.getElementById('ttGen').checked;
+  const b = { name, price_rands: price===''? '': Number(price), requires_gender: gender };
+  const r = await post('/api/admin/events/'+id+'/ticket-types', b);
+  msg('ttmsg', r.ok? 'Added' : 'Failed'); if(r.ok){ pick('ttName').value=''; pick('ttPriceRand').value=''; document.getElementById('ttGen').checked=false; }
+}
+
+function dateToUnix(d){ return Math.floor(new Date(d).getTime()/1000) }
+async function loadPOS(){
+  const from = pick('posFrom').value? dateToUnix(pick('posFrom').value): 0;
+  const to = pick('posTo').value? dateToUnix(pick('posTo').value) + 86399 : 4102444800;
+  const r = await getJSON(\`/api/admin/pos/cashups?from=\${from}&to=\${to}\`);
+  if(!r.ok){ pick('posTotals').textContent = 'Failed to load'; return; }
+  const t = r.totals||{};
+  pick('posTotals').innerHTML = \`
+    <div><strong>Totaal (POS):</strong> R\${((t.grand_cents||0)/100).toFixed(2)}
+      · Kontant: R\${((t.cash_cents||0)/100).toFixed(2)}
+      · Kaart: R\${((t.card_cents||0)/100).toFixed(2)}
+      · Orders: \${t.orders_count||0}
+    </div>\`;
+
+  const rows = (r.shifts||[]).map(s=>\`
+    <tr>
+      <td>\${s.id}</td>
+      <td>\${s.cashier_name}</td>
+      <td>\${s.gate_name}</td>
+      <td>\${new Date((s.opened_at||0)*1000).toLocaleString()}</td>
+      <td>\${s.closed_at? new Date(s.closed_at*1000).toLocaleString() : '<span class="muted">open</span>'}</td>
+      <td>R\${((s.opening_float_cents||0)/100).toFixed(2)}</td>
+      <td class="muted">\${s.notes||''}</td>
+    </tr>\`).join('');
+  pick('posShifts').innerHTML = '<tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Float</th><th>Notes</th></tr>'+rows;
+}
+
+// Tabs
+document.querySelectorAll('.tab').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+  });
+});
+
+(async function init(){
+  await loadSettings();
+  await loadEvents();
+  loadPOS();
+})();
 </script>
-</body></html>`;
+
+</div></body></html>`;
