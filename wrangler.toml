@@ -18,10 +18,12 @@ bucket_name = "villiersdorp-tickets"
 
 [vars]
 APP_NAME = "Villiersdorp Skou Tickets"
-WA_PHONE_ID = "780229961841826"   # WhatsApp Business 'phone_number_id'
-WA_SENDER_NAME = "Villiersdorp Skou"  # Optional: appears in text copy
-##WA_VERIFY_TOKEN = "780229961841826"
-WA_ACCESS_TOKEN = "EAFdiPX1jF1cBPfRwH05ag1wB8L4kEFQVNe85KDq0vY7dyhZCd2XZAZCwMffVnjXmJwDtklMHUPEBIM7ZBiupaT9PuORBYv3fBle3omsFKWmtwJuO2AvdsNH8lumV7ZAqW0KlagJl0sPZAthK2KVCR4JogcpTjzBByC3ZAWLK0jPr0awZCgPUU4JYtOA50k8ZC9ZAd7WAZDZD"
+PHONE_NUMBER_ID = "780229961841826"
+WHATSAPP_TOKEN = "EAFdiPX1jF1cBPfRwH05ag1wB8L4kEFQVNe85KDq0vY7dyhZCd2XZAZCwMffVnjXmJwDtklMHUPEBIM7ZBiupaT9PuORBYv3fBle3omsFKWmtwJuO2AvdsNH8lumV7ZAqW0KlagJl0sPZAthK2KVCR4JogcpTjzBByC3ZAWLK0jPr0awZCgPUU4JYtOA50k8ZC9ZAd7WAZDZD"
+VERIFY_TOKEN = "vs-verify-2025"
+BUSINESS_ID = "1266679118073583"
+WHATSAPP_TEMPLATE_LANG = "af"
+WHATSAPP_BUTTON_URL = "https://events.villiersdorpskou.co.za"  
 
 # Optional base URL to render tickets/QRs
 PUBLIC_BASE_URL = "https://events.villiersdorpskou.co.za"
