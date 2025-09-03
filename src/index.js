@@ -2,7 +2,7 @@
 import { Router } from "./router.js";
 import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
-import { requireRole } from "./utils/auth.js";
+import { mountWATest } from "./routes/wa_test.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -12,23 +12,21 @@ import { mountScan } from "./routes/scan.js";
 import { mountSync } from "./routes/sync.js";
 import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
-import { mountWATest } from "./routes/wa_test.js";
 
 // UI
 import { landingHTML } from "./ui/landing.js";
 import { adminHTML } from "./ui/admin.js";
 import { shopHTML } from "./ui/shop.js";
-import { posHTML } from "./ui/pos.js";
+import { posHTML, posSellHTML } from "./ui/pos.js";   // ⬅️ import both
 import { scannerHTML } from "./ui/scanner.js";
 import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
 import { loginHTML } from "./ui/login.js";
 
-const router = Router();
+// Auth guard for UI pages
+import { requireRole } from "./utils/auth.js";
 
-// --- helper: allow UI modules to export either a function or a string
-const render = (tpl, ...args) =>
-  (typeof tpl === "function" ? tpl(...args) : tpl);
+const router = Router();
 
 /* ---------------------- API ROUTES ---------------------- */
 mountAuth(router);       // /api/auth/login, /api/auth/logout
@@ -37,51 +35,56 @@ mountAdmin(router);      // /api/admin/*
 mountPOS(router);        // /api/pos/*
 mountScan(router);       // /api/scan/*
 mountSync(router);       // /api/sync/*
-mountWhatsApp(router);   // /api/whatsapp/*
+mountWhatsApp(router);   // /api/whatsapp/webhook, /api/whatsapp/send, /api/whatsapp/debug
 mountWATest(router);
 
 /* ---------------------- UI ROUTES ----------------------- */
 
 // Landing
 router.add("GET", "/", async () =>
-  new Response(render(landingHTML), { headers: { "content-type": "text/html" } })
+  new Response(landingHTML(), { headers: { "content-type": "text/html" }})
 );
 
-// Admin UI (guarded) + login
+// Admin UI (guarded)
 router.add("GET", "/admin", requireRole("admin", async () =>
-  new Response(render(adminHTML), { headers: { "content-type": "text/html" } })
+  new Response(adminHTML(), { headers: { "content-type": "text/html" }})
 ));
 router.add("GET", "/admin/login", async () =>
-  new Response(render(loginHTML, "admin"), { headers: { "content-type": "text/html" } })
+  new Response(loginHTML("admin"), { headers: { "content-type": "text/html" }})
 );
 
-// POS UI (guarded) + login
+// POS UI (guarded)
 router.add("GET", "/pos", requireRole("pos", async () =>
-  new Response(render(posHTML), { headers: { "content-type": "text/html" } })
+  new Response(posHTML(), { headers: { "content-type": "text/html" }})
 ));
+// POS sell screen (guarded)
+router.add("GET", "/pos/sell", requireRole("pos", async () =>
+  new Response(posSellHTML(), { headers: { "content-type": "text/html" }})
+));
+// POS login UI
 router.add("GET", "/pos/login", async () =>
-  new Response(render(loginHTML, "pos"), { headers: { "content-type": "text/html" } })
+  new Response(loginHTML("pos"), { headers: { "content-type": "text/html" }})
 );
 
-// Scanner UI (guarded) + login
+// Scanner UI (guarded)
 router.add("GET", "/scan", requireRole("scan", async () =>
-  new Response(render(scannerHTML), { headers: { "content-type": "text/html" } })
+  new Response(scannerHTML(), { headers: { "content-type": "text/html" }})
 ));
 router.add("GET", "/scan/login", async () =>
-  new Response(render(loginHTML, "scan"), { headers: { "content-type": "text/html" } })
+  new Response(loginHTML("scan"), { headers: { "content-type": "text/html" }})
 );
 
 // Event shop + checkout
 router.add("GET", "/shop/:slug", async (_req, _env, _ctx, { slug }) =>
-  new Response(render(shopHTML, slug), { headers: { "content-type": "text/html" } })
+  new Response(shopHTML(slug), { headers: { "content-type": "text/html" }})
 );
 router.add("GET", "/shop/:slug/checkout", async (_req, _env, _ctx, { slug }) =>
-  new Response(render(checkoutHTML, slug), { headers: { "content-type": "text/html" } })
+  new Response(checkoutHTML(slug), { headers: { "content-type": "text/html" }})
 );
 
 // Ticket display
 router.add("GET", "/t/:code", async (_req, _env, _ctx, { code }) =>
-  new Response(render(ticketHTML, code), { headers: { "content-type": "text/html" } })
+  new Response(ticketHTML(code), { headers: { "content-type": "text/html" }})
 );
 
 /* ---------------------- WORKER EXPORT ------------------- */
