@@ -1,134 +1,93 @@
 // /src/ui/pos.js
-export function posHTML() {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>POS · Villiersdorp Skou</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-  <style>
-    body { max-width: 1100px; margin: 0 auto; }
-    .row { display: flex; gap: 12px; align-items: center; }
-    .grow { flex: 1 1 auto; }
-    .w-180 { width: 180px; }
-    .mt { margin-top: 16px; }
-    .error { color: #b00020; font-weight: 600; }
-    .ok { color: #0a7a2f; font-weight: 600; }
-  </style>
-</head>
-<body>
-  <main class="container">
-    <h1>POS</h1>
-
-    <section id="shift">
-      <h3>Start shift</h3>
-      <div class="row">
-        <input id="cashier" class="grow" placeholder="Cashier name" />
-        <select id="event" class="w-180"></select>
-        <select id="gate" class="w-180"></select>
+export const posHTML = `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>POS · Villiersdorp Skou</title>
+<style>
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  .wrap{ max-width:1000px; margin:20px auto; padding:0 16px }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
+  h1{ margin:0 0 12px } .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  input, select{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
+  .btn{ padding:10px 14px; border-radius:10px; border:0; background:#0a7d2b; color:#fff; cursor:pointer; font-weight:600 }
+  .muted{ color:var(--muted) } .error{ color:#b42318; font-weight:600 }
+</style>
+</head><body>
+<div class="wrap">
+  <h1>POS</h1>
+  <div class="card">
+    <h2 style="margin:0 0 10px">Start shift</h2>
+    <div class="row" style="margin-bottom:10px">
+      <input id="cashier" placeholder="Cashier name" style="min-width:220px"/>
+      <select id="event" style="min-width:280px"></select>
+      <select id="gate" style="min-width:180px"></select>
+    </div>
+    <div class="row">
+      <div>
+        <div class="muted" style="margin-bottom:4px">Opening float (R)</div>
+        <input id="float" type="number" min="0" step="1" value="0" style="width:120px"/>
       </div>
-      <div class="row mt">
-        <label class="w-180">
-          Opening float (R)
-          <input id="floatR" type="number" min="0" step="1" value="0" />
-        </label>
-        <button id="btnStart">Start</button>
-        <span id="msg" class="error"></span>
-      </div>
-    </section>
-
-    <section id="work" style="display:none">
-      <p class="ok">Session started. (ID: <span id="sid"></span>)</p>
-      <!-- The rest of the POS UI (cart, keypad, settle, etc.) can mount here -->
-    </section>
-  </main>
+      <button id="startBtn" class="btn">Start</button>
+      <div id="err" class="error"></div>
+    </div>
+  </div>
+</div>
 
 <script>
-const selEvent = document.getElementById('event');
-const selGate  = document.getElementById('gate');
-const inpName  = document.getElementById('cashier');
-const inpFloat = document.getElementById('floatR');
-const btnStart = document.getElementById('btnStart');
-const msg      = document.getElementById('msg');
-const secShift = document.getElementById('shift');
-const secWork  = document.getElementById('work');
-const spanSid  = document.getElementById('sid');
+const $ = (id)=>document.getElementById(id);
+const cents = (rands)=> Math.max(0, Math.round(Number(rands||0) * 100));
 
-async function api(path) {
-  const r = await fetch(path, { headers: { 'accept': 'application/json' }});
-  const j = await r.json().catch(() => ({}));
-  if (!j.ok) throw new Error(j.error || 'unknown');
-  return j;
-}
-
-function fillEvents(list) {
-  selEvent.innerHTML = list.map(e => 
-    '<option value="'+e.id+'">'+e.name+' ('+e.slug+')</option>'
-  ).join('');
-}
-
-function fillGates(list) {
-  selGate.innerHTML = list.map(g => 
-    '<option value="'+g.id+'">'+g.name+'</option>'
-  ).join('');
-}
-
-async function bootstrap() {
-  msg.textContent = '';
+async function load() {
+  $('err').textContent = '';
+  $('event').innerHTML = '<option>Loading…</option>';
+  $('gate').innerHTML = '<option>Loading…</option>';
   try {
-    const j = await api('/api/pos/bootstrap');
-    fillEvents(j.events || []);
-    fillGates(j.gates || []);
+    const r = await fetch('/api/pos/bootstrap');
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'bootstrap failed');
+
+    // Events
+    const ev = $('event');
+    ev.innerHTML = j.events.map(e => 
+      \`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`
+    ).join('') || '<option value="0">No events</option>';
+
+    // Gates
+    const gt = $('gate');
+    gt.innerHTML = j.gates.map(g => 
+      \`<option value="\${g.id}">\${g.name}</option>\`
+    ).join('');
   } catch (e) {
-    msg.textContent = 'Error: ' + e.message;
+    $('err').textContent = 'Error: ' + (e.message || 'network');
   }
 }
 
-// Load gates when event changes
-selEvent.addEventListener('change', async () => {
-  msg.textContent = '';
-  const eid = Number(selEvent.value || 0);
-  if (!eid) { selGate.innerHTML = ''; return; }
-  try {
-    const j = await api('/api/pos/gates/' + eid);
-    fillGates(j.gates || []);
-  } catch (e) {
-    msg.textContent = 'Error: ' + e.message;
-  }
-});
+$('startBtn').onclick = async () => {
+  $('err').textContent = '';
+  const cashier_name = ($('cashier').value || '').trim();
+  const event_id = Number(($('event').value || '0'));
+  const gate_id = Number(($('gate').value || '0'));
+  const opening_float_cents = cents($('float').value);
 
-async function startShift() {
-  msg.textContent = '';
-  const cashier_name = inpName.value.trim();
-  const event_id = Number(selEvent.value || 0);
-  const gate_id  = Number(selGate.value || 0);
-  const opening_float_rands = Number(inpFloat.value || 0);
-  const opening_float_cents = Math.round(Math.max(0, opening_float_rands) * 100);
-
-  if (!cashier_name) { msg.textContent = 'Error: cashier_name required'; return; }
-  if (!event_id) { msg.textContent = 'Error: event_id required'; return; }
-  if (!gate_id) { msg.textContent = 'Error: gate_id required'; return; }
+  if (!cashier_name) return $('err').textContent = 'cashier name required';
+  if (!event_id) return $('err').textContent = 'event required';
+  if (!gate_id) return $('err').textContent = 'gate required';
 
   try {
     const r = await fetch('/api/pos/session/open', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
       body: JSON.stringify({ cashier_name, event_id, gate_id, opening_float_cents })
     });
-    const j = await r.json().catch(()=>({}));
+    const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'unknown');
-    spanSid.textContent = j.session_id;
-    secShift.style.display = 'none';
-    secWork.style.display  = '';
+    // For now just reload to continue to the selling screen once it exists
+    location.reload();
   } catch (e) {
-    msg.textContent = 'Error: ' + e.message;
+    $('err').textContent = 'Error: ' + (e.message || 'unknown');
   }
-}
+};
 
-btnStart.addEventListener('click', startShift);
-bootstrap();
+load();
 </script>
-</body>
-</html>`;
-}
+</body></html>`;
