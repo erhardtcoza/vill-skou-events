@@ -1,124 +1,238 @@
 // /src/ui/scanner.js
+//
+// Gate scanning console (mobile-first).
+// - If not logged in (scanner role cookie), it shows a login form and POSTs /api/auth/login {role:'scan', token, name}
+// - Uses the native BarcodeDetector if available; falls back to manual entry.
+// - Logic:
+//     1) Scan QR -> lookup ticket via /api/public/tickets/:code
+//     2) Decide default action: first time => IN; if already IN => prompt OUT
+//     3) Allow gender prompt if unknown and ticket type requires it
+//     4) POST to /api/scan/mark { code, action: 'in'|'out', gender?, gate_name? }
+//     5) Show result + sound / haptic feedback
+//
+// Expect server to accept the POST and record the scan with gate name from a gate selector.
+
 export const scannerHTML = () => `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>Scanner · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --red:#b91c1c; --amber:#b45309; --bg:#f6f7f8 }
-  *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui;background:var(--bg);color:#111}
-  header{padding:14px 16px;background:#fff;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center}
-  .wrap{max-width:720px;margin:16px auto;padding:0 12px}
-  .panel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:16px}
-  input{width:100%;padding:14px;border:1px solid #d1d5db;border-radius:12px;font-size:18px}
-  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .pill{border:1px solid #e5e7eb;border-radius:999px;padding:8px 12px;background:#fff}
-  .status{margin-top:12px;padding:14px;border-radius:12px}
-  .ok{background:#ecfdf5;border:1px solid #10b981;color:#065f46}
-  .warn{background:#fffbeb;border:1px solid #f59e0b;color:#92400e}
-  .err{background:#fef2f2;border:1px solid #ef4444;color:#991b1b}
-  .muted{color:#6b7280}
-  .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}
-  .tile{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px;text-align:center}
-  .tile b{font-size:22px;display:block}
+  :root{--green:#0a7d2b;--bg:#0b0f12;--card:#11151a;--text:#e6efe6;--muted:#9fb1a1;--bad:#b00020;--ok:#18a957}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui}
+  .wrap{max-width:900px;margin:0 auto;padding:12px}
+  h1{margin:10px 0 12px;font-size:22px}
+  .card{background:var(--card);border:1px solid #1c2228;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:12px;margin-bottom:12px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  input,select,button{font-size:16px;padding:10px 12px;border-radius:12px;border:1px solid #2a3238;background:#0e1318;color:var(--text)}
+  .primary{background:var(--green);border-color:var(--green)}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .muted{color:var(--muted)}
+  #video{width:100%;aspect-ratio:16/10;border-radius:14px;background:#000;object-fit:cover}
+  .big{font-size:18px;font-weight:700}
+  .pill{border-radius:999px;padding:6px 10px;border:1px solid #263037;background:#0e151a}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:740px){.grid2{grid-template-columns:1fr}}
 </style>
-</head><body>
-<header>
-  <div class="row">
-    <strong>Scanner</strong>
-    <span class="pill" id="gate">Gate: —</span>
-  </div>
-  <div class="row">
-    <span class="pill" id="net">Online</span>
-    <span class="pill" id="qsize">Q:0</span>
-    <button id="syncBtn" class="pill">Sync</button>
-  </div>
-</header>
+</head><body><div class="wrap">
 
-<div class="wrap">
-  <div class="tiles">
-    <div class="tile"><small>IN total</small><b id="tIn">0</b></div>
-    <div class="tile"><small>OUT total</small><b id="tOut">0</b></div>
-    <div class="tile"><small>Inside now</small><b id="tInside">0</b></div>
-  </div>
+  <h1>Scanner</h1>
 
-  <div class="panel">
-    <div class="row" style="margin-bottom:8px">
-      <select id="dirSel" class="pill">
-        <option value="in">IN</option>
-        <option value="out">OUT</option>
-      </select>
+  <div id="loginCard" class="card" style="display:none">
+    <div class="row"><strong>Sign in</strong><span class="muted"> · scanner</span></div>
+    <div class="row">
+      <input id="lg_name" placeholder="Your name" style="flex:1 1 180px" />
+      <input id="lg_token" placeholder="Scanner token" style="flex:1 1 180px" />
+      <button class="primary" id="lg_btn">Login</button>
+      <span id="lg_msg" class="muted"></span>
     </div>
-    <input id="qr" placeholder="Scan or paste QR here" autofocus />
-    <div id="msg" class="status muted">Ready.</div>
   </div>
-</div>
 
-<audio id="s-ok"   src="data:audio/wav;base64,UklGRmQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAABAACAgICAgP8..."></audio>
-<audio id="s-warn" src="data:audio/wav;base64,UklGRmQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAABAACAgICA..."></audio>
-<audio id="s-err"  src="data:audio/wav;base64,UklGRmQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAABAACAgICA..."></audio>
+  <div id="setupCard" class="card" style="display:none">
+    <div class="row">
+      <select id="gateSel"></select>
+      <button id="startBtn" class="primary">Start camera</button>
+      <button id="stopBtn">Stop</button>
+      <input id="manual" placeholder="Type/scan code…" style="flex:1 1 220px"/>
+      <button id="goBtn">Lookup</button>
+    </div>
+    <div class="muted" style="margin-top:6px">Tip: If your device blocks the camera, use the manual box or a USB scanner into the same field.</div>
+  </div>
+
+  <div id="videoCard" class="card" style="display:none">
+    <video id="video" playsinline></video>
+  </div>
+
+  <div id="resultCard" class="card" style="display:none"></div>
+
+  <audio id="beepOK" preload="auto" src="data:audio/wav;base64,UklGRoQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAAA..."></audio>
+  <audio id="beepNO" preload="auto" src="data:audio/wav;base64,UklGRoQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAAA..."></audio>
 
 <script>
-// (tiny beeps omitted for brevity; you can keep the data URIs above or replace with your own)
+const S = {
+  sess: null,
+  stream: null,
+  detector: ('BarcodeDetector' in window) ? new BarcodeDetector({formats:['qr_code']}) : null,
+  gate: '',
+};
 
-function el(id){return document.getElementById(id)}
-function setMsg(cls, text){ const m=el('msg'); m.className='status '+cls; m.textContent=text; }
-function qGet(){ try{ return JSON.parse(localStorage.getItem('scan_queue')||'[]'); }catch{return []} }
-function qSet(a){ localStorage.setItem('scan_queue', JSON.stringify(a)); el('qsize').textContent='Q:'+a.length; }
-function qPush(ev){ const a=qGet(); a.push(ev); qSet(a); }
-function beep(kind){ try{ el(kind==='ok'?'s-ok':kind==='warn'?'s-warn':'s-err').play().catch(()=>{});}catch{} }
-function net(){ el('net').textContent = navigator.onLine ? 'Online' : 'Offline'; }
-window.addEventListener('online', net); window.addEventListener('offline', net); net();
-
-let sess = { role:'scan', gate:'' };
-function updTotals(t){ if(!t) return; el('tIn').textContent=t.in||0; el('tOut').textContent=t.out||0; el('tInside').textContent=(t.in||0)-(t.out||0); }
-
-async function who(){
-  const r = await fetch('/api/auth/whoami').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok || r.role!=='scan'){ location.href='/scan/login'; return; }
-  sess = r; el('gate').textContent = 'Gate: '+(sess.gate||'—');
+// Mini auth check – try hitting a protected endpoint to see if cookie exists
+async function haveSession(){
+  // hit a tiny endpoint; if unauthorized we’ll get 401
+  const r = await fetch('/api/scan/ping').catch(()=>({ok:false,status:0}));
+  return r.ok;
 }
-who();
 
-async function mark(qr, dir){
-  const ev = { qr, direction: dir, gate_name: sess.gate||'', ts: Date.now() };
-  try{
-    const resp = await fetch('/api/scan/mark', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(ev) });
-    const j = await resp.json();
-    if (!j.ok) {
-      if (!resp.ok && (resp.status>=500 || resp.status===0)) {
-        qPush(ev); setMsg('warn','Saved offline. Will sync later.'); beep('warn');
-      } else {
-        setMsg('err', j.error || 'Rejected'); beep('err');
-      }
-      return;
+async function login(){
+  const name = document.getElementById('lg_name').value.trim();
+  const token = document.getElementById('lg_token').value.trim();
+  const res = await fetch('/api/auth/login', {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify({ role:'scan', token, name })
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+  if(res.ok){ location.reload(); }
+  else document.getElementById('lg_msg').textContent = 'Wrong token';
+}
+
+async function loadGates(){
+  const g = await fetch('/api/admin/gates').then(r=>r.json()).catch(()=>({gates:[]}));
+  const sel = document.getElementById('gateSel');
+  const gs = (g.gates||[]); if (!gs.length) gs.push({id:0,name:'Main Gate'});
+  sel.innerHTML = gs.map(x=>'<option>'+x.name+'</option>').join('');
+  S.gate = sel.value = gs[0].name;
+  sel.onchange = ()=> S.gate = sel.value;
+}
+
+function show(id, on=true){ document.getElementById(id).style.display = on?'block':'none'; }
+
+async function startCam(){
+  try {
+    S.stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+    const v = document.getElementById('video');
+    v.srcObject = S.stream; await v.play();
+    show('videoCard', true);
+    if (S.detector) tick();
+  } catch(e){
+    alert('Camera blocked: '+e);
+  }
+}
+function stopCam(){
+  if (S.stream) { for (const t of S.stream.getTracks()) t.stop(); S.stream = null; }
+  show('videoCard', false);
+}
+async function tick(){
+  if (!S.stream || !S.detector) return;
+  const v = document.getElementById('video');
+  try {
+    const codes = await S.detector.detect(v);
+    if (codes && codes.length) {
+      const val = codes[0].rawValue || '';
+      if (val) { handleCode(val); await new Promise(r=>setTimeout(r, 800)); }
     }
-    updTotals(j.totals);
-    setMsg('ok', \`OK \${dir.toUpperCase()} — \${j.tt_name||'Ticket'}\`); beep('ok');
-  }catch{
-    qPush(ev); setMsg('warn','Saved offline. Will sync later.'); beep('warn');
-  }
+  } catch {}
+  requestAnimationFrame(tick);
 }
 
-async function syncNow(){
-  const q = qGet();
-  if (!q.length){ setMsg('muted', 'Nothing to sync.'); return; }
-  try{
-    const j = await fetch('/api/scan/sync', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ events: q }) }).then(r=>r.json());
-    if (j?.ok) { qSet([]); setMsg('ok', \`Synced \${j.accepted}/\${j.total}\`); } else setMsg('err', 'Sync failed.');
-  }catch{ setMsg('err','Sync failed.'); }
+function renderResult(html){ const c = document.getElementById('resultCard'); c.innerHTML = html; show('resultCard', true); }
+
+async function lookup(code){
+  const r = await fetch('/api/public/tickets/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
+  return r.ok ? r : null;
 }
 
-el('qr').addEventListener('keydown', (e)=>{
-  if (e.key==='Enter'){
-    const v = el('qr').value.trim();
-    el('qr').value = '';
-    if (v) mark(v, el('dirSel').value);
-  }
+async function mark(code, action, gender){
+  const payload = { code, action, gate_name: S.gate };
+  if (gender) payload.gender = gender;
+  const r = await fetch('/api/scan/mark', {
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload)
+  }).then(r=>r.json()).catch(()=>({ok:false}));
+  return r.ok ? r : null;
+}
+
+function feedback(ok=true){
+  try {
+    if (ok) document.getElementById('beepOK').play(); else document.getElementById('beepNO').play();
+    if (navigator.vibrate) navigator.vibrate(ok ? 40 : [80,40,80]);
+  } catch {}
+}
+
+async function handleCode(raw){
+  const code = String(raw).trim();
+  if (!code) return;
+  const d = await lookup(code);
+  if (!d){ feedback(false); return renderResult('<div class="bad big">❌ Ongeldige kaartjie</div>'); }
+
+  const t = d.ticket, tt = d.ticket_type || {}, ev = d.event || {};
+  const who = t.holder_name || '(onbekend)';
+  const st  = t.state || 'unused';
+
+  // Decide default action
+  let def = 'in';
+  if (st === 'in') def = 'out';
+
+  const genderAsk = (!t.gender && (tt.requires_gender || 0));
+  const genderCtl = genderAsk ? `
+    <div class="row" style="margin-top:6px">
+      <label class="pill"><input type="radio" name="g" value="male"> Manlik</label>
+      <label class="pill"><input type="radio" name="g" value="female"> Vroulik</label>
+      <label class="pill"><input type="radio" name="g" value="other"> Ander</label>
+    </div>` : '';
+
+  renderResult(\`
+    <div class="big">\${ev.name || ''}</div>
+    <div class="muted">\${tt.name || ''}</div>
+    <div class="row" style="margin:6px 0">
+      <span>Houer:</span><strong>\${who}</strong>
+      <span class="pill">Huidig: \${st}</span>
+      <span class="pill">Poort: \${S.gate}</span>
+    </div>
+    \${genderCtl}
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="actIn">Scan IN</button>
+      <button id="actOut">Scan OUT</button>
+      <input id="codeEcho" readonly class="pill" value="\${code}" style="flex:1 1 180px"/>
+    </div>
+  \`);
+
+  // Emphasize default
+  if (def === 'in') document.getElementById('actIn').classList.add('big'); else document.getElementById('actOut').classList.add('big');
+
+  document.getElementById('actIn').onclick = async ()=>{
+    let gender = undefined;
+    if (genderAsk){
+      const r = [...document.querySelectorAll('input[name="g"]')].find(x=>x.checked);
+      if (!r) return alert('Kies geslag');
+      gender = r.value;
+    }
+    const m = await mark(code,'in',gender);
+    if (!m){ feedback(false); return renderResult('<div class="bad big">⚠️ Kon nie IN merk nie</div>'); }
+    feedback(true);
+    renderResult('<div class="ok big">✅ Ingeskandeer</div>');
+  };
+
+  document.getElementById('actOut').onclick = async ()=>{
+    const m = await mark(code,'out');
+    if (!m){ feedback(false); return renderResult('<div class="bad big">⚠️ Kon nie OUT merk nie</div>'); }
+    feedback(true);
+    renderResult('<div class="ok big">✅ Uitgeskandeer</div>');
+  };
+}
+
+document.getElementById('lg_btn').onclick = login;
+document.getElementById('startBtn').onclick = startCam;
+document.getElementById('stopBtn').onclick = stopCam;
+document.getElementById('goBtn').onclick = ()=>{
+  const v = document.getElementById('manual').value.trim(); if (v) handleCode(v);
+};
+document.getElementById('manual').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){ e.preventDefault(); const v=e.target.value.trim(); if(v) handleCode(v); }
 });
-el('syncBtn').onclick = syncNow;
-window.addEventListener('focus', syncNow);
-setInterval(syncNow, 5*60*1000);
-qSet(qGet()); // refresh Q size
-setMsg('muted', 'Ready.');
+
+(async function init(){
+  if (await haveSession()){
+    show('setupCard', true);
+    await loadGates();
+  } else {
+    show('loginCard', true);
+  }
+})();
 </script>
-</body></html>`;
+</div></body></html>`;
