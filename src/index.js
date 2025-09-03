@@ -10,6 +10,7 @@ import { mountPOS } from "./routes/pos.js";
 import { mountScan } from "./routes/scan.js";
 import { mountSync } from "./routes/sync.js";
 import { mountAuth } from "./routes/auth.js";
+import { mountWhatsApp } from "./routes/whatsapp.js";
 
 // UIs
 import { landingHTML } from "./ui/landing.js";
@@ -30,6 +31,7 @@ mountAdmin(router);
 mountPOS(router);
 mountScan(router);
 mountSync(router);
+mountWhatsApp(router);
 
 /* Static UI (public) */
 router.add("GET", "/", async () =>
