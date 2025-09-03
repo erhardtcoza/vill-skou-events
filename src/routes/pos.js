@@ -2,64 +2,60 @@
 import { json, bad } from "../utils/http.js";
 import { requireRole, requireAny } from "../utils/auth.js";
 import {
-  hydrateItems,
   createPOSOrder,
   loadPendingOrderByCode
 } from "../services/orders.js";
 
-/** POS API
- *  GET  /api/pos/bootstrap             -> minimal boot info (events)
+/**
+ * POS API
+ *  GET  /api/pos/bootstrap             -> minimal data for POS UI (events + gate names)
  *  GET  /api/pos/catalog/:eventId      -> ticket types for POS
- *  POST /api/pos/session/open          -> open a cashier shift
- *  POST /api/pos/session/close         -> close a cashier shift
- *  GET  /api/pos/order/lookup/:code    -> recall "pay at event" order
- *  POST /api/pos/order/sale            -> create/settle a sale (cash/card)
+ *  POST /api/pos/session/open          -> open a cashier session
+ *  POST /api/pos/session/close         -> close a cashier session
+ *  GET  /api/pos/order/lookup/:code    -> recall a "pay at event" order
+ *  POST /api/pos/order/sale            -> create/settle a POS sale (cash/card)  [sends WhatsApp]
  */
 
 export function mountPOS(router) {
-  // 0) Bootstrap (allow admin too so you can test from admin account)
+  // ---------- Bootstrap (events + gates) ----------
+  // Allow admin to see it too for testing.
   router.add(
     "GET",
     "/api/pos/bootstrap",
     requireAny(["pos", "admin"], async (_req, env) => {
-      const evs = await env.DB
-        .prepare(
-          `SELECT id, slug, name, starts_at, ends_at
-             FROM events
-            WHERE status='active'
-            ORDER BY starts_at ASC`
-        )
-        .all();
+      const events = (await env.DB.prepare(
+        `SELECT id, slug, name, starts_at, ends_at
+           FROM events
+          WHERE status='active'
+          ORDER BY starts_at ASC`
+      ).all()).results || [];
 
-      return json({
-        ok: true,
-        events: evs.results || []
-      });
+      // Return a flat list of unique gate names; UI can optionally filter by event.
+      const gates = (await env.DB.prepare(
+        `SELECT DISTINCT name FROM gates ORDER BY name ASC`
+      ).all()).results || [];
+
+      return json({ ok: true, events, gates });
     })
   );
 
-  // 1) Catalog for POS
+  // ---------- Catalog for a specific event ----------
   router.add(
     "GET",
     "/api/pos/catalog/:eventId",
-    requireAny(["pos", "admin"], async (_req, env, _ctx, { eventId }) => {
-      const rows =
-        (
-          await env.DB
-            .prepare(
-              `SELECT id, event_id, name, price_cents, requires_gender
-                 FROM ticket_types
-                WHERE event_id=?1
-                ORDER BY id ASC`
-            )
-            .bind(Number(eventId))
-            .all()
-        ).results || [];
+    requireRole("pos", async (_req, env, _ctx, { eventId }) => {
+      const rows = (await env.DB.prepare(
+        `SELECT id, event_id, name, price_cents, requires_gender
+           FROM ticket_types
+          WHERE event_id=?1
+          ORDER BY id ASC`
+      ).bind(Number(eventId)).all()).results || [];
       return json({ ok: true, ticket_types: rows });
     })
   );
 
-  // 2) Open shift
+  // ---------- Open a cashier session ----------
+  // NOTE: expects pos_sessions table to have: cashier_name, gate_name, opening_float_cents, opened_at, cash_total_cents, card_total_cents, notes, event_id
   router.add(
     "POST",
     "/api/pos/session/open",
@@ -70,70 +66,68 @@ export function mountPOS(router) {
       const opening_float_cents = Math.max(0, Number(b?.opening_float_cents || 0));
       const event_id = Number(b?.event_id || 0);
 
-      if (!event_id) return bad("event_id required");
-      if (!cashier_name || !gate_name) return bad("cashier_name and gate_name required");
+      if (!cashier_name || !gate_name || !event_id) {
+        return bad("cashier_name, gate_name and event_id are required");
+      }
 
-      const r = await env.DB
-        .prepare(
-          `INSERT INTO pos_shifts
-             (event_id, cashier_name, gate_name, opened_at, opening_float_cents, cash_cents, card_cents, notes)
-           VALUES (?1, ?2, ?3, unixepoch(), ?4, 0, 0, NULL)`
-        )
-        .bind(event_id, cashier_name, gate_name, opening_float_cents)
-        .run();
+      const r = await env.DB.prepare(
+        `INSERT INTO pos_sessions
+           (cashier_name, gate_name, opening_float_cents, opened_at,
+            cash_total_cents, card_total_cents, notes, event_id)
+         VALUES (?1, ?2, ?3, unixepoch(), 0, 0, '', ?4)`
+      ).bind(cashier_name, gate_name, opening_float_cents, event_id).run();
 
-      return json({ ok: true, shift_id: r.meta.last_row_id });
+      return json({ ok: true, session_id: r.meta.last_row_id });
     })
   );
 
-  // 3) Close shift
+  // ---------- Close a cashier session ----------
   router.add(
     "POST",
     "/api/pos/session/close",
     requireRole("pos", async (req, env) => {
       const b = await req.json().catch(() => null);
-      const id = Number(b?.shift_id || 0);
-      if (!id) return bad("shift_id required");
-      const cashC = Math.max(0, Number(b?.cash_cents || 0));
-      const cardC = Math.max(0, Number(b?.card_cents || 0));
+      const id = Number(b?.session_id || 0);
+      if (!id) return bad("session_id required");
+
+      const cashC = Math.max(0, Number(b?.cash_total_cents || 0));
+      const cardC = Math.max(0, Number(b?.card_total_cents || 0));
       const notes = (b?.notes || "").trim();
 
-      await env.DB
-        .prepare(
-          `UPDATE pos_shifts
-              SET closed_at = unixepoch(),
-                  cash_cents = ?1,
-                  card_cents = ?2,
-                  notes = COALESCE(NULLIF(?3,''), notes)
-            WHERE id=?4`
-        )
-        .bind(cashC, cardC, notes, id)
-        .run();
+      await env.DB.prepare(
+        `UPDATE pos_sessions
+            SET closed_at = unixepoch(),
+                cash_total_cents = ?1,
+                card_total_cents = ?2,
+                notes = COALESCE(NULLIF(?3,''), notes)
+          WHERE id=?4`
+      ).bind(cashC, cardC, notes, id).run();
 
       return json({ ok: true });
     })
   );
 
-  // 4) Recall "pay at event" order
+  // ---------- Recall an online "pay at event" order by short code ----------
   router.add(
     "GET",
     "/api/pos/order/lookup/:code",
-    requireAny(["pos", "admin"], async (_req, env, _ctx, { code }) => {
+    requireRole("pos", async (_req, env, _ctx, { code }) => {
       const o = await loadPendingOrderByCode(env.DB, code);
       if (!o) return bad("Order not found", 404);
-      return json({ ok: true, order: o, items: hydrateItems(o.items_json) });
+      return json({ ok: true, order: o });
     })
   );
 
-  // 5) Create/settle POS sale
+  // ---------- Create/settle a POS sale (cash/card) ----------
+  // IMPORTANT: We pass `env` so WhatsApp sender can run after issuing tickets.
   router.add(
     "POST",
     "/api/pos/order/sale",
     requireRole("pos", async (req, env) => {
       const b = await req.json().catch(() => null);
-      if (!b) return bad("Invalid body");
+      if (!b) return bad("Invalid JSON");
       try {
-        const res = await createPOSOrder(env.DB, b);
+        const res = await createPOSOrder(env.DB, b, env); // ✅ env passed
         return json({ ok: true, ...res });
       } catch (e) {
         return json({ ok: false, error: String(e) }, 400);
