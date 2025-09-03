@@ -135,29 +135,29 @@ async function loadEvents(){
     const j = await r.json();
     if(!j.ok) throw new Error(j.error||'failed');
 
-    const rows = (j.events||[]).map(ev=>`
+    const rows = (j.events||[]).map(ev=>\`
       <tr>
-        <td>${ev.id}</td>
-        <td>${esc(ev.slug)}</td>
-        <td>${esc(ev.name)}<div class="muted">${esc(ev.venue||'')}</div></td>
-        <td>${fmtDate(ev.starts_at)}</td>
-        <td>${fmtDate(ev.ends_at)}</td>
-        <td>${esc(ev.status||'')}</td>
-        <td><button class="btn sec" data-tt="${ev.id}" data-name="${esc(ev.name)}" data-slug="${esc(ev.slug)}">Ticket Types</button></td>
+        <td>\${ev.id}</td>
+        <td>\${esc(ev.slug)}</td>
+        <td>\${esc(ev.name)}<div class="muted">\${esc(ev.venue||'')}</div></td>
+        <td>\${fmtDate(ev.starts_at)}</td>
+        <td>\${fmtDate(ev.ends_at)}</td>
+        <td>\${esc(ev.status||'')}</td>
+        <td><button class="btn sec" data-tt="\${ev.id}" data-name="\${esc(ev.name)}" data-slug="\${esc(ev.slug)}">Ticket Types</button></td>
       </tr>
-    `).join('');
+    \`).join('');
     $('eventsBody').innerHTML = rows || '<tr><td colspan="7" class="muted">No events.</td></tr>';
 
     document.querySelectorAll('[data-tt]').forEach(b=>{
       b.onclick = ()=>{
         CURRENT_EVENT = { id:Number(b.dataset.tt), name:b.dataset.name, slug:b.dataset.slug };
-        $('ttTitle').textContent = `Ticket types for ${CURRENT_EVENT.name} (${CURRENT_EVENT.slug})`;
+        $('ttTitle').textContent = \`Ticket types for \${CURRENT_EVENT.name} (\${CURRENT_EVENT.slug})\`;
         $('ttPanel').style.display = 'block';
         loadTicketTypesFor(CURRENT_EVENT.id);
       };
     });
   }catch(e){
-    $('eventsBody').innerHTML = `<tr><td colspan="7" class="muted">Error: ${esc(e.message||'failed')}</td></tr>`;
+    $('eventsBody').innerHTML = \`<tr><td colspan="7" class="muted">Error: \${esc(e.message||'failed')}</td></tr>\`;
   }
 }
 
@@ -185,26 +185,26 @@ $('eCreate').onclick = async ()=>{
 /* -------- Ticket types -------- */
 async function loadTicketTypesFor(eventId){
   const tbody = $('ticketTypesBody');
-  tbody.innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
+  tbody.innerHTML = \`<tr><td colspan="4" class="muted">Loading…</td></tr>\`;
   let jt;
   try{
-    const r = await fetch(`/api/admin/events/${eventId}/ticket-types`);
+    const r = await fetch(\`/api/admin/events/\${eventId}/ticket-types\`);
     jt = await r.json();
   }catch{ jt = { ok:false, error:'Network error' }; }
 
   if(!jt.ok){
-    tbody.innerHTML = `<tr><td colspan="4" class="muted">Error: ${esc(jt.error||'failed')}</td></tr>`;
+    tbody.innerHTML = \`<tr><td colspan="4" class="muted">Error: \${esc(jt.error||'failed')}</td></tr>\`;
     return;
   }
-  const rows = (jt.types||[]).map(t=>`
+  const rows = (jt.types||[]).map(t=>\`
     <tr>
-      <td>${t.id}</td>
-      <td>${esc(t.name||'')}</td>
-      <td>${typeof t.price_cents==='number'? (t.price_cents/100).toFixed(2) : '-'}</td>
-      <td>${t.gender_required ? 'Yes' : 'No'}</td>
+      <td>\${t.id}</td>
+      <td>\${esc(t.name||'')}</td>
+      <td>\${typeof t.price_cents==='number'? (t.price_cents/100).toFixed(2) : '-'}</td>
+      <td>\${t.gender_required ? 'Yes' : 'No'}</td>
     </tr>
-  `).join('');
-  tbody.innerHTML = rows || `<tr><td colspan="4" class="muted">No ticket types</td></tr>`;
+  \`).join('');
+  tbody.innerHTML = rows || \`<tr><td colspan="4" class="muted">No ticket types</td></tr>\`;
 }
 
 $('ttAdd').onclick = async ()=>{
@@ -215,7 +215,7 @@ $('ttAdd').onclick = async ()=>{
   const gender_required = $('ttGender').value === '1';
   if(!name){ $('ttErr').textContent='name required'; return; }
 
-  const r = await fetch(`/api/admin/events/${CURRENT_EVENT.id}/ticket-types`, {
+  const r = await fetch(\`/api/admin/events/\${CURRENT_EVENT.id}/ticket-types\`, {
     method:'POST', headers:{'content-type':'application/json'},
     body: JSON.stringify({ name, price_cents, gender_required })
   });
@@ -236,24 +236,24 @@ async function loadPOS(){
   if(to) q.set('to', to);
 
   try{
-    const r = await fetch('/api/admin/pos/sessions' + (q.toString()?`?${q}`:''));
+    const r = await fetch('/api/admin/pos/sessions' + (q.toString()? \`?\${q}\` : ''));
     const j = await r.json();
     if(!j.ok) throw new Error(j.error||'failed');
 
-    const rows = (j.sessions||[]).map(s=>`
+    const rows = (j.sessions||[]).map(s=>\`
       <tr>
-        <td>${s.id}</td>
-        <td>${esc(s.cashier_name||'')}</td>
-        <td>${esc(s.gate_name||'')}</td>
-        <td>${fmtDateTime(s.opened_at)}</td>
-        <td>${s.closed_at? fmtDateTime(s.closed_at) : '-'}</td>
-        <td>${rands(s.cash_cents||0)}</td>
-        <td>${rands(s.card_cents||0)}</td>
+        <td>\${s.id}</td>
+        <td>\${esc(s.cashier_name||'')}</td>
+        <td>\${esc(s.gate_name||'')}</td>
+        <td>\${fmtDateTime(s.opened_at)}</td>
+        <td>\${s.closed_at? fmtDateTime(s.closed_at) : '-'}</td>
+        <td>\${rands(s.cash_cents||0)}</td>
+        <td>\${rands(s.card_cents||0)}</td>
       </tr>
-    `).join('');
+    \`).join('');
     $('posBody').innerHTML = rows || '<tr><td colspan="7" class="muted">No sessions</td></tr>';
   }catch(e){
-    $('posBody').innerHTML = `<tr><td colspan="7" class="muted">Error: ${esc(e.message||'failed')}</td></tr>`;
+    $('posBody').innerHTML = \`<tr><td colspan="7" class="muted">Error: \${esc(e.message||'failed')}</td></tr>\`;
   }
 }
 $('posReload').onclick = loadPOS;
