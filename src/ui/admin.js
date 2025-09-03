@@ -3,349 +3,481 @@ export const adminHTML = () => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
 <style>
-  :root{--green:#0a7d2b;--muted:#667085;--bg:#f7f7f8}
-  *{box-sizing:border-box} body{font-family:system-ui;margin:0;background:#fff}
-  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
-  h1{margin:0 0 16px}
-  .tabs{display:flex;gap:8px;margin:8px 0 20px;flex-wrap:wrap}
-  .tab{padding:8px 14px;border:1px solid #e5e7eb;border-radius:999px;background:#f3f4f6;cursor:pointer}
-  .tab.active{background:#e7f7ec;border-color:#bfe5c8;color:#064d1a;font-weight:600}
-  .panel{display:none} .panel.active{display:block}
-  input,button,select,textarea{padding:10px;border:1px solid #d1d5db;border-radius:10px;margin:4px}
-  button.primary{background:var(--green);color:#fff;border-color:var(--green)}
-  table{width:100%;border-collapse:collapse;margin-top:8px}
-  th,td{padding:10px;border-bottom:1px solid #eee;vertical-align:top}
+  :root{
+    --green:#0a7d2b; --muted:#667085; --bg:#f6f7f8;
+    --line:#e5e7eb; --card:#fff; --bad:#b00020; --ok:#0a7d2b;
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;background:var(--bg);color:#111}
+  .wrap{max-width:1200px;margin:0 auto;padding:16px}
+  .nav{display:flex;gap:8px;flex-wrap:wrap;position:sticky;top:0;background:var(--bg);padding:8px 0;z-index:1}
+  .pill{border:1px solid var(--line);background:var(--card);padding:8px 12px;border-radius:999px;cursor:pointer}
+  .pill.active{background:var(--green);border-color:var(--green);color:#fff}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 24px rgba(0,0,0,.05);padding:14px;margin:10px 0}
+  h1{margin:6px 0 12px}
+  h2{margin:0 0 10px}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .muted{color:var(--muted)} .right{float:right}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  @media (max-width:800px){.grid2{grid-template-columns:1fr}}
+  input,select,textarea,button{padding:10px;border:1px solid var(--line);border-radius:12px}
+  textarea{width:100%}
+  button{cursor:pointer}
+  .primary{background:var(--green);border-color:var(--green);color:#fff}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+  .muted{color:var(--muted)}
+  .err{color:var(--bad)} .ok{color:var(--ok)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:900px){ .grid2{grid-template-columns:1fr} }
+  .hidden{display:none}
 </style>
 </head><body><div class="wrap">
-<h1>Admin</h1>
+  <h1>Admin</h1>
 
-<div class="tabs">
-  <div class="tab active" data-tab="site">Site Settings</div>
-  <div class="tab" data-tab="events">Events</div>
-  <div class="tab" data-tab="pos">POS Admin</div>
-  <div class="tab" data-tab="visitors">Visitors</div>
-  <div class="tab" data-tab="yoco">Yoco</div>
-  <div class="tab" data-tab="tickets">Tickets</div>
-  <div class="tab" data-tab="vendors">Vendors</div>
-  <div class="tab" data-tab="users">Users</div>
+  <!-- Tabs -->
+  <div class="nav" id="tabs">
+    <div class="pill active" data-tab="settings">Site settings</div>
+    <div class="pill" data-tab="events">Events</div>
+    <div class="pill" data-tab="pos">POS Admin</div>
+    <div class="pill" data-tab="users">Users</div>
+    <!-- Future:
+    <div class="pill" data-tab="vendors">Vendors</div>
+    <div class="pill" data-tab="visitors">Visitors</div>
+    -->
+  </div>
+
+  <!-- Site settings -->
+  <section id="settings" class="card">
+    <h2>Site settings</h2>
+    <div class="grid2">
+      <input id="st_title" placeholder="Site title (e.g. Villiersdorp Skou — Tickets)" />
+      <input id="st_logo" placeholder="Logo URL" />
+      <input id="st_favicon" placeholder="Favicon URL" />
+      <input id="st_banner" placeholder="Header banner URL" />
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="st_save">Save settings</button>
+      <span id="st_msg" class="muted"></span>
+    </div>
+  </section>
+
+  <!-- Events -->
+  <section id="events" class="card hidden">
+    <div class="row" style="justify-content:space-between">
+      <h2>Events</h2>
+      <button class="primary" id="ev_new_btn">Create event</button>
+    </div>
+
+    <!-- Create Event panel -->
+    <div id="ev_new" class="card hidden" style="background:#fafafa">
+      <h3>Create Event</h3>
+      <div class="grid2">
+        <input id="new_slug" placeholder="slug (e.g. skou-2025)"/>
+        <input id="new_name" placeholder="Event name"/>
+        <input id="new_venue" placeholder="Venue"/>
+        <label>Start date <input id="new_start" type="date"/></label>
+        <label>End date <input id="new_end" type="date"/></label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="new_create">Create</button>
+        <button id="new_cancel">Cancel</button>
+        <span id="new_msg" class="muted"></span>
+      </div>
+    </div>
+
+    <!-- Events table -->
+    <table id="ev_table"></table>
+
+    <!-- Edit Event panel -->
+    <div id="ev_edit" class="card hidden" style="background:#fafafa">
+      <h3>Edit Event</h3>
+      <input type="hidden" id="ed_id"/>
+      <div class="grid2">
+        <input id="ed_slug" placeholder="slug"/>
+        <input id="ed_name" placeholder="name"/>
+        <input id="ed_venue" placeholder="venue"/>
+        <label>Start date <input id="ed_start" type="date"/></label>
+        <label>End date <input id="ed_end" type="date"/></label>
+      </div>
+      <div class="grid2" style="margin-top:6px">
+        <input id="ed_hero" placeholder="Hero image URL (wide banner)"/>
+        <input id="ed_poster" placeholder="Poster image URL (card/cover)"/>
+      </div>
+      <label class="muted" style="display:block;margin-top:6px">Gallery URLs (max 8, one per line)
+        <textarea id="ed_gallery" rows="3" placeholder="https://.../img1.jpg
+https://.../img2.jpg"></textarea>
+      </label>
+
+      <!-- Ticket Types (within event edit) -->
+      <div class="card" style="margin-top:10px">
+        <h4>Ticket types</h4>
+        <div id="tt_list" class="muted">Loading…</div>
+        <div class="row" style="margin-top:8px">
+          <input id="tt_name" placeholder="name (e.g. Algemene Toegang)"/>
+          <input id="tt_price_r" type="number" step="0.01" placeholder="price (R) — leave blank for FREE"/>
+          <label class="row" style="gap:6px"><input id="tt_gender" type="checkbox"/> requires gender</label>
+          <button id="tt_add">Add</button>
+          <span id="tt_msg" class="muted"></span>
+        </div>
+      </div>
+
+      <!-- Gates quick list (global) -->
+      <div class="card" style="margin-top:10px">
+        <h4>Gates</h4>
+        <div class="row">
+          <input id="gate_new" placeholder="New gate name"/>
+          <button id="gate_add">Add gate</button>
+        </div>
+        <ul id="gate_list" class="muted" style="margin-top:6px"></ul>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="ed_save">Save changes</button>
+        <button id="ed_cancel">Close</button>
+        <button id="ed_delete" style="margin-left:auto;color:#b00020;border-color:#ffd2d2;background:#ffecec">Delete event</button>
+        <span id="ed_msg" class="muted"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- POS Admin -->
+  <section id="pos" class="card hidden">
+    <h2>POS Admin</h2>
+    <div class="row">
+      <label>From <input type="date" id="pos_from"/></label>
+      <label>To <input type="date" id="pos_to"/></label>
+      <button id="pos_refresh">Refresh</button>
+      <span id="pos_msg" class="muted"></span>
+    </div>
+
+    <div class="card" style="margin-top:10px">
+      <h4>Totals</h4>
+      <div id="pos_totals" class="muted">Loading…</div>
+    </div>
+
+    <div class="card" style="margin-top:10px">
+      <h4>Cashier Sessions</h4>
+      <table id="pos_sessions"></table>
+    </div>
+  </section>
+
+  <!-- Users -->
+  <section id="users" class="card hidden">
+    <h2>Users</h2>
+    <div class="row">
+      <input id="nu_username" placeholder="username">
+      <input id="nu_name" placeholder="display name">
+      <select id="nu_role">
+        <option value="admin">admin</option>
+        <option value="pos">pos</option>
+        <option value="scan">scan</option>
+      </select>
+      <input id="nu_password" placeholder="password" type="password">
+      <button id="nu_create">Create</button>
+      <span id="u_msg" class="muted"></span>
+    </div>
+    <table id="u_table" style="margin-top:10px"></table>
+  </section>
+
 </div>
 
-<!-- SITE SETTINGS -->
-<section id="site" class="panel active">
-  <h2>Site Settings</h2>
-  <div class="row">
-    <input id="site_name" placeholder="Site name"/>
-    <input id="logo_url" placeholder="Logo URL"/>
-  </div>
-  <div class="row">
-    <input id="banner_url" placeholder="Banner URL"/>
-    <button class="primary" onclick="saveSettings()">Save</button>
-    <span id="sitestatus" class="muted"></span>
-  </div>
-</section>
-
-<!-- EVENTS -->
-<section id="events" class="panel">
-  <h2 class="row">Events <small class="muted">Create & edit</small></h2>
-
-  <details style="margin:6px 0;">
-    <summary><strong>Create Event</strong></summary>
-    <div class="row">
-      <input id="slug" placeholder="slug (e.g. skou-2025)"/>
-      <input id="name" placeholder="Event name"/>
-      <input id="venue" placeholder="Venue"/>
-      <label>Start <input id="startDate" type="date"/></label>
-      <label>End <input id="endDate" type="date"/></label>
-      <button onclick="createEvt()">Create</button>
-    </div>
-    <pre id="evmsg" class="muted"></pre>
-  </details>
-
-  <div id="editPanel" class="panel" style="display:none;padding:12px;border:1px solid #eee;border-radius:12px;background:#fafafa">
-    <h3>Edit Event</h3>
-    <input id="ed_id" type="hidden"/>
-    <div class="grid2">
-      <input id="ed_slug" placeholder="slug"/>
-      <input id="ed_name" placeholder="name"/>
-      <input id="ed_venue" placeholder="venue"/>
-      <label>Start <input id="ed_start" type="date"/></label>
-      <label>End <input id="ed_end" type="date"/></label>
-    </div>
-    <div class="grid2">
-      <input id="ed_hero" placeholder="Hero image URL"/>
-      <input id="ed_poster" placeholder="Poster image URL"/>
-    </div>
-    <label class="muted">Gallery URLs (max 8, one per line)
-      <textarea id="ed_gallery" rows="4" placeholder="https://.../img1.jpg\nhttps://.../img2.jpg"></textarea>
-    </label>
-    <div class="row">
-      <button class="primary" onclick="saveEdit()">Save</button>
-      <button onclick="cancelEdit()">Cancel</button>
-      <span id="edmsg" class="muted"></span>
-    </div>
-
-<section id="users" class="panel">
-  <h2>Users</h2>
-  <div class="row">
-    <input id="nu_username" placeholder="username">
-    <input id="nu_name" placeholder="display name">
-    <select id="nu_role">
-      <option value="admin">admin</option>
-      <option value="pos">pos</option>
-      <option value="scan">scan</option>
-    </select>
-    <input id="nu_password" placeholder="password" type="password">
-    <button onclick="createUser()">Create</button>
-    <span id="u_msg" class="muted"></span>
-  </div>
-  <table id="u_table"></table>
-</section>
-
-    <hr/>
-    <h4>Gates</h4>
-    <div class="row">
-      <input id="gatename" placeholder="New gate name"/>
-      <button onclick="addGate()">Add gate</button>
-    </div>
-    <ul id="gates" class="muted"></ul>
-
-    <h4>Add Ticket Type</h4>
-    <div class="row">
-      <input id="ttName" placeholder="name (e.g. Vrydag – Laerskool)"/>
-      <input id="ttPriceRand" type="number" step="0.01" placeholder="price (R) — blank = FREE"/>
-      <label>Gender? <input id="ttGen" type="checkbox"/></label>
-      <button onclick="addTT()">Add</button>
-      <span id="ttmsg" class="muted"></span>
-    </div>
-  </div>
-
-  <table id="evtable"></table>
-</section>
-
-<!-- POS ADMIN -->
-<section id="pos" class="panel">
-  <h2>POS Admin</h2>
-  <div class="row">
-    <label>From <input id="posFrom" type="date"/></label>
-    <label>To <input id="posTo" type="date"/></label>
-    <button onclick="loadPOS()">Reload</button>
-  </div>
-  <div id="posTotals" class="muted"></div>
-  <table id="posShifts"></table>
-</section>
-
-<!-- PLACEHOLDERS -->
-<section id="visitors" class="panel"><h2>Visitors</h2><p class="muted">Live in/out dashboard (coming soon).</p></section>
-<section id="yoco" class="panel"><h2>Yoco</h2><p class="muted">Hosted payments + settlement logs (coming soon).</p></section>
-<section id="tickets" class="panel"><h2>Tickets</h2><p class="muted">Search tickets, resend, revoke (coming soon).</p></section>
-<section id="vendors" class="panel"><h2>Vendors</h2><p class="muted">Vendor onboarding and passes (phase 1 next).</p></section>
-
 <script>
-let _events = [];
-
-function pick(id){return document.getElementById(id)}
-function msg(id, o){ pick(id).textContent = (typeof o==='string')?o:JSON.stringify(o,null,2) }
-
-function parseDateToMs(v, end=false){
-  if(!v) return NaN;
-  const [y,m,d] = v.split('-').map(n=>+n);
-  const dt = end? new Date(y,m-1,d,23,59,0) : new Date(y,m-1,d,0,0,0);
+/* Helpers */
+function byId(id){ return document.getElementById(id); }
+function show(id, on){ byId(id).classList.toggle('hidden', !on); }
+function msg(id, t, ok){ var el=byId(id); el.textContent=t||''; el.className = ok?'ok':'muted'; }
+function rands(c){ return 'R'+((c||0)/100).toFixed(2); }
+function parseLocalDateToMs(dateStr, endOfDay){
+  if (!dateStr) return NaN;
+  var parts = dateStr.split('-'); if (parts.length<3) return NaN;
+  var y=+parts[0], m=+parts[1]-1, d=+parts[2];
+  var dt = endOfDay ? new Date(y,m,d,23,59,0,0) : new Date(y,m,d,0,0,0,0);
   return dt.getTime();
 }
-function msToDate(ms){
-  const d = new Date(ms); const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), da=String(d.getDate()).padStart(2,'0');
-  return \`\${y}-\${m}-\${da}\`;
+function msToInput(ms){
+  var d=new Date(ms); var y=d.getFullYear(); var m=String(d.getMonth()+1).padStart(2,'0'); var da=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+da;
 }
+async function jget(u){ return fetch(u).then(function(r){return r.json()}); }
+async function jpost(u,b){ return fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json()}); }
+async function jput(u,b){ return fetch(u,{method:'PUT', headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json()}); }
+async function jdel(u){ return fetch(u,{method:'DELETE'}).then(function(r){return r.json()}); }
 
-async function getJSON(u){ return fetch(u).then(r=>r.json()) }
-async function post(u,b){ return fetch(u,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()) }
-async function put(u,b){ return fetch(u,{method:'PUT', headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json()) }
-async function del(u){ return fetch(u,{method:'DELETE'}).then(r=>r.json()) }
+/* Tabs */
+(function tabsInit(){
+  var tabs = document.querySelectorAll('#tabs .pill');
+  tabs.forEach(function(t){
+    t.onclick = function(){
+      tabs.forEach(function(x){ x.classList.remove('active'); });
+      t.classList.add('active');
+      var name = t.getAttribute('data-tab');
+      ['settings','events','pos','users'].forEach(function(k){ show(k, k===name); });
+    };
+  });
+})();
 
+/* Site settings */
 async function loadSettings(){
-  const res = await getJSON('/api/admin/settings');
-  if(res.ok){
-    pick('site_name').value = res.settings.site_name||'';
-    pick('logo_url').value = res.settings.logo_url||'';
-    pick('banner_url').value = res.settings.banner_url||'';
-  } else msg('sitestatus','Could not load settings');
+  var r = await jget('/api/admin/settings').catch(function(){return {ok:false}});
+  if(!r.ok){ msg('st_msg','Could not load settings'); return; }
+  byId('st_title').value = r.settings?.site_title || '';
+  byId('st_logo').value = r.settings?.logo_url || '';
+  byId('st_favicon').value = r.settings?.favicon_url || '';
+  byId('st_banner').value = r.settings?.banner_url || '';
 }
 async function saveSettings(){
-  const res = await post('/api/admin/settings',{
-    site_name: pick('site_name').value,
-    logo_url: pick('logo_url').value,
-    banner_url: pick('banner_url').value
-  });
-  msg('sitestatus', res.ok ? 'Saved' : 'Failed to save');
+  var b = {
+    site_title: byId('st_title').value.trim(),
+    logo_url: byId('st_logo').value.trim(),
+    favicon_url: byId('st_favicon').value.trim(),
+    banner_url: byId('st_banner').value.trim()
+  };
+  var r = await jpost('/api/admin/settings', b).catch(function(){return {ok:false}});
+  if(r.ok) msg('st_msg','Saved',true); else msg('st_msg', r.error||'Failed');
 }
+byId('st_save').onclick = saveSettings;
 
-async function loadEvents(){
-  const res = await getJSON('/api/admin/events');
-  if(!res.ok) return;
-  _events = res.events||[];
-  renderEvents();
-  // also preload gates list
-  const gs = await getJSON('/api/admin/gates');
-  pick('gates').innerHTML = (gs.gates||[]).map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join('');
-}
+/* Events */
+var _events = [];
 function renderEvents(){
-  const rows = _events.map(e=>\`
-    <tr>
-      <td>\${e.id}</td>
-      <td>\${e.slug}</td>
-      <td>\${e.name}<div class="muted">\${e.venue||''}</div></td>
-      <td>\${new Date(e.starts_at*1000).toLocaleDateString()}</td>
-      <td>\${new Date(e.ends_at*1000).toLocaleDateString()}</td>
-      <td><button onclick="editEvent(\${e.id})">Edit</button>
-          <button onclick="deleteEvent(\${e.id})">Delete</button></td>
-    </tr>\`).join('');
-  pick('evtable').innerHTML = '<tr><th>ID</th><th>Slug</th><th>Name</th><th>Starts</th><th>Ends</th><th></th></tr>'+rows;
+  var rows = _events.map(function(e){
+    return '<tr>'
+      + '<td>'+e.id+'</td>'
+      + '<td>'+e.slug+'</td>'
+      + '<td>'+e.name+'<div class="muted">'+(e.venue||'')+'</div></td>'
+      + '<td>'+ new Date((e.starts_at||0)*1000).toLocaleDateString() +'</td>'
+      + '<td>'+ new Date((e.ends_at||0)*1000).toLocaleDateString() +'</td>'
+      + '<td>'
+        + '<button onclick="editEvent('+e.id+')">Edit</button> '
+        + '<button onclick="deleteEvent('+e.id+')">Delete</button>'
+      + '</td>'
+    + '</tr>';
+  }).join('');
+  byId('ev_table').innerHTML =
+    '<tr><th>ID</th><th>Slug</th><th>Name</th><th>Start</th><th>End</th><th></th></tr>' + (rows||'');
+}
+async function loadEvents(){
+  var r = await jget('/api/admin/events').catch(function(){return {ok:false,events:[]}});
+  _events = r.events||[];
+  renderEvents();
 }
 
-async function createEvt(){
-  const b = {
-    slug: pick('slug').value,
-    name: pick('name').value,
-    venue: pick('venue').value,
-    starts_at: Math.floor(parseDateToMs(pick('startDate').value,false)/1000),
-    ends_at: Math.floor(parseDateToMs(pick('endDate').value,true)/1000),
+/* Create Event panel */
+byId('ev_new_btn').onclick = function(){ show('ev_new', true); };
+byId('new_cancel').onclick = function(){ show('ev_new', false); byId('new_msg').textContent=''; };
+byId('new_create').onclick = async function(){
+  var start = parseLocalDateToMs(byId('new_start').value,false);
+  var end   = parseLocalDateToMs(byId('new_end').value,true);
+  if(!isFinite(start)||!isFinite(end)||end<start){ msg('new_msg','Select valid date range'); return; }
+  var b = {
+    slug: byId('new_slug').value.trim(),
+    name: byId('new_name').value.trim(),
+    venue: byId('new_venue').value.trim(),
+    starts_at: Math.floor(start/1000),
+    ends_at: Math.floor(end/1000),
     status: 'active'
   };
-  const r = await post('/api/admin/events', b); msg('evmsg', r);
-  if(r.ok){ await loadEvents(); ['slug','name','venue','startDate','endDate'].forEach(i=>pick(i).value=''); }
-}
+  var r = await jpost('/api/admin/events', b).catch(function(){return {ok:false}});
+  if(r.ok){ msg('new_msg','Created',true); show('ev_new', false); await loadEvents(); }
+  else msg('new_msg', r.error||'Failed');
+};
 
-async function editEvent(id){
-  const res = await getJSON('/api/admin/events/'+id);
-  if(!res.ok) return alert('Not found');
-  const e = res.event;
-  pick('ed_id').value=e.id; pick('ed_slug').value=e.slug||''; pick('ed_name').value=e.name||'';
-  pick('ed_venue').value=e.venue||''; pick('ed_start').value=msToDate(e.starts_at*1000); pick('ed_end').value=msToDate(e.ends_at*1000);
-  pick('ed_hero').value=e.hero_url||''; pick('ed_poster').value=e.poster_url||'';
-  const g = e.gallery_urls ? (Array.isArray(e.gallery_urls)?e.gallery_urls:JSON.parse(e.gallery_urls||'[]')) : [];
-  pick('ed_gallery').value=(g||[]).slice(0,8).join('\\n');
-  pick('editPanel').style.display='block';
+/* Edit Event panel */
+async function populateGates(){
+  var g = await jget('/api/admin/gates').catch(function(){return {gates:[]}});
+  var list = (g.gates||[]).map(function(x){ return '<li>'+x.name+'</li>'; }).join('');
+  byId('gate_list').innerHTML = list || '<li class="muted">No gates yet</li>';
 }
-function cancelEdit(){ pick('editPanel').style.display='none'; pick('edmsg').textContent=''; }
+async function loadTT(eventId){
+  // reuse public catalog for current event ticket types
+  var slug = (_events.find(function(e){return e.id===eventId})||{}).slug;
+  var listEl = byId('tt_list');
+  if(!slug){ listEl.textContent='—'; return; }
+  var r = await jget('/api/public/events/'+encodeURIComponent(slug)).catch(function(){return {ok:false}});
+  if(!r.ok){ listEl.textContent='Could not load ticket types'; return; }
+  var rows = (r.ticket_types||[]).map(function(tt){
+    var price = (tt.price_cents ? ' — '+ (tt.price_cents/100).toFixed(2) : ' — FREE');
+    var gen = (tt.requires_gender ? ' · gender' : '');
+    return '<div>'+tt.name+ price + gen +'</div>';
+  }).join('');
+  listEl.innerHTML = rows || '<div class="muted">None</div>';
+}
+window.editEvent = async function(id){
+  var r = await jget('/api/admin/events/'+id).catch(function(){return {ok:false}});
+  if(!r.ok){ alert('Event not found'); return; }
+  var e = r.event;
+  byId('ed_id').value = e.id;
+  byId('ed_slug').value = e.slug||'';
+  byId('ed_name').value = e.name||'';
+  byId('ed_venue').value = e.venue||'';
+  byId('ed_start').value = msToInput((e.starts_at||0)*1000);
+  byId('ed_end').value   = msToInput((e.ends_at||0)*1000);
+  byId('ed_hero').value  = e.hero_url||'';
+  byId('ed_poster').value= e.poster_url||'';
+  var gallery = [];
+  try { gallery = e.gallery_urls ? JSON.parse(e.gallery_urls) : []; } catch(_){}
+  byId('ed_gallery').value = (gallery||[]).slice(0,8).join('\\n');
+  show('ev_edit', true);
+  byId('ed_msg').textContent = '';
+  await populateGates();
+  await loadTT(e.id);
+};
+byId('ed_cancel').onclick = function(){ show('ev_edit', false); };
+byId('ed_save').onclick = async function(){
+  var id = +byId('ed_id').value;
+  if(!id) return;
+  var start = parseLocalDateToMs(byId('ed_start').value,false);
+  var end   = parseLocalDateToMs(byId('ed_end').value,true);
+  if(!isFinite(start)||!isFinite(end)||end<start){ msg('ed_msg','Invalid date range'); return; }
+  var gallery = byId('ed_gallery').value.split('\\n').map(function(s){return s.trim();}).filter(Boolean).slice(0,8);
+  var b = {
+    slug: byId('ed_slug').value.trim(),
+    name: byId('ed_name').value.trim(),
+    venue: byId('ed_venue').value.trim(),
+    starts_at: Math.floor(start/1000),
+    ends_at: Math.floor(end/1000),
+    hero_url: byId('ed_hero').value.trim(),
+    poster_url: byId('ed_poster').value.trim(),
+    gallery_urls: gallery
+  };
+  var r = await jput('/api/admin/events/'+id, b).catch(function(){return {ok:false}});
+  if(r.ok){ msg('ed_msg','Saved',true); await loadEvents(); await loadTT(id); }
+  else msg('ed_msg', r.error||'Failed');
+};
+byId('ed_delete').onclick = async function(){
+  var id = +byId('ed_id').value; if(!id) return;
+  if(!confirm('Delete this event?')) return;
+  var r = await jdel('/api/admin/events/'+id).catch(function(){return {ok:false}});
+  if(r.ok){ show('ev_edit', false); await loadEvents(); }
+  else alert(r.error||'Failed');
+};
 
+/* Ticket type add (Rands; blank => FREE) */
+byId('tt_add').onclick = async function(){
+  var id = +byId('ed_id').value; if(!id){ byId('tt_msg').textContent='Open an event first'; return; }
+  var name = byId('tt_name').value.trim();
+  var rands = byId('tt_price_r').value.trim();
+  var requires_gender = byId('tt_gender').checked ? 1 : 0;
+  if(!name){ byId('tt_msg').textContent='Name required'; return; }
+  var price_cents = 0;
+  if(rands){ var n = Math.round(parseFloat(rands)*100); if(isFinite(n)&&n>0) price_cents = n; }
+  var b = { name:name, price_cents:price_cents, requires_gender:requires_gender };
+  var res = await jpost('/api/admin/events/'+id+'/ticket-types', b).catch(function(){return {ok:false}});
+  byId('tt_msg').textContent = res.ok ? 'Added' : (res.error||'Failed');
+  if(res.ok){ byId('tt_name').value=''; byId('tt_price_r').value=''; byId('tt_gender').checked=false; await loadTT(id); }
+};
+
+/* Gates (global quick add) */
+byId('gate_add').onclick = async function(){
+  var nm = byId('gate_new').value.trim(); if(!nm) return;
+  var r = await jpost('/api/admin/gates', {name:nm}).catch(function(){return {ok:false}});
+  if(r.ok){ byId('gate_new').value=''; populateGates(); }
+};
+
+/* Delete event (table button) */
+window.deleteEvent = async function(id){
+  if(!confirm('Delete this event?')) return;
+  var r = await jdel('/api/admin/events/'+id).catch(function(){return {ok:false}});
+  if(r.ok) loadEvents();
+};
+
+/* POS Admin */
+function setDefaultPosRange(){
+  // default to this week
+  var d = new Date();
+  var day = d.getDay(); // 0..6
+  var monday = new Date(d); monday.setDate(d.getDate() - ((day+6)%7));
+  var sunday = new Date(monday); sunday.setDate(monday.getDate()+6);
+  byId('pos_from').value = msToInput(monday.getTime());
+  byId('pos_to').value   = msToInput(sunday.getTime());
+}
+async function loadPOS(){
+  if(!byId('pos_from').value) setDefaultPosRange();
+  await refreshPOS();
+}
+async function refreshPOS(){
+  var f = byId('pos_from').value, t = byId('pos_to').value;
+  var q = '?from='+encodeURIComponent(f)+'&to='+encodeURIComponent(t);
+  var r = await jget('/api/admin/pos/summary'+q).catch(function(){return {ok:false}});
+  if(!r.ok){ msg('pos_msg','Could not load'); return; }
+  var tot = r.totals||{};
+  byId('pos_totals').innerHTML =
+    '<div><strong>Orders:</strong> '+(tot.orders||0)+'</div>'
+    + '<div><strong>Tickets:</strong> '+(tot.tickets||0)+'</div>'
+    + '<div><strong>Cash:</strong> '+ (tot.cash_cents!=null ? rands(tot.cash_cents) : 'R0.00') +'</div>'
+    + '<div><strong>Card:</strong> '+ (tot.card_cents!=null ? rands(tot.card_cents) : 'R0.00') +'</div>'
+    + '<div><strong>Total:</strong> '+ (tot.total_cents!=null ? rands(tot.total_cents) : 'R0.00') +'</div>';
+
+  var sess = (r.sessions||[]).map(function(s){
+    return '<tr>'
+      + '<td>'+s.id+'</td>'
+      + '<td>'+ (s.cashier_name||'') +'</td>'
+      + '<td>'+ (s.gate_name||'') +'</td>'
+      + '<td>'+ new Date((s.opened_at||0)*1000).toLocaleString() +'</td>'
+      + '<td>'+ (s.closed_at ? new Date(s.closed_at*1000).toLocaleString() : '<span class="muted">open</span>') +'</td>'
+      + '<td>'+ rands(s.opening_float_cents||0) +'</td>'
+      + '<td>'+ rands(s.cash_total_cents||0) +'</td>'
+      + '<td>'+ rands(s.card_total_cents||0) +'</td>'
+      + '<td>'+ rands((s.cash_total_cents||0)+(s.card_total_cents||0)) +'</td>'
+    + '</tr>';
+  }).join('');
+  byId('pos_sessions').innerHTML =
+    '<tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Float</th><th>Cash</th><th>Card</th><th>Total</th></tr>' + (sess||'');
+}
+byId('pos_refresh').onclick = refreshPOS;
+
+/* Users */
 async function loadUsers(){
-  const r = await fetch('/api/admin/users').then(r=>r.json()).catch(()=>({ok:false}));
-  if(!r.ok){ document.getElementById('u_table').innerHTML = '<tr><td>Failed to load users</td></tr>'; return; }
-  const rows = (r.users||[]).map(u=>`
-    <tr>
-      <td>${u.id}</td>
-      <td>${u.username}</td>
-      <td>${u.display_name||''}</td>
-      <td>${u.role}</td>
-      <td>${u.is_active? 'active':'inactive'}</td>
-      <td>
-        <button onclick="resetPw(${u.id})">Reset PW</button>
-        <button onclick="toggleUser(${u.id}, ${u.is_active?0:1})">${u.is_active?'Deactivate':'Activate'}</button>
-      </td>
-    </tr>`).join('');
-  document.getElementById('u_table').innerHTML =
-    '<tr><th>ID</th><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>'+rows;
+  var r = await jget('/api/admin/users').catch(function(){return {ok:false}});
+  if(!r.ok){
+    byId('u_table').innerHTML = '<tr><td>Failed to load users</td></tr>';
+    return;
+  }
+  var rows = (r.users||[]).map(function(u){
+    return '<tr>'
+      + '<td>'+u.id+'</td>'
+      + '<td>'+u.username+'</td>'
+      + '<td>'+(u.display_name||'')+'</td>'
+      + '<td>'+u.role+'</td>'
+      + '<td>'+(u.is_active? 'active':'inactive')+'</td>'
+      + '<td>'
+        + '<button onclick="resetPw('+u.id+')">Reset PW</button> '
+        + '<button onclick="toggleUser('+u.id+','+(u.is_active?0:1)+')">'+(u.is_active?'Deactivate':'Activate')+'</button>'
+      + '</td>'
+    + '</tr>';
+  }).join('');
+  byId('u_table').innerHTML =
+    '<tr><th>ID</th><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>' + rows;
 }
 async function createUser(){
-  const b = {
-    username: document.getElementById('nu_username').value.trim(),
-    display_name: document.getElementById('nu_name').value.trim(),
-    role: document.getElementById('nu_role').value,
-    password: document.getElementById('nu_password').value
+  var b = {
+    username: byId('nu_username').value.trim(),
+    display_name: byId('nu_name').value.trim(),
+    role: byId('nu_role').value,
+    password: byId('nu_password').value
   };
-  const r = await fetch('/api/admin/users',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
-  document.getElementById('u_msg').textContent = r.ok? 'Created' : (r.error||'Failed');
-  if(r.ok){ ['nu_username','nu_name','nu_password'].forEach(id=>document.getElementById(id).value=''); loadUsers(); }
+  var r = await jpost('/api/admin/users', b).catch(function(){return {ok:false}});
+  byId('u_msg').textContent = r.ok? 'Created' : (r.error||'Failed');
+  if(r.ok){
+    ['nu_username','nu_name','nu_password'].forEach(function(id){ byId(id).value=''; });
+    loadUsers();
+  }
 }
 async function resetPw(id){
-  const p = prompt('New password for user #'+id+':'); if(!p) return;
-  await fetch('/api/admin/users/'+id,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({password:p})});
+  var p = prompt('New password for user #'+id+':'); if(!p) return;
+  await jput('/api/admin/users/'+id, {password:p});
   loadUsers();
 }
 async function toggleUser(id, active){
-  await fetch('/api/admin/users/'+id,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({is_active: active})});
+  await jput('/api/admin/users/'+id, {is_active: active});
   loadUsers();
 }
+byId('nu_create').onclick = createUser;
 
-async function saveEdit(){
-  const id = Number(pick('ed_id').value||0); if(!id) return;
-  const b = {
-    slug: pick('ed_slug').value, name: pick('ed_name').value, venue: pick('ed_venue').value,
-    starts_at: Math.floor(parseDateToMs(pick('ed_start').value,false)/1000),
-    ends_at: Math.floor(parseDateToMs(pick('ed_end').value,true)/1000),
-    hero_url: pick('ed_hero').value, poster_url: pick('ed_poster').value,
-    gallery_urls: pick('ed_gallery').value.split(/\\n+/).map(s=>s.trim()).filter(Boolean)
-  };
-  const r = await put('/api/admin/events/'+id, b);
-  pick('edmsg').textContent = r.ok ? 'Saved' : 'Failed to save';
-  if(r.ok){ await loadEvents(); }
-}
-async function deleteEvent(id){
-  if(!confirm('Delete event?')) return;
-  const r = await del('/api/admin/events/'+id);
-  if(r.ok){ await loadEvents(); cancelEdit(); }
-}
-
-async function addGate(){
-  const name = pick('gatename').value.trim(); if(!name) return;
-  const r = await post('/api/admin/gates',{name}); if(r.ok){ pick('gatename').value=''; const gs=await getJSON('/api/admin/gates'); pick('gates').innerHTML=(gs.gates||[]).map(g=>\`<li>\${g.id}. \${g.name}</li>\`).join(''); }
-}
-
-async function addTT(){
-  const id = Number(pick('ed_id').value||0); if(!id) return alert('Open an event to edit first');
-  const name = pick('ttName').value.trim(); const price = pick('ttPriceRand').value; const gender = document.getElementById('ttGen').checked;
-  const b = { name, price_rands: price===''? '': Number(price), requires_gender: gender };
-  const r = await post('/api/admin/events/'+id+'/ticket-types', b);
-  msg('ttmsg', r.ok? 'Added' : 'Failed'); if(r.ok){ pick('ttName').value=''; pick('ttPriceRand').value=''; document.getElementById('ttGen').checked=false; }
-}
-
-function dateToUnix(d){ return Math.floor(new Date(d).getTime()/1000) }
-async function loadPOS(){
-  const from = pick('posFrom').value? dateToUnix(pick('posFrom').value): 0;
-  const to = pick('posTo').value? dateToUnix(pick('posTo').value) + 86399 : 4102444800;
-  const r = await getJSON(\`/api/admin/pos/cashups?from=\${from}&to=\${to}\`);
-  if(!r.ok){ pick('posTotals').textContent = 'Failed to load'; return; }
-  const t = r.totals||{};
-  pick('posTotals').innerHTML = \`
-    <div><strong>Totaal (POS):</strong> R\${((t.grand_cents||0)/100).toFixed(2)}
-      · Kontant: R\${((t.cash_cents||0)/100).toFixed(2)}
-      · Kaart: R\${((t.card_cents||0)/100).toFixed(2)}
-      · Orders: \${t.orders_count||0}
-    </div>\`;
-
-  const rows = (r.shifts||[]).map(s=>\`
-    <tr>
-      <td>\${s.id}</td>
-      <td>\${s.cashier_name}</td>
-      <td>\${s.gate_name}</td>
-      <td>\${new Date((s.opened_at||0)*1000).toLocaleString()}</td>
-      <td>\${s.closed_at? new Date(s.closed_at*1000).toLocaleString() : '<span class="muted">open</span>'}</td>
-      <td>R\${((s.opening_float_cents||0)/100).toFixed(2)}</td>
-      <td class="muted">\${s.notes||''}</td>
-    </tr>\`).join('');
-  pick('posShifts').innerHTML = '<tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Float</th><th>Notes</th></tr>'+rows;
-}
-
-// Tabs
-document.querySelectorAll('.tab').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tab).classList.add('active');
-  });
-});
-
+/* Init */
 (async function init(){
   await loadSettings();
   await loadEvents();
-  loadPOS();
-  loadUsers(); // NEW
+  await loadPOS();
+  await loadUsers();
 })();
 </script>
-
-</div></body></html>`;
+</body></html>`;
