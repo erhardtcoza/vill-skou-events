@@ -1,0 +1,287 @@
+// /src/ui/pos_sell.js
+export const posSellHTML = `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>POS · Sell</title>
+<style>
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --red:#b42318; }
+  *{ box-sizing:border-box }
+  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  .wrap{ max-width:1100px; margin:20px auto; padding:0 16px }
+  .bar{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px }
+  .chip{ background:#fff; border:1px solid #e5e7eb; padding:8px 10px; border-radius:10px }
+  .muted{ color:var(--muted) }
+  .error{ color:var(--red); font-weight:600 }
+  .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:16px }
+  @media (max-width:950px){ .grid{ grid-template-columns:1fr } }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
+  .tickets{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px }
+  .btn{ padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .btn.warn{ background:#fff1f0; border-color:#ffd3cf; color:#b42318 }
+  .btn.big{ padding:14px 16px; font-size:16px }
+  .qty{ display:flex; align-items:center; gap:8px; margin-top:8px }
+  .qty .q{ min-width:24px; text-align:center; font-weight:700 }
+  .total{ font-size:32px; font-weight:800; text-align:right }
+  input, .inp{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
+  .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  .right{ text-align:right }
+  .hdr{ font-size:18px; font-weight:700; margin:0 0 8px }
+  a{ color:#0a7d2b; text-decoration:none } a:hover{ text-decoration:underline }
+  .sp{ flex:1 }
+  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
+</style>
+</head><body>
+<div class="wrap">
+  <div class="bar">
+    <div class="chip"><b>POS</b></div>
+    <div id="sessChip" class="chip muted">Loading session…</div>
+    <div class="sp"></div>
+    <a href="/pos" class="pill">Back to start</a>
+  </div>
+
+  <div id="err" class="error"></div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <div class="hdr" style="margin:0">Tickets</div>
+        <div class="sp"></div>
+        <div class="row">
+          <input id="recallCode" class="inp" placeholder="Recall code (online order)" style="width:200px"/>
+          <button id="recallBtn" class="btn">Recall</button>
+        </div>
+      </div>
+      <div id="tickets" class="tickets">Loading…</div>
+    </div>
+
+    <div class="card">
+      <div class="hdr">Sale</div>
+
+      <div class="row" style="margin-bottom:8px">
+        <input id="custName" class="inp" placeholder="Customer name" style="flex:1; min-width:180px"/>
+        <input id="custPhone" class="inp" placeholder="Mobile (2771…)" style="flex:1; min-width:180px"/>
+      </div>
+
+      <div id="cartList" style="min-height:80px; border-top:1px dashed #eee; padding-top:8px; margin-top:6px" class="muted">
+        No items yet. Tap a ticket.
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <div class="sp"></div>
+        <div class="total" id="grand">R0.00</div>
+      </div>
+
+      <div class="row" style="margin-top:12px; justify-content:flex-end">
+        <button id="cashBtn" class="btn big">Take cash</button>
+        <button id="cardBtn" class="btn big primary">Card</button>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <button id="closeBtn" class="btn warn">Cash-out / Close session</button>
+        <span class="muted" id="statusNote"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- small helpers ---------- */
+const $ = (id)=>document.getElementById(id);
+const rands = (c)=> 'R' + ((c||0)/100).toFixed(2);
+function safeJSON(s){ try{return JSON.parse(s)}catch{return null} }
+function qs(name){ const u=new URL(location.href); return u.searchParams.get(name); }
+function toast(msg){ $('err').textContent = msg || ''; }
+
+const state = {
+  session_id: Number(qs('session_id')||0),
+  event_id: Number(qs('event_id')||0),
+  event: null,
+  ttypes: new Map(),          // id -> ticket type
+  cart: new Map(),            // id -> qty
+};
+
+/* ---------- bootstrap: find event, load ticket types ---------- */
+async function bootstrap(){
+  if (!state.session_id){ toast('Missing session_id'); return; }
+
+  // Try remember from start page (we set this there now)
+  if (!state.event_id){
+    const last = safeJSON(sessionStorage.getItem('last_pos_session'));
+    if (last && last.session_id == state.session_id) state.event_id = Number(last.event_id||0);
+  }
+
+  // Load events list so we can look up slug & details
+  const boot = await fetch('/api/pos/bootstrap').then(r=>r.json()).catch(()=>({ok:false}));
+  if (!boot.ok){ toast('Failed to load bootstrap'); return; }
+
+  const evRow = boot.events.find(e=> e.id==state.event_id) || boot.events[0];
+  if (!evRow){ toast('No events available'); return; }
+  state.event_id = evRow.id;
+
+  // Show session chip
+  $('sessChip').innerHTML = 'Session <b>#'+state.session_id+'</b> · '+(evRow.name||'');
+
+  // Load public event by slug to get ticket types (no admin required)
+  const pub = await fetch('/api/public/events/'+encodeURIComponent(evRow.slug)).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!pub.ok){ toast('Failed to load event ticket types'); return; }
+
+  state.event = pub.event || {};
+  const tts = pub.ticket_types || [];
+  state.ttypes = new Map(tts.map(t=>[t.id, t]));
+  renderTickets(tts);
+
+  // Prefill status note
+  const now = Math.floor(Date.now()/1000);
+  if ((state.event.ends_at||0) < now || (state.event.status !== 'active')){
+    $('statusNote').textContent = 'Event closed — selling disabled.';
+  }
+}
+
+/* ---------- render tickets as quick buttons ---------- */
+function renderTickets(types){
+  const el = $('tickets');
+  if (!types.length){ el.innerHTML = '<div class="muted">No ticket types.</div>'; return; }
+
+  el.innerHTML = types.map(t => {
+    const price = (t.price_cents||0) ? rands(t.price_cents) : 'FREE';
+    return \`
+      <div class="card" style="padding:12px">
+        <div style="font-weight:700">\${escapeHtml(t.name)}</div>
+        <div class="muted">\${price}</div>
+        <div class="qty">
+          <button class="btn" data-dec="\${t.id}">−</button>
+          <span class="q" id="q\${t.id}">0</span>
+          <button class="btn" data-inc="\${t.id}">+</button>
+        </div>
+      </div>\`;
+  }).join('');
+
+  // Wire plus/minus
+  el.querySelectorAll('[data-inc]').forEach(b=>{
+    b.onclick = ()=> changeQty(Number(b.dataset.inc), +1);
+  });
+  el.querySelectorAll('[data-dec]').forEach(b=>{
+    b.onclick = ()=> changeQty(Number(b.dataset.dec), -1);
+  });
+}
+
+/* ---------- cart ops ---------- */
+function changeQty(id, delta){
+  const cur = state.cart.get(id)||0;
+  const next = Math.max(0, cur+delta);
+  if (next===0) state.cart.delete(id); else state.cart.set(id,next);
+  const q = $('q'+id); if (q) q.textContent = String(next);
+  renderCart();
+}
+
+function renderCart(){
+  const list = $('cartList');
+  if (!state.cart.size){ list.classList.add('muted'); list.innerHTML='No items yet. Tap a ticket.'; $('grand').textContent='R0.00'; return; }
+
+  list.classList.remove('muted');
+  let total=0;
+  const rows = [];
+  for (const [id,qty] of state.cart.entries()){
+    const tt = state.ttypes.get(id) || {name:'', price_cents:0};
+    const line = qty * (tt.price_cents||0);
+    total += line;
+    rows.push(\`<div class="row" style="justify-content:space-between">
+      <div>\${escapeHtml(tt.name)} × \${qty}</div>
+      <div>\${(tt.price_cents||0)? rands(line) : 'FREE'}</div>
+    </div>\`);
+  }
+  list.innerHTML = rows.join('');
+  $('grand').textContent = rands(total);
+}
+
+/* ---------- recall ---------- */
+$('recallBtn').onclick = async ()=>{
+  const code = ($('recallCode').value||'').trim();
+  if (!code) return toast('Enter code to recall');
+  toast('');
+  try{
+    const r = await fetch('/api/pos/order/lookup/'+encodeURIComponent(code));
+    const j = await r.json().catch(()=>({ok:false, error:'Bad JSON'}));
+    if (!j.ok) throw new Error(j.error || 'Lookup failed');
+
+    // Fill cart from order.items (expects [{ticket_type_id, qty}])
+    state.cart.clear();
+    for(const it of (j.order.items||[])){
+      const id = Number(it.ticket_type_id||0);
+      const q = Number(it.qty||0);
+      if (id && q) state.cart.set(id, q);
+      const Q = $('q'+id); if (Q) Q.textContent = String(q||0);
+    }
+    $('custName').value = j.order.buyer_name || '';
+    $('custPhone').value = j.order.buyer_phone || '';
+    renderCart();
+    toast('Order recalled.');
+  }catch(e){
+    toast('Recall error: ' + (e.message||'unknown'));
+  }
+};
+
+/* ---------- tender ---------- */
+$('cashBtn').onclick = ()=> tender('pos_cash');
+$('cardBtn').onclick = ()=> tender('pos_card');
+
+async function tender(method){
+  toast('');
+  if (!state.cart.size) return toast('Cart is empty');
+
+  const items = Array.from(state.cart.entries()).map(([id,qty])=>({ ticket_type_id:id, qty }));
+  const payload = {
+    session_id: state.session_id,
+    event_id: state.event_id,
+    customer: {
+      name: ($('custName').value||'').trim(),
+      phone: ($('custPhone').value||'').trim()
+    },
+    items,
+    tender: { method }
+  };
+
+  try{
+    const r = await fetch('/api/pos/order/sale', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const j = await r.json().catch(()=>({ok:false,error:'Bad JSON'}));
+    if (!j.ok) throw new Error(j.error || 'Sale failed');
+
+    // Success: clear cart & show result
+    state.cart.clear();
+    document.querySelectorAll('[id^="q"]').forEach(el=> el.textContent='0');
+    renderCart();
+    toast('Sale completed. Order #' + (j.order_id || '') + (j.sent_whatsapp ? ' · Ticket sent on WhatsApp.' : ''));
+  }catch(e){
+    toast('Sale error: ' + (e.message||'unknown'));
+  }
+}
+
+/* ---------- close session ---------- */
+$('closeBtn').onclick = async ()=>{
+  const mgr = prompt('Manager name to close session?');
+  if (mgr===null) return;
+  try{
+    const r = await fetch('/api/pos/session/close', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify({ session_id: state.session_id, closing_manager: mgr })
+    });
+    const j = await r.json().catch(()=>({ok:false}));
+    if (!j.ok) throw new Error(j.error||'close failed');
+    location.href = '/pos';
+  }catch(e){
+    toast('Close error: ' + (e.message||'unknown'));
+  }
+};
+
+/* ---------- utils ---------- */
+function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+
+/* ---------- go! ---------- */
+bootstrap();
+</script>
+</body></html>`;
