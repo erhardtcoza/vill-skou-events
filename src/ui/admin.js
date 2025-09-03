@@ -1,5 +1,4 @@
 // /src/ui/admin.js
-
 export function adminHTML() {
   return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -44,8 +43,8 @@ export function adminHTML() {
         <input id="eEnd" type="date"/>
         <select id="eStatus">
           <option value="draft">draft</option>
-          <option value="active">active</option>
-          <option value="closed">closed</option>
+          <option value="active" selected>active</option>
+          <option value="archived">archived</option>
         </select>
         <button id="eCreate" class="btn">Create</button>
         <span id="eErr" class="muted"></span>
@@ -64,6 +63,9 @@ export function adminHTML() {
       <div class="row">
         <input id="ttName" placeholder="Name"/>
         <input id="ttPrice" type="number" min="0" step="1" placeholder="Price (R)"/>
+        <input id="ttCapacity" type="number" min="1" step="1" placeholder="Capacity"/>
+        <input id="ttCode" placeholder="Code (optional)"/>
+        <input id="ttLimit" type="number" min="1" step="1" value="10" placeholder="Per order limit"/>
         <select id="ttGender">
           <option value="0">Gender req: No</option>
           <option value="1">Gender req: Yes</option>
@@ -72,8 +74,8 @@ export function adminHTML() {
         <span id="ttErr" class="muted"></span>
       </div>
       <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Price (R)</th><th>Gender req</th></tr></thead>
-        <tbody id="ticketTypesBody"><tr><td colspan="4" class="muted">No event selected</td></tr></tbody>
+        <thead><tr><th>ID</th><th>Name</th><th>Price (R)</th><th>Capacity</th><th>Per-order</th><th>Code</th><th>Gender req</th></tr></thead>
+        <tbody id="ticketTypesBody"><tr><td colspan="7" class="muted">No event selected</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -97,7 +99,6 @@ export function adminHTML() {
     </div>
   </section>
 
-  <!-- PLACEHOLDERS -->
   <section id="tab-site" style="display:none">
     <div class="card"><h2>Site settings</h2><p class="muted">Coming soon.</p></div>
   </section>
@@ -114,7 +115,7 @@ const rands = (c)=>'R'+((c||0)/100).toFixed(2);
 
 let CURRENT_EVENT = null;
 
-/* -------- Tabs -------- */
+/* Tabs */
 document.querySelectorAll('.tab').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
@@ -127,14 +128,12 @@ document.querySelectorAll('.tab').forEach(btn=>{
   });
 });
 
-/* -------- Events -------- */
+/* Events */
 async function loadEvents(){
   $('eventsBody').innerHTML = '<tr><td colspan="7" class="muted">Loading…</td></tr>';
   try{
-    const r = await fetch('/api/admin/events');
-    const j = await r.json();
+    const r = await fetch('/api/admin/events'); const j = await r.json();
     if(!j.ok) throw new Error(j.error||'failed');
-
     const rows = (j.events||[]).map(ev=>\`
       <tr>
         <td>\${ev.id}</td>
@@ -147,7 +146,6 @@ async function loadEvents(){
       </tr>
     \`).join('');
     $('eventsBody').innerHTML = rows || '<tr><td colspan="7" class="muted">No events.</td></tr>';
-
     document.querySelectorAll('[data-tt]').forEach(b=>{
       b.onclick = ()=>{
         CURRENT_EVENT = { id:Number(b.dataset.tt), name:b.dataset.name, slug:b.dataset.slug };
@@ -170,30 +168,25 @@ $('eCreate').onclick = async ()=>{
   const ends_at = toEpoch($('eEnd').value);
   const status = $('eStatus').value;
   if(!slug || !name || !starts_at || !ends_at){ $('eErr').textContent='missing fields'; return; }
-
   const r = await fetch('/api/admin/events', {
     method:'POST', headers:{'content-type':'application/json'},
     body: JSON.stringify({ slug, name, venue, starts_at, ends_at, status })
   });
   const j = await r.json().catch(()=>({ok:false}));
-  if(!j.ok){ $('eErr').textContent = 'Error: '+(j.error||'failed'); return; }
-  $('eSlug').value=''; $('eName').value=''; $('eVenue').value='';
-  $('eStart').value=''; $('eEnd').value='';
+  if(!j.ok){ $('eErr').textContent='Error: '+(j.error||'failed'); return; }
+  $('eSlug').value=''; $('eName').value=''; $('eVenue').value=''; $('eStart').value=''; $('eEnd').value='';
   loadEvents();
 };
 
-/* -------- Ticket types -------- */
+/* Ticket types */
 async function loadTicketTypesFor(eventId){
   const tbody = $('ticketTypesBody');
-  tbody.innerHTML = \`<tr><td colspan="4" class="muted">Loading…</td></tr>\`;
+  tbody.innerHTML = \`<tr><td colspan="7" class="muted">Loading…</td></tr>\`;
   let jt;
-  try{
-    const r = await fetch(\`/api/admin/events/\${eventId}/ticket-types\`);
-    jt = await r.json();
-  }catch{ jt = { ok:false, error:'Network error' }; }
-
+  try{ jt = await (await fetch(\`/api/admin/events/\${eventId}/ticket-types\`)).json(); }
+  catch{ jt = { ok:false, error:'Network error' }; }
   if(!jt.ok){
-    tbody.innerHTML = \`<tr><td colspan="4" class="muted">Error: \${esc(jt.error||'failed')}</td></tr>\`;
+    tbody.innerHTML = \`<tr><td colspan="7" class="muted">Error: \${esc(jt.error||'failed')}</td></tr>\`;
     return;
   }
   const rows = (jt.types||[]).map(t=>\`
@@ -201,10 +194,13 @@ async function loadTicketTypesFor(eventId){
       <td>\${t.id}</td>
       <td>\${esc(t.name||'')}</td>
       <td>\${typeof t.price_cents==='number'? (t.price_cents/100).toFixed(2) : '-'}</td>
-      <td>\${t.gender_required ? 'Yes' : 'No'}</td>
+      <td>\${t.capacity ?? '-'}</td>
+      <td>\${t.per_order_limit ?? '-'}</td>
+      <td>\${esc(t.code||'')}</td>
+      <td>\${t.requires_gender ? 'Yes' : 'No'}</td>
     </tr>
   \`).join('');
-  tbody.innerHTML = rows || \`<tr><td colspan="4" class="muted">No ticket types</td></tr>\`;
+  tbody.innerHTML = rows || \`<tr><td colspan="7" class="muted">No ticket types</td></tr>\`;
 }
 
 $('ttAdd').onclick = async ()=>{
@@ -212,34 +208,33 @@ $('ttAdd').onclick = async ()=>{
   $('ttErr').textContent='';
   const name = $('ttName').value.trim();
   const price_cents = cents($('ttPrice').value);
-  const gender_required = $('ttGender').value === '1';
-  if(!name){ $('ttErr').textContent='name required'; return; }
+  const capacity = Number($('ttCapacity').value || 0);
+  const code = ($('ttCode').value || '').trim() || null;
+  const per_order_limit = Number($('ttLimit').value || 10);
+  const requires_gender = $('ttGender').value === '1';
+  if(!name || !capacity){ $('ttErr').textContent='name and capacity required'; return; }
 
   const r = await fetch(\`/api/admin/events/\${CURRENT_EVENT.id}/ticket-types\`, {
     method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({ name, price_cents, gender_required })
+    body: JSON.stringify({ name, price_cents, capacity, code, per_order_limit, requires_gender })
   });
   const j = await r.json().catch(()=>({ok:false}));
   if(!j.ok){ $('ttErr').textContent='Error: '+(j.error||'failed'); return; }
-  $('ttName').value=''; $('ttPrice').value='';
+  $('ttName').value=''; $('ttPrice').value=''; $('ttCapacity').value=''; $('ttCode').value='';
+  $('ttLimit').value='10'; $('ttGender').value='0';
   loadTicketTypesFor(CURRENT_EVENT.id);
 };
 
-/* -------- POS Admin -------- */
+/* POS Admin */
 async function loadPOS(){
   $('posBody').innerHTML = '<tr><td colspan="7" class="muted">Loading…</td></tr>';
   $('posErr').textContent='';
   const from = toEpoch($('posFrom').value) || '';
   const to = toEpoch($('posTo').value) || '';
-  const q = new URLSearchParams();
-  if(from) q.set('from', from);
-  if(to) q.set('to', to);
-
+  const q = new URLSearchParams(); if(from) q.set('from',from); if(to) q.set('to',to);
   try{
     const r = await fetch('/api/admin/pos/sessions' + (q.toString()? \`?\${q}\` : ''));
-    const j = await r.json();
-    if(!j.ok) throw new Error(j.error||'failed');
-
+    const j = await r.json(); if(!j.ok) throw new Error(j.error||'failed');
     const rows = (j.sessions||[]).map(s=>\`
       <tr>
         <td>\${s.id}</td>
@@ -258,11 +253,8 @@ async function loadPOS(){
 }
 $('posReload').onclick = loadPOS;
 
-/* -------- Utils -------- */
-function toEpoch(yyyy_mm_dd){
-  if(!yyyy_mm_dd) return 0;
-  try{ return Math.floor(new Date(yyyy_mm_dd+'T00:00:00Z').getTime()/1000); }catch{ return 0; }
-}
+/* Utils */
+function toEpoch(yyyy_mm_dd){ if(!yyyy_mm_dd) return 0; try{ return Math.floor(new Date(yyyy_mm_dd+'T00:00:00Z').getTime()/1000); }catch{ return 0; } }
 function fmtDate(ts){ if(!ts) return '-'; const d=new Date(ts*1000); return d.toLocaleDateString('af-ZA',{year:'numeric',month:'2-digit',day:'2-digit'}); }
 function fmtDateTime(ts){ if(!ts) return '-'; const d=new Date(ts*1000); return d.toLocaleString('af-ZA'); }
 
