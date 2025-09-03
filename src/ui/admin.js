@@ -1,272 +1,325 @@
 // /src/ui/admin.js
-// Admin UI with tabs: Events, POS Admin, Tickets, Site settings, Users
+export function adminHTML(){
+  return `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Admin · Villiersdorp Skou</title>
+<style>
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  .wrap{ max-width:1100px; margin:20px auto; padding:0 14px }
+  h1{ margin:0 0 14px } .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
+  .tabs{ display:flex; gap:8px; margin:10px 0 14px }
+  .tab{ padding:8px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer }
+  .tab.active{ background:var(--green); color:#fff; border-color:transparent }
+  table{ width:100%; border-collapse:collapse } th,td{ padding:10px 8px; border-bottom:1px solid #f0f2f4; text-align:left; font-size:14px }
+  .muted{ color:var(--muted) } .btn{ padding:8px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  .stat{ background:#f8fafc; border:1px solid #eef2f7; border-radius:10px; padding:10px 12px; min-width:150px }
+  .k{ font-weight:700; font-size:18px }
+  .charts{ display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:10px }
+  @media (max-width:900px){ .charts{ grid-template-columns:1fr; } }
+  canvas{ width:100%; height:320px; max-height:45vh }
+</style>
+</head><body>
+<div class="wrap">
+  <h1>Admin</h1>
 
-export function adminHTML() {
-  return `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Admin · Villiersdorp Skou</title>
-  <style>
-    :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8 }
-    *{ box-sizing:border-box }
-    body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-    .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-    h1{ margin:0 0 10px }
-    .tabs{ display:flex; gap:8px; margin-bottom:14px }
-    .tab{ padding:8px 10px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; cursor:pointer }
-    .tab.active{ background:var(--green); color:#fff; border-color:transparent }
-
-    .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
-    .muted{ color:var(--muted) }
-    .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
-    input, select, button{ font:inherit }
-    input, select{ padding:8px 10px; border:1px solid #e5e7eb; border-radius:8px; background:#fff }
-    button{ padding:9px 12px; border:0; border-radius:8px; cursor:pointer; background:var(--green); color:#fff; font-weight:600 }
-    table{ width:100%; border-collapse:collapse; }
-    th, td{ text-align:left; padding:8px 10px; border-bottom:1px solid #f1f3f5 }
-    th{ font-weight:700; color:#444; background:#fafafa }
-    .right{ text-align:right }
-    .chips{ display:flex; gap:8px; flex-wrap:wrap }
-    .chip{ display:inline-block; padding:6px 10px; border:1px solid #e5e7eb; border-radius:999px; background:#fff; font-weight:600 }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>Admin</h1>
-    <div class="tabs">
-      <button class="tab active" id="tab-events">Events</button>
-      <button class="tab" id="tab-pos">POS Admin</button>
-      <button class="tab" id="tab-tickets">Tickets</button>
-      <button class="tab" id="tab-settings">Site settings</button>
-      <button class="tab" id="tab-users">Users</button>
-    </div>
-
-    <div id="view-events"    class="card"></div>
-    <div id="view-pos"       class="card" style="display:none"></div>
-    <div id="view-tickets"   class="card" style="display:none"></div>
-    <div id="view-settings"  class="card" style="display:none">Site settings …</div>
-    <div id="view-users"     class="card" style="display:none">Users …</div>
+  <div class="tabs">
+    <button class="tab active" data-tab="events">Events</button>
+    <button class="tab" data-tab="pos">POS Admin</button>
+    <button class="tab" data-tab="tickets">Tickets</button>
+    <button class="tab" data-tab="users">Users</button>
   </div>
+
+  <div id="panel-events" class="card"></div>
+  <div id="panel-pos" class="card" style="display:none"></div>
+  <div id="panel-tickets" class="card" style="display:none"></div>
+  <div id="panel-users" class="card" style="display:none"></div>
+</div>
 
 <script>
 const $ = (id)=>document.getElementById(id);
-const fmtR = c => 'R' + ( (c||0)/100 ).toFixed(2 );
-const fmtTs = s => s ? new Date(s*1000).toLocaleString('af-ZA') : '';
 
 /* ---------------- Tabs ---------------- */
-function activate(tab){
-  for(const id of ['events','pos','tickets','settings','users']){
-    $('tab-'+id).classList.toggle('active', id===tab);
-    $('view-'+id).style.display = id===tab ? 'block' : 'none';
-  }
-  if (tab==='events')  renderEvents();
-  if (tab==='pos')     renderPOS();
-  if (tab==='tickets') renderTickets();
-}
-$('tab-events').onclick   = ()=>activate('events');
-$('tab-pos').onclick      = ()=>activate('pos');
-$('tab-tickets').onclick  = ()=>activate('tickets');
-$('tab-settings').onclick = ()=>activate('settings');
-$('tab-users').onclick    = ()=>activate('users');
+document.querySelectorAll('.tab').forEach(b=>{
+  b.onclick = ()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    const t = b.dataset.tab;
+    ['events','pos','tickets','users'].forEach(name=>{
+      $('panel-'+name).style.display = (name===t)?'block':'none';
+    });
+    if (t==='events') renderEvents();
+    if (t==='pos') renderPOS();
+    if (t==='tickets') renderTickets();
+    if (t==='users') renderUsers();
+  };
+});
 
-/* --------------- Events (simple list) ---------------- */
+/* ---------------- Helpers ---------------- */
+function fmtDate(ts){
+  if (!ts) return '-';
+  const d = new Date(ts*1000);
+  return d.toLocaleString('af-ZA',{hour12:false});
+}
+function rands(c){ return 'R' + ( (c||0)/100 ).toFixed(2); }
+
+/* ---------------- Events panel ---------------- */
 async function renderEvents(){
-  const el = $('view-events');
-  el.innerHTML = '<div class="muted">Loading events…</div>';
-  try{
-    const j = await fetch('/api/admin/events').then(r=>r.json());
-    if (!j.ok) throw new Error(j.error||'failed');
-    const rows = (j.events||[]).map(e=>`
-      <tr>
-        <td>${e.id}</td>
-        <td>${esc(e.name)}</td>
-        <td>${esc(e.slug)}</td>
-        <td>${fmtTs(e.starts_at)}</td>
-        <td>${fmtTs(e.ends_at)}</td>
-        <td>${esc(e.status||'')}</td>
-      </tr>
-    }).join('') || '<tr><td colspan="6" class="muted">No events</td></tr>';
-    el.innerHTML = `
-      <h2 style="margin:0 0 10px">Events</h2>
-      <div style="overflow:auto">
+  const box = $('panel-events');
+  box.innerHTML = 'Loading…';
+  const j = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
+  if(!j.ok) { box.textContent='Failed to load events'; return; }
+
+  const rows = (j.events||[]).map(e=>`
+    <tr>
+      <td>${e.id}</td>
+      <td>${esc(e.slug)}</td>
+      <td>${esc(e.name)}</td>
+      <td>${fmtDate(e.starts_at)} → ${fmtDate(e.ends_at)}</td>
+      <td>${esc(e.status||'')}</td>
+    </tr>`).join('');
+
+  box.innerHTML = `
+    <h2 style="margin:0 0 12px">Events</h2>
+    <div class="row" style="margin-bottom:8px"><button class="btn" id="reloadEvents">Reload</button></div>
+    <div style="overflow:auto">
       <table>
-        <thead><tr>
-          <th>ID</th><th>Name</th><th>Slug</th><th>Start</th><th>End</th><th>Status</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
+        <thead><tr><th>ID</th><th>Slug</th><th>Name</th><th>Dates</th><th>Status</th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="5" class="muted">None</td></tr>'}</tbody>
       </table>
-      </div>
-    `;
-  }catch(e){
-    el.innerHTML = '<div class="muted">Error loading events: '+esc(e.message||'')+'</div>';
-  }
+    </div>`;
+  $('reloadEvents').onclick=renderEvents;
 }
 
-/* ----------------------- POS Admin ----------------------- */
+/* ---------------- POS Admin (sessions) ---------------- */
 async function renderPOS(){
-  const el = $('view-pos');
-  el.innerHTML = `
-    <h2 style="margin:0 0 10px">POS Sessions</h2>
-    <div class="row" style="margin-bottom:10px">
-      <div>
-        <div class="muted" style="font-size:12px">From</div>
-        <input id="posFrom" type="date"/>
-      </div>
-      <div>
-        <div class="muted" style="font-size:12px">To</div>
-        <input id="posTo" type="date"/>
-      </div>
-      <button id="posReload">Reload</button>
-      <span id="posErr" class="muted"></span>
+  const box = $('panel-pos');
+  box.innerHTML = 'Loading…';
+  const j = await fetch('/api/admin/pos/sessions?limit=100').then(r=>r.json()).catch(()=>({ok:false}));
+  if(!j.ok){ box.textContent='Failed to load sessions'; return; }
+
+  const rows = (j.sessions||[]).map(s=>`
+    <tr>
+      <td>${s.id}</td>
+      <td>${esc(s.cashier_name||'')}</td>
+      <td>${esc(s.gate_name||('Gate #'+(s.gate_id||'')))}</td>
+      <td>${fmtDate(s.opened_at)}</td>
+      <td>${s.closed_at?fmtDate(s.closed_at):'<span class="muted">open</span>'}</td>
+      <td>${rands(s.cash_cents)}</td>
+      <td>${rands(s.card_cents)}</td>
+    </tr>`).join('');
+
+  box.innerHTML = `
+    <h2 style="margin:0 0 12px">POS Sessions</h2>
+    <div class="row" style="margin-bottom:8px">
+      <button class="btn" id="reloadPOS">Reload</button>
     </div>
-    <div id="posTable"><div class="muted">Loading…</div></div>
-  `;
-  $('posReload').onclick = () => loadPOS();
-  await loadPOS();
-}
-
-async function loadPOS(){
-  const err = $('posErr'); err.textContent = '';
-  const table = $('posTable'); table.innerHTML = '<div class="muted">Loading…</div>';
-
-  const qs = new URLSearchParams();
-  const f = $('posFrom').value, t = $('posTo').value;
-  if (f) qs.set('from', f);
-  if (t) qs.set('to', t);
-
-  try{
-    const j = await fetch('/api/admin/pos/sessions?'+qs.toString()).then(r=>r.json());
-    if (!j.ok) throw new Error(j.error||'failed');
-
-    let cash=0, card=0;
-    const rows = (j.sessions||[]).map(s=>{
-      cash += s.cash_total_cents||0;
-      card += s.card_total_cents||0;
-      return `
-        <tr>
-          <td>${s.session_id}</td>
-          <td>${esc(s.cashier_name)}<div class="muted" style="font-size:12px">${esc(s.cashier_msisdn||'')}</div></td>
-          <td>${esc(s.gate_name)}</td>
-          <td>${esc(s.event_name)}</td>
-          <td>${fmtTs(s.opened_at)}</td>
-          <td>${s.closed_at ? fmtTs(s.closed_at) : '<span class="chip">open</span>'}</td>
-          <td class="right">${fmtR(s.cash_total_cents)}</td>
-          <td class="right">${fmtR(s.card_total_cents)}</td>
-          <td class="right">${fmtR((s.takings_cents||0))}</td>
-        </tr>
-      `;
-    }).join('') || '<tr><td colspan="9" class="muted">No sessions in range</td></tr>';
-
-    table.innerHTML = `
-      <div style="overflow:auto">
+    <div style="overflow:auto">
       <table>
-        <thead><tr>
-          <th>ID</th><th>Cashier</th><th>Gate</th><th>Event</th>
-          <th>Opened</th><th>Closed</th>
-          <th class="right">Cash</th><th class="right">Card</th><th class="right">Takings</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
-          <tr>
-            <th colspan="6" class="right">Totals</th>
-            <th class="right">${fmtR(cash)}</th>
-            <th class="right">${fmtR(card)}</th>
-            <th class="right">${fmtR(cash+card)}</th>
-          </tr>
-        </tfoot>
+        <thead><tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Cash</th><th>Card</th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="7" class="muted">None</td></tr>'}</tbody>
       </table>
-      </div>
-    `;
-  }catch(e){
-    table.innerHTML = '';
-    err.textContent = 'Error: ' + (e.message||'unknown');
-  }
+    </div>`;
+  $('reloadPOS').onclick=renderPOS;
 }
 
-/* ----------------------- Tickets tab ----------------------- */
+/* ---------------- Tickets (with charts) ---------------- */
 async function renderTickets(){
-  const el = $('view-tickets');
-  el.innerHTML = `
-    <h2 style="margin:0 0 10px">Tickets</h2>
+  const box = $('panel-tickets');
+  box.innerHTML = 'Loading…';
+
+  // 1) Load events for dropdown
+  const ev = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
+  if(!ev.ok){ box.textContent='Failed to load events'; return; }
+  const events = ev.events||[];
+  if(!events.length){ box.textContent='No events'; return; }
+
+  const first = events[0];
+
+  box.innerHTML = `
+    <h2 style="margin:0 0 12px">Tickets</h2>
     <div class="row" style="margin-bottom:10px">
-      <select id="tkEvent" style="min-width:280px"><option>Loading events…</option></select>
-      <button id="tkReload">Reload</button>
-      <span id="tkErr" class="muted"></span>
+      <label class="muted" for="ticketEvent">Event</label>
+      <select id="ticketEvent">${events.map(e=>`<option value="${e.id}" ${e.id===first.id?'selected':''}>${esc(e.name)} (${esc(e.slug)})</option>`).join('')}</select>
+      <button class="btn" id="reloadTickets">Reload</button>
     </div>
-    <div id="tkSummary" class="chips" style="margin-bottom:10px"></div>
-    <div id="tkTable"><div class="muted">Pick an event to view ticket stats.</div></div>
+
+    <div id="ticketStats" class="row" style="margin-bottom:10px">
+      <div class="stat"><div class="muted">Sold</div><div class="k" id="tSold">-</div></div>
+      <div class="stat"><div class="muted">Checked-in</div><div class="k" id="tIn">-</div></div>
+      <div class="stat"><div class="muted">Not in</div><div class="k" id="tOut">-</div></div>
+    </div>
+
+    <div class="charts">
+      <div><canvas id="pieTotals"></canvas></div>
+      <div><canvas id="barTypes"></canvas></div>
+    </div>
+
+    <div style="margin-top:14px;overflow:auto">
+      <table>
+        <thead><tr><th>Type</th><th>Sold</th><th>Checked-in</th><th>Not in</th></tr></thead>
+        <tbody id="ticketBody"></tbody>
+      </table>
+    </div>
   `;
 
-  // Load event list
-  try{
-    const evs = await fetch('/api/admin/events').then(r=>r.json());
-    if (!evs.ok) throw new Error(evs.error||'events failed');
-    const sel = $('tkEvent');
-    sel.innerHTML = (evs.events||[]).map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join('')
-                  || '<option value="0">No events</option>';
-  }catch(e){
-    $('tkErr').textContent = 'Error loading events: '+(e.message||'');
-  }
-
-  $('tkReload').onclick = () => loadTicketSummary();
-  $('tkEvent').onchange  = () => loadTicketSummary();
-  await loadTicketSummary();
+  $('ticketEvent').onchange = () => loadTickets(Number($('ticketEvent').value||0));
+  $('reloadTickets').onclick = () => loadTickets(Number($('ticketEvent').value||0));
+  loadTickets(first.id);
 }
 
-async function loadTicketSummary(){
-  const err = $('tkErr'); err.textContent = '';
-  const table = $('tkTable'); const chips = $('tkSummary');
-  const eventId = Number(($('tkEvent').value||'0'));
-  if (!eventId){ table.innerHTML = '<div class="muted">No event selected.</div>'; chips.innerHTML=''; return; }
+async function loadTickets(event_id){
+  const body = $('ticketBody');
+  body.innerHTML = '<tr><td class="muted" colspan="4">Loading…</td></tr>';
 
-  table.innerHTML = '<div class="muted">Loading…</div>'; chips.innerHTML='';
+  // API should return: { ok:true, types:[{name, sold, in, out}], totals:{sold,in,out} }
+  const j = await fetch('/api/admin/tickets/summary?event_id='+encodeURIComponent(event_id))
+    .then(r=>r.json()).catch(()=>({ok:false}));
 
-  try{
-    const j = await fetch('/api/admin/tickets/summary?event_id='+eventId).then(r=>r.json());
-    if (!j.ok) throw new Error(j.error||'failed');
+  if(!j.ok){ body.innerHTML = '<tr><td class="muted" colspan="4">Failed to load</td></tr>'; return; }
 
-    // Summary chips
-    chips.innerHTML = `
-      <span class="chip">Total sold: <b>${(j.totals?.sold||0)}</b></span>
-      <span class="chip">In: <b>${(j.totals?.in||0)}</b></span>
-      <span class="chip">Not yet in: <b>${(j.totals?.not_in||0)}</b></span>
-    `;
+  const types = j.types||[];
+  const totals = j.totals||{sold:0,in:0,out:0};
 
-    const rows = (j.types||[]).map(t=>`
-      <tr>
-        <td>${t.id}</td>
-        <td>${esc(t.name)}</td>
-        <td class="right">${t.sold}</td>
-        <td class="right">${t.in}</td>
-        <td class="right">${t.not_in}</td>
-      </tr>
-    `).join('') || '<tr><td colspan="5" class="muted">No tickets</td></tr>';
+  // Stats tiles
+  $('tSold').textContent = String(totals.sold||0);
+  $('tIn').textContent = String(totals.in||0);
+  $('tOut').textContent = String(totals.out||0);
 
-    table.innerHTML = `
-      <div class="muted" style="margin-bottom:8px">Event: ${esc(j.event?.name||'ID '+eventId)}</div>
-      <div style="overflow:auto">
+  // Table
+  body.innerHTML = (types.length? types.map(t=>`
+    <tr>
+      <td>${esc(t.name||'')}</td>
+      <td>${t.sold||0}</td>
+      <td>${t.in||0}</td>
+      <td>${t.out||0}</td>
+    </tr>`).join('') : '<tr><td class="muted" colspan="4">No tickets</td></tr>');
+
+  // Charts
+  drawPie('pieTotals', [
+    { label:'Sold', v: totals.sold||0, color:'#0a7d2b' },
+    { label:'In',   v: totals.in||0,   color:'#15803d' },
+    { label:'Not in', v: totals.out||0, color:'#e11d48' },
+  ]);
+
+  drawBars('barTypes',
+    types.map(t=>t.name||''),
+    [
+      { label:'Sold', color:'#0a7d2b', data: types.map(t=>t.sold||0) },
+      { label:'In',   color:'#15803d', data: types.map(t=>t.in||0) },
+      { label:'Out',  color:'#e11d48', data: types.map(t=>t.out||0) },
+    ]
+  );
+}
+
+/* ---------------- Users (lightweight) ---------------- */
+async function renderUsers(){
+  const box = $('panel-users');
+  box.innerHTML = 'Loading…';
+  const j = await fetch('/api/admin/users').then(r=>r.json()).catch(()=>({ok:false}));
+  if(!j.ok){ box.textContent='Failed to load users'; return; }
+
+  const rows = (j.users||[]).map(u=>`
+    <tr><td>${u.id}</td><td>${esc(u.username)}</td><td>${esc(u.role)}</td></tr>
+  `).join('');
+
+  box.innerHTML = `
+    <h2 style="margin:0 0 12px">Users</h2>
+    <div class="row" style="margin-bottom:8px"><button class="btn" id="reloadUsers">Reload</button></div>
+    <div style="overflow:auto">
       <table>
-        <thead>
-          <tr><th>Type ID</th><th>Type</th><th class="right">Sold</th><th class="right">In</th><th class="right">Not yet in</th></tr>
-        </thead>
-        <tbody>${rows}</tbody>
+        <thead><tr><th>ID</th><th>Username</th><th>Role</th></tr></thead>
+        <tbody>${rows||'<tr><td colspan="3" class="muted">None</td></tr>'}</tbody>
       </table>
-      </div>
-    `;
-  }catch(e){
-    table.innerHTML = '';
-    err.textContent = 'Error: ' + (e.message||'unknown');
-  }
+    </div>`;
+  $('reloadUsers').onclick=renderUsers;
 }
 
-/* -------------------- helpers -------------------- */
-function esc(s){ return String(s??'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+/* ---------------- Tiny chart helpers (no libs) ---------------- */
+function drawPie(id, parts){
+  const cv = $(id); if(!cv) return;
+  const ctx = cv.getContext('2d');
+  const w = cv.width = cv.clientWidth * devicePixelRatio;
+  const h = cv.height = cv.clientHeight * devicePixelRatio;
+  ctx.clearRect(0,0,w,h);
+  const R = Math.min(w,h)*0.38, cx=w/2, cy=h/2;
+  const sum = parts.reduce((a,b)=>a+(b.v||0),0) || 1;
+  let ang = -Math.PI/2;
+  parts.forEach(p=>{
+    const frac = (p.v||0)/sum;
+    const a2 = ang + frac*2*Math.PI;
+    ctx.beginPath(); ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,R,ang,a2); ctx.closePath();
+    ctx.fillStyle = p.color; ctx.fill();
+    ang = a2;
+  });
+  // Legend
+  const lh = 18*devicePixelRatio, x0 = Math.round(w*0.05), y0 = Math.round(h*0.1);
+  ctx.font = `${12*devicePixelRatio}px system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+  parts.forEach((p,i)=>{
+    const y = y0 + i*lh;
+    ctx.fillStyle = p.color; ctx.fillRect(x0, y-10*devicePixelRatio, 14*devicePixelRatio, 14*devicePixelRatio);
+    ctx.fillStyle = '#111';
+    ctx.fillText(`${p.label} (${p.v||0})`, x0 + 20*devicePixelRatio, y);
+  });
+}
 
-/* default tab */
-activate('events');
+function drawBars(id, labels, datasets){
+  const cv = $(id); if(!cv) return;
+  const ctx = cv.getContext('2d');
+  const w = cv.width = cv.clientWidth * devicePixelRatio;
+  const h = cv.height = cv.clientHeight * devicePixelRatio;
+  ctx.clearRect(0,0,w,h);
+
+  const padL = 48*devicePixelRatio, padB = 28*devicePixelRatio, padR=12*devicePixelRatio, padT=12*devicePixelRatio;
+  const gw = w - padL - padR, gh = h - padT - padB;
+
+  const max = Math.max(1, ...datasets.flatMap(d=>d.data||[]));
+  const stepX = gw / Math.max(1, labels.length);
+  const barW = stepX * 0.7 / datasets.length;
+
+  // axes
+  ctx.strokeStyle='#e5e7eb'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT+gh); ctx.lineTo(padL+gw, padT+gh); ctx.stroke();
+
+  // labels (x)
+  ctx.font = `${10*devicePixelRatio}px system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+  ctx.fillStyle='#111';
+  labels.forEach((lb,i)=>{
+    const x = padL + i*stepX + stepX/2;
+    ctx.save(); ctx.translate(x, padT+gh + 14*devicePixelRatio);
+    ctx.rotate(-0.6); // slanted
+    ctx.textAlign='right';
+    ctx.fillText(lb, 0, 0);
+    ctx.restore();
+  });
+
+  // bars
+  datasets.forEach((ds,di)=>{
+    ctx.fillStyle = ds.color;
+    (ds.data||[]).forEach((v,i)=>{
+      const x = padL + i*stepX + (stepX*0.15) + di*barW;
+      const hpx = (v/max)*gh;
+      ctx.fillRect(x, padT+gh-hpx, barW, hpx);
+    });
+  });
+
+  // legend
+  const lgX = w - padR - 120*devicePixelRatio, lgY = padT + 10*devicePixelRatio;
+  datasets.forEach((ds,i)=>{
+    const y = lgY + i*18*devicePixelRatio;
+    ctx.fillStyle = ds.color; ctx.fillRect(lgX, y-10*devicePixelRatio, 14*devicePixelRatio, 14*devicePixelRatio);
+    ctx.fillStyle = '#111'; ctx.fillText(ds.label, lgX + 20*devicePixelRatio, y);
+  });
+}
+
+/* ---------------- Utils ---------------- */
+function esc(s){ return String(s??'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+
+/* boot */
+renderEvents();
 </script>
-</body>
-</html>`;
+</body></html>`;
 }
