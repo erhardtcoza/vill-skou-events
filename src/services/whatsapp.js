@@ -2,9 +2,6 @@
 
 const GRAPH_VERSION = "v20.0";
 
-/**
- * Build the WhatsApp Graph endpoint for this phone number id.
- */
 function graphEndpoint(env) {
   if (!env.PHONE_NUMBER_ID) throw new Error("Missing PHONE_NUMBER_ID");
   return `https://graph.facebook.com/${GRAPH_VERSION}/${env.PHONE_NUMBER_ID}/messages`;
@@ -12,38 +9,26 @@ function graphEndpoint(env) {
 
 /**
  * Send a TEMPLATE message.
- * - Uses the template name from env.WHATSAPP_TEMPLATE_NAME (falls back to "vinetotp")
- * - Language code from env.WHATSAPP_TEMPLATE_LANG (falls back to "en_US")
- * - Optionally adds a URL button with dynamic suffix if env.WHATSAPP_BUTTON_URL is set.
- *
- * @param {any} env            worker env (for tokens/ids)
- * @param {string} toMsisdn    E.164 number (e.g., "27718878933")
- * @param {string} bodyText    text param injected into template body
- * @param {string} [lang]      override language (eg "af" or "en_US")
- * @param {string} [urlSuffix] optional dynamic part for a URL button
+ * - Template name: env.WHATSAPP_TEMPLATE_NAME (default: "vinetotp")
+ * - Language: env.WHATSAPP_TEMPLATE_LANG (default: "en_US" — set to "af" in wrangler)
+ * - If your template has a URL button, configure it in WhatsApp Manager; we pass a single
+ *   parameter (usually the order code’s last 6 chars) to the URL button.
  */
 export async function sendWhatsAppTemplate(env, toMsisdn, bodyText, lang) {
   const templateName = env.WHATSAPP_TEMPLATE_NAME || "vinetotp";
-  const language = (lang || env.WHATSAPP_TEMPLATE_LANG || "en_US");
+  const language = lang || env.WHATSAPP_TEMPLATE_LANG || "en_US";
 
   const components = [
-    {
-      type: "body",
-      parameters: [{ type: "text", text: String(bodyText ?? "") }],
-    },
+    { type: "body", parameters: [{ type: "text", text: String(bodyText ?? "") }] },
   ];
 
-  // If you configured a URL button on the template and want a dynamic suffix,
-  // provide WHATSAPP_BUTTON_URL in env. Meta expects only a *suffix* param for URL buttons.
-  // Example template button: URL with {{1}} — we pass that single parameter below.
+  // If your template includes a URL button with {{1}}, pass a short token (code tail).
   if (env.WHATSAPP_BUTTON_URL) {
     components.push({
       type: "button",
       sub_type: "url",
       index: "0",
       parameters: [{ type: "text", text: String(bodyText ?? "").slice(-6) }],
-      // ^ If your template expects a specific code (eg order code), pass that in bodyText
-      //   or adapt this to a second arg and inject it here.
     });
   }
 
@@ -51,11 +36,7 @@ export async function sendWhatsAppTemplate(env, toMsisdn, bodyText, lang) {
     messaging_product: "whatsapp",
     to: toMsisdn,
     type: "template",
-    template: {
-      name: templateName,
-      language: { code: language },
-      components,
-    },
+    template: { name: templateName, language: { code: language }, components },
   };
 
   const r = await fetch(graphEndpoint(env), {
@@ -75,11 +56,7 @@ export async function sendWhatsAppTemplate(env, toMsisdn, bodyText, lang) {
 }
 
 /**
- * Send a *session* TEXT message (only works if user has a recent WA session).
- *
- * @param {any} env          worker env (for tokens/ids)
- * @param {string} toMsisdn  E.164 number (e.g., "27718878933")
- * @param {string} bodyText  text to send
+ * Send a session TEXT (only if a recent WA session exists).
  */
 export async function sendWhatsAppTextIfSession(env, toMsisdn, bodyText) {
   const payload = {
@@ -103,4 +80,39 @@ export async function sendWhatsAppTextIfSession(env, toMsisdn, bodyText) {
     throw new Error(`WA text send failed (${r.status}): ${t}`);
   }
   return await r.json();
+}
+
+/**
+ * Convenience helper used by orders service.
+ * Formats a short Afrikaans message and sends it via your template.
+ *
+ * @param {any} env         worker env
+ * @param {string} msisdn   E.164 (e.g. "27718878933")
+ * @param {object} order    { short_code, id, event_slug?, buyer_name?, total_cents? }
+ */
+export async function sendOrderOnWhatsApp(env, msisdn, order) {
+  if (!msisdn) throw new Error("Missing msisdn");
+  if (!order?.short_code) throw new Error("Missing order.short_code");
+
+  // Render a compact message – the template’s {{1}} will receive the code (or tail).
+  const code = order.short_code;
+  const totalR = typeof order.total_cents === "number"
+    ? (order.total_cents / 100).toFixed(2)
+    : undefined;
+
+  // Optional deep link for tickets (only relevant after payment/issue).
+  const publicBase = env.PUBLIC_BASE_URL || "https://events.villiersdorpskou.co.za";
+  const maybeTicketsLink = order.event_slug
+    ? `${publicBase}/t/${code}`
+    : `${publicBase}`;
+
+  const lineTotal = totalR ? `\nTotaal: R${totalR}` : "";
+  const body =
+    `Bestelling geskep. Jou bestel nommer: ${code}.${lineTotal}\n` +
+    `Wys dit by die hek om te betaal en jou kaartjies te ontvang.\n` +
+    `${maybeTicketsLink}`;
+
+  // Use template language from env (you set "af"); fallback to en_US
+  const lang = env.WHATSAPP_TEMPLATE_LANG || "en_US";
+  return await sendWhatsAppTemplate(env, msisdn, body, lang);
 }
