@@ -39,9 +39,9 @@ export function mountWhatsApp(router) {
   // POST: message/status notifications (we just 200 OK)
   router.add("POST", "/api/whatsapp/webhook", async (req /*, env */) => {
     // If you want to debug, uncomment to read:
-    // const body = await req.text().catch(()=> "");
+    const body = await req.text().catch(()=> "");
     // Optionally store to KV for 1h:
-    // await env.EVENTS_KV.put(`wa:${Date.now()}`, body, { expirationTtl: 3600 });
+     await env.EVENTS_KV.put(`wa:${Date.now()}`, body, { expirationTtl: 3600 });
     return json({ ok: true });
   });
 
