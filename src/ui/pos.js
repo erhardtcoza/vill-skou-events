@@ -1,352 +1,389 @@
 // /src/ui/pos.js
-export const posHTML = `<!doctype html><html><head>
+export const posHTML = () => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>POS · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --red:#b42318; }
+  :root{ --green:#0a7d2b; --bg:#f6f7f8; --muted:#6b7280; }
   *{ box-sizing:border-box }
   body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
-  h1{ margin:0 0 10px } h2{ margin:4px 0 10px }
-  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
-  input, select{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
-  .btn{ padding:10px 14px; border-radius:10px; border:1px solid transparent; background:var(--green); color:#fff; cursor:pointer; font-weight:700 }
-  .btn.ghost{ background:#fff; color:#111; border-color:#e5e7eb }
-  .btn.warn{ background:#fff; color:var(--red); border-color:#f2b4ac }
+  header{ display:flex; align-items:center; gap:8px; justify-content:space-between; padding:14px 16px; background:#fff; border-bottom:1px solid #e5e7eb; position:sticky; top:0; z-index:10 }
+  .brand{ font-weight:800; letter-spacing:.2px }
+  .tag{ font-size:12px; color:#fff; background:var(--green); padding:4px 8px; border-radius:999px }
+  .row{ display:flex; gap:16px; padding:16px; max-width:1200px; margin:0 auto }
+  .col{ flex:1; }
+  .panel{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px }
+  .pill{ display:flex; align-items:center; justify-content:center; min-height:68px; border:1px solid #e5e7eb; border-radius:14px; background:#fff; cursor:pointer; font-weight:700 }
+  .pill:hover{ outline:3px solid #e5e7eb }
+  .qty{ display:flex; align-items:center; gap:6px }
+  .qty button{ width:36px; height:36px; border-radius:10px; border:1px solid #d1d5db; background:#fff; font-size:20px; font-weight:700; cursor:pointer }
+  .line{ display:grid; grid-template-columns:1fr 90px 90px 110px 36px; align-items:center; gap:8px; padding:8px 0; border-bottom:1px dashed #f0f0f0 }
   .muted{ color:var(--muted) }
-  .error{ color:var(--red); font-weight:600 }
-  .grid{ display:grid; grid-template-columns: 1fr 360px; gap:14px; margin-top:12px }
-  @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
-  .pill{ display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; font-weight:600 }
-  .kpi{ font-size:28px; font-weight:900 }
-  .pad{ padding:8px 0 }
-  .ticket-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px }
-  .tbtn{ padding:16px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; text-align:center }
-  .tname{ font-weight:700; margin-bottom:6px }
-  .tprice{ color:#111 }
-  .cart-line{ display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid #f1f3f5 }
-  .qtybox{ display:flex; align-items:center; gap:6px }
-  .qtybox .qbtn{ width:32px; height:32px; line-height:30px; text-align:center; border:1px solid #e5e7eb; border-radius:8px; background:#fff; cursor:pointer; font-weight:800 }
-  .totalbar{ display:flex; justify-content:space-between; align-items:center; padding-top:10px; font-weight:900; font-size:20px }
-  .toolbar{ display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px }
-  .leftcol{ display:flex; align-items:center; gap:10px }
-  .rightcol{ display:flex; align-items:center; gap:8px; flex-wrap:wrap }
-  .radio{ display:flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:999px; background:#fff; cursor:pointer }
-  .radio input{ accent-color: var(--green); }
+  .total{ font-size:28px; font-weight:800 }
+  .btn{ border:none; padding:12px 14px; border-radius:12px; cursor:pointer; font-weight:700 }
+  .btn.primary{ background:var(--green); color:#fff }
+  .btn.ghost{ background:#fff; border:1px solid #e5e7eb }
+  .btn.warn{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca }
+  .toolbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  select, input{ padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; }
+  .right{ text-align:right }
+  .center{ text-align:center }
+  .hidden{ display:none }
+  /* modal */
+  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; padding:16px; z-index:40 }
+  .card{ background:#fff; border-radius:16px; padding:16px; width:min(560px,96vw); box-shadow:0 30px 60px rgba(0,0,0,.2) }
+  .card h3{ margin:0 0 8px }
+  .split{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
+  @media (max-width:900px){ .row{ flex-direction:column } .line{ grid-template-columns:1fr 70px 80px 100px 36px } }
 </style>
 </head><body>
-<div class="wrap" id="app">
-  <h1>POS</h1>
-  <div id="screen"></div>
+
+<header>
+  <div class="toolbar">
+    <span class="brand">POS</span>
+    <span id="shiftBadge" class="tag hidden">Shift open</span>
+    <button id="endShiftBtn" class="btn warn hidden">End Shift</button>
+  </div>
+  <div class="toolbar">
+    <button id="recallBtn" class="btn ghost">Recall order</button>
+    <select id="eventSel"></select>
+  </div>
+</header>
+
+<div class="row">
+  <div class="col">
+    <div class="panel">
+      <div class="toolbar" style="margin-bottom:10px;">
+        <strong>Ticket Types</strong>
+      </div>
+      <div id="ttGrid" class="grid"></div>
+    </div>
+  </div>
+
+  <div class="col" style="max-width:520px;">
+    <div class="panel">
+      <div class="toolbar" style="justify-content:space-between">
+        <strong>Current Sale</strong>
+        <button id="clearBtn" class="btn ghost">Clear</button>
+      </div>
+      <div id="lines"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:12px;">
+        <div class="muted">Items: <span id="itemsCount">0</span></div>
+        <div class="total">R <span id="grand">0.00</span></div>
+      </div>
+      <div class="split" style="margin-top:12px">
+        <button id="checkoutBtn" class="btn primary" disabled>Proceed</button>
+        <button id="cashBtn" class="btn ghost">Cash</button>
+      </div>
+      <small class="muted">Tip: tap ticket buttons. Each tap adds one.</small>
+    </div>
+  </div>
+</div>
+
+<!-- SHIFT MODAL -->
+<div id="shiftModal" class="modal">
+  <div class="card">
+    <h3>Open Shift</h3>
+    <div class="split">
+      <div>
+        <label class="muted">Cashier name</label>
+        <input id="mCashier" placeholder="e.g. Jaco"/>
+      </div>
+      <div>
+        <label class="muted">Gate</label>
+        <select id="mGate"></select>
+      </div>
+      <div>
+        <label class="muted">Opening float (R)</label>
+        <input id="mFloat" type="number" inputmode="decimal" step="0.01" value="0.00"/>
+      </div>
+      <div class="center" style="display:flex; align-items:end; justify-content:end">
+        <button id="openShiftBtn" class="btn primary">Start</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- CHECKOUT MODAL -->
+<div id="checkoutModal" class="modal hidden">
+  <div class="card">
+    <h3>Finish Order</h3>
+    <div class="split">
+      <div>
+        <label class="muted">Payment method (required)</label>
+        <div class="toolbar">
+          <label><input type="radio" name="pay" value="cash"> Cash</label>
+          <label><input type="radio" name="pay" value="card"> Card (Yoco)</label>
+        </div>
+      </div>
+      <div class="right">
+        <div class="muted">Total</div>
+        <div class="total">R <span id="ckTotal">0.00</span></div>
+      </div>
+      <div>
+        <label class="muted">Buyer name</label>
+        <input id="ckName" placeholder="(optional)"/>
+      </div>
+      <div>
+        <label class="muted">Buyer phone (for WhatsApp)</label>
+        <input id="ckPhone" placeholder="+27…"/>
+      </div>
+    </div>
+    <div class="toolbar" style="justify-content:flex-end; margin-top:10px">
+      <button id="cancelCheckout" class="btn ghost">Cancel</button>
+      <button id="confirmCheckout" class="btn primary" disabled>Finish</button>
+    </div>
+  </div>
+</div>
+
+<!-- END SHIFT MODAL -->
+<div id="closeModal" class="modal hidden">
+  <div class="card">
+    <h3>End Shift</h3>
+    <p class="muted">Enter manager responsible for cash-up.</p>
+    <div class="split">
+      <input id="mgrName" placeholder="Manager name"/>
+      <div class="right">
+        <button id="cancelClose" class="btn ghost">Cancel</button>
+        <button id="confirmClose" class="btn warn">End Shift</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RECALL (placeholder) -->
+<div id="recallModal" class="modal hidden">
+  <div class="card">
+    <h3>Recall Order</h3>
+    <p class="muted">Enter order code for “Pay at event”. (API hookup coming next.)</p>
+    <div class="split">
+      <input id="recCode" placeholder="Order code e.g. ABC123"/>
+      <div class="right">
+        <button id="recCancel" class="btn ghost">Close</button>
+        <button id="recGo" class="btn">Lookup</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
-const $ = (id)=>document.getElementById(id);
-const cents = (rands)=> Math.max(0, Math.round(Number(rands||0) * 100));
-const rands = (c)=> 'R' + ((c||0)/100).toFixed(2);
-const SKEY = 'vs_pos_session';
+const centsToRand = c => (Number(c||0)/100).toFixed(2);
+const randsToCents = r => Math.round(Number(r||0)*100);
+let catalog = { events:[], ticket_types_by_event:{} };
+let currentEventId = null;
+let cart = new Map(); // ticket_type_id -> {tt, qty}
+let cashup = null; // { id, cashier_name, gate_name }
 
-let BOOT = { events:[], gates:[] };
-let SESSION = null; // { id, event_id, gate_id, cashier_name, cashier_phone? }
-let CAT = { ticket_types:[], event:{} };
-let CART = new Map(); // ticket_type_id -> qty
-let PAYMENT = null;   // 'cash' | 'card'
-let BUYER = { name:'', phone:'', send_to_cashier_if_empty: true };
-
-// ---------- FLOW ----------
-async function init(){
-  const resp = await fetch('/api/pos/bootstrap').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!resp.ok){ return renderError('Kon nie POS data laai nie'); }
-  BOOT = resp;
-
-  const saved = loadSession();
-  if (saved){ SESSION = saved; return renderPOS(); }
-  renderShiftStart();
+// ---- helpers
+function el(id){ return document.getElementById(id); }
+function show(e){ e.classList.remove('hidden'); }
+function hide(e){ e.classList.add('hidden'); }
+function hideAllModals(){
+  ['shiftModal','checkoutModal','closeModal','recallModal']
+    .forEach(id => el(id)?.classList.add('hidden'));
+}
+async function fetchJSON(url, opt){ 
+  const r = await fetch(url, opt);
+  if (!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
 }
 
-function loadSession(){
-  try{ const o = JSON.parse(localStorage.getItem(SKEY)||''); if (!o?.id) return null; return o; }
-  catch{ return null; }
-}
-function saveSession(o){
-  localStorage.setItem(SKEY, JSON.stringify(o));
-}
-function clearSession(){ localStorage.removeItem(SKEY); }
+// ---- bootstrap
+async function bootstrap(){
+  // gates for shift modal
+  try{
+    const gs = await fetchJSON('/api/admin/gates');
+    el('mGate').innerHTML = (gs.gates||[]).map(g=>\`<option>\${g.name}</option>\`).join('') || '<option>Main Gate</option>';
+  }catch{}
 
-// ---------- SCREENS ----------
-function renderError(msg){
-  $('screen').innerHTML = '<div class="card"><div class="error">'+escapeHtml(msg)+'</div></div>';
-}
+  const boot = await fetchJSON('/api/pos/bootstrap', {method:'POST'});
+  catalog = boot;
+  const evSel = el('eventSel');
+  evSel.innerHTML = boot.events.map(e=>\`<option value="\${e.id}">\${e.name}</option>\`).join('');
+  currentEventId = boot.events[0]?.id || null;
+  evSel.value = currentEventId || '';
+  evSel.onchange = () => { currentEventId = Number(evSel.value||0)||null; renderTT(); resetSale(); };
 
-function renderShiftStart(){
-  const evOpts = BOOT.events.map(e=>\`<option value="\${e.id}" data-slug="\${e.slug}">\${escapeHtml(e.name)} (\${escapeHtml(e.slug)})</option>\`).join('');
-  const gOpts  = BOOT.gates.map(g=>\`<option value="\${g.id}">\${escapeHtml(g.name)}</option>\`).join('');
-  $('screen').innerHTML = \`
-    <div class="card">
-      <h2>Start shift</h2>
-      <div class="row">
-        <input id="cashier_name" placeholder="Cashier name" style="min-width:220px"/>
-        <input id="cashier_phone" placeholder="Cashier mobile (optional, e.g. 2771…)" style="min-width:240px"/>
-      </div>
-      <div class="row">
-        <label class="muted">Event<br/>
-          <select id="event_id" style="min-width:300px">\${evOpts}</select>
-        </label>
-        <label class="muted">Gate<br/>
-          <select id="gate_id" style="min-width:180px">\${gOpts}</select>
-        </label>
-        <label class="muted">Opening float (R)<br/>
-          <input id="float_r" type="number" min="0" step="1" value="0" style="width:130px"/>
-        </label>
-        <button id="startBtn" class="btn">Start</button>
-        <div id="err" class="error"></div>
-      </div>
-    </div>\`;
-
-  $('startBtn').onclick = async ()=>{
-    $('err').textContent = '';
-    const cashier_name = ($('cashier_name').value||'').trim();
-    const cashier_phone = ($('cashier_phone').value||'').trim();
-    const event_id = Number(($('event_id').value||0));
-    const gate_id  = Number(($('gate_id').value||0));
-    const opening_float_cents = cents($('float_r').value);
-    if (!cashier_name) return $('err').textContent = 'Cashier name required';
-    if (!event_id) return $('err').textContent = 'Please select event';
-    if (!gate_id) return $('err').textContent = 'Please select gate';
-    try{
-      const r = await fetch('/api/pos/session/open', {
-        method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ cashier_name, event_id, gate_id, opening_float_cents })
-      });
-      const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
-      if (!j.ok) throw new Error(j.error||'unknown');
-      SESSION = { id:j.session_id, cashier_name, cashier_phone, event_id, gate_id };
-      saveSession(SESSION);
-      renderPOS();
-    }catch(e){
-      $('err').textContent = 'Error: ' + (e.message||'unknown');
-    }
-  };
+  renderTT();
 }
 
-async function renderPOS(){
-  // Load tickets from public catalog by event slug
-  const ev = BOOT.events.find(e=>e.id===Number(SESSION.event_id));
-  if (!ev){ return renderError('Event not found for session'); }
-  const cat = await fetch('/api/public/events/'+encodeURIComponent(ev.slug))
-    .then(r=>r.json()).catch(()=>({ok:false}));
-  if (!cat.ok){ return renderError('Kon nie kaartjie lys laai nie'); }
-  CAT = { ticket_types: cat.ticket_types||[], event: cat.event||{} };
-
-  $('screen').innerHTML = \`
-    <div class="toolbar">
-      <div class="leftcol">
-        <span class="kpi" id="kTotal">R0.00</span>
-        <span class="pill" id="clock">--:--</span>
-        <span class="pill">\${escapeHtml(ev.name)}</span>
-        <button class="btn ghost" id="recallBtn">Recall order</button>
+function renderTT(){
+  const grid = el('ttGrid');
+  const list = catalog.ticket_types_by_event[currentEventId] || [];
+  if (!list.length){ grid.innerHTML = '<div class="muted">No ticket types.</div>'; return; }
+  grid.innerHTML = list.map(t => \`
+    <button class="pill" data-tt="\${t.id}">
+      <div>
+        <div>\${t.name}</div>
+        <div class="muted">R \${centsToRand(t.price_cents||0)}</div>
       </div>
-      <div class="rightcol">
-        <button class="btn warn" id="cashoutBtn">Cash-out</button>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <h2>Tickets</h2>
-        <div class="ticket-grid" id="tgrid"></div>
-      </div>
-
-      <div class="card">
-        <h2>Cart</h2>
-        <div id="cartList" class="pad muted">No items</div>
-
-        <div class="pad">
-          <input id="buyer_name" placeholder="Buyer name" style="width:100%; margin-bottom:8px"/>
-          <input id="buyer_phone" placeholder="Buyer mobile (e.g. 2771…)" style="width:100%"/>
-          <label class="row" style="margin-top:6px">
-            <input id="fallback_to_cashier" type="checkbox" checked/>
-            <span class="muted">If empty, send tickets to cashier mobile</span>
-          </label>
-        </div>
-
-        <div class="pad">
-          <label class="radio"><input type="radio" name="pay" value="cash"> Cash</label>
-          <label class="radio"><input type="radio" name="pay" value="card"> Card (Yoco)</label>
-          <div id="payErr" class="error"></div>
-        </div>
-
-        <div class="totalbar">
-          <span>Total</span>
-          <span id="totalR">R0.00</span>
-        </div>
-        <div class="pad" style="display:flex; gap:8px">
-          <button class="btn" id="finishBtn" disabled>Finish</button>
-          <button class="btn ghost" id="clearBtn">Clear</button>
-        </div>
-        <div id="msg" class="muted" style="margin-top:6px"></div>
-      </div>
-    </div>\`;
-
-  // Clock
-  const clk = ()=>{ const d=new Date(); $('clock').textContent = d.toLocaleString(); }; clk(); setInterval(clk, 1000);
-
-  // Render ticket buttons
-  const T = CAT.ticket_types;
-  $('tgrid').innerHTML = T.map(t => \`
-    <button class="tbtn" data-tid="\${t.id}">
-      <div class="tname">\${escapeHtml(t.name)}</div>
-      <div class="tprice">\${(t.price_cents||0)? rands(t.price_cents): 'FREE'}</div>
     </button>\`).join('');
-
-  document.querySelectorAll('[data-tid]').forEach(b=>{
-    b.onclick = ()=> addToCart(Number(b.dataset.tid), 1);
+  [...grid.querySelectorAll('.pill')].forEach(btn=>{
+    btn.onclick = () => addItem(Number(btn.dataset.tt));
   });
+}
 
-  document.getElementsByName('pay').forEach(r=>{
-    r.addEventListener('change', ()=>{ PAYMENT = r.value; validateFinish(); });
-  });
-
-  $('finishBtn').onclick = doFinish;
-  $('clearBtn').onclick = ()=>{ CART.clear(); renderCart(); };
-  $('recallBtn').onclick = doRecall;
-  $('cashoutBtn').onclick = doCashout;
-
+// ---- cart
+function addItem(ttId){
+  const tt = (catalog.ticket_types_by_event[currentEventId]||[]).find(x=>x.id===ttId);
+  if (!tt) return;
+  const key = String(ttId);
+  const cur = cart.get(key) || { tt, qty:0 };
+  cur.qty++;
+  cart.set(key, cur);
   renderCart();
 }
 
 function renderCart(){
-  const list = $('cartList');
-  if (CART.size===0){ list.innerHTML = '<span class="muted">No items</span>'; }
-  else{
-    list.innerHTML = Array.from(CART.entries()).map(([tid,qty])=>{
-      const tt = CAT.ticket_types.find(x=>x.id===tid) || {name:'',price_cents:0};
-      const line = qty * (tt.price_cents||0);
-      return \`
-        <div class="cart-line">
-          <div>\${escapeHtml(tt.name)}</div>
-          <div class="qtybox">
-            <button class="qbtn" data-dec="\${tid}">−</button>
-            <b id="q\${tid}">\${qty}</b>
-            <button class="qbtn" data-inc="\${tid}">+</button>
-            <span style="width:80px; text-align:right">\${(tt.price_cents||0)? rands(line): 'FREE'}</span>
-          </div>
-        </div>\`;
-    }).join('');
+  const lines = el('lines');
+  const arr = [...cart.values()].filter(v=>v.qty>0);
+  if (!arr.length){
+    lines.innerHTML = '<div class="muted">Nothing yet. Tap ticket buttons to add.</div>';
+    el('itemsCount').textContent = '0';
+    el('grand').textContent = '0.00';
+    el('checkoutBtn').disabled = true;
+    return;
+  }
+  let total = 0, count = 0;
+  lines.innerHTML = arr.map(({tt, qty})=>{
+    const unit = Number(tt.price_cents||0);
+    const sub = unit*qty; total += sub; count += qty;
+    return \`
+    <div class="line">
+      <div><strong>\${tt.name}</strong><div class="muted">R \${centsToRand(unit)}</div></div>
+      <div class="qty">
+        <button data-minus="\${tt.id}">−</button>
+        <div>\${qty}</div>
+        <button data-plus="\${tt.id}">+</button>
+      </div>
+      <div class="muted right">R \${centsToRand(unit)}</div>
+      <div class="right"><strong>R \${centsToRand(sub)}</strong></div>
+      <button class="btn ghost" data-del="\${tt.id}">×</button>
+    </div>\`;
+  }).join('');
+  lines.querySelectorAll('[data-plus]').forEach(b=>b.onclick=()=>{ cart.get(String(+b.dataset.plus)).qty++; renderCart(); });
+  lines.querySelectorAll('[data-minus]').forEach(b=>b.onclick=()=>{ const it=cart.get(String(+b.dataset.minus)); it.qty=Math.max(0,it.qty-1); if(it.qty===0) cart.delete(String(+b.dataset.minus)); renderCart(); });
+  lines.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ cart.delete(String(+b.dataset.del)); renderCart(); });
+
+  el('itemsCount').textContent = String(count);
+  el('grand').textContent = centsToRand(total);
+  el('checkoutBtn').disabled = false;
+}
+
+function resetSale(){ cart.clear(); renderCart(); }
+
+// ---- shift open/close
+async function openShift(){
+  const cashier = el('mCashier').value.trim();
+  const gate = el('mGate').value.trim();
+  const f = el('mFloat').value;
+  if (!cashier || !gate) return;
+  const res = await fetchJSON('/api/pos/cashups/open',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ cashier_name:cashier, gate_name:gate, opening_float_rands:f })
+  });
+  cashup = { id: res.id, cashier_name:cashier, gate_name:gate };
+  localStorage.setItem('pos_cashup', JSON.stringify(cashup));
+  hide(el('shiftModal'));
+  el('shiftBadge').classList.remove('hidden');
+  el('endShiftBtn').classList.remove('hidden');
+}
+
+async function closeShift(){
+  const mgr = el('mgrName').value.trim();
+  if (!mgr || !cashup?.id) return;
+  await fetchJSON('/api/pos/cashups/close',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ cashup_id: cashup.id, manager_name: mgr })
+  });
+  localStorage.removeItem('pos_cashup');
+  location.reload();
+}
+
+// ---- checkout flow
+function beginCheckout(){
+  const total = el('grand').textContent;
+  el('ckTotal').textContent = total;
+  // reset radios & button
+  document.querySelectorAll('input[name="pay"]').forEach(r=> r.checked=false );
+  el('ckName').value = ''; el('ckPhone').value='';
+  el('confirmCheckout').disabled = true;
+  hideAllModals();
+  show(el('checkoutModal'));
+}
+
+function onPayChange(){
+  const any = [...document.querySelectorAll('input[name="pay"]')].some(r=>r.checked);
+  el('confirmCheckout').disabled = !any;
+}
+
+async function confirmCheckout(){
+  const pay = [...document.querySelectorAll('input[name="pay"]')].find(r=>r.checked)?.value || '';
+  if (!pay) return;
+  const items = [...cart.values()].map(({tt, qty})=>({ ticket_type_id: tt.id, qty }));
+  const res = await fetchJSON('/api/pos/sale',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({
+      cashup_id: cashup.id,
+      event_id: currentEventId,
+      items,
+      payment_method: pay,
+      buyer_name: el('ckName').value.trim(),
+      buyer_phone: el('ckPhone').value.trim()
+    })
+  });
+  hide(el('checkoutModal'));
+  resetSale();
+  alert('Order #' + res.order_id + ' completed. Tickets: ' + (res.tickets?.length||0));
+}
+
+// ---- wire up UI
+el('openShiftBtn').onclick = openShift;
+el('endShiftBtn').onclick = ()=> { hideAllModals(); show(el('closeModal')); };
+el('cancelClose').onclick = ()=> hide(el('closeModal'));
+el('confirmClose').onclick = closeShift;
+
+el('recallBtn').onclick = () => {
+  // Only allow after a shift is open
+  if (!cashup?.id) {
+    alert('Open a shift first');
+    hideAllModals();
+    show(el('shiftModal'));
+    return;
+  }
+  hideAllModals();
+  show(el('recallModal'));
+};
+el('recCancel').onclick = ()=> hide(el('recallModal'));
+el('recGo').onclick = ()=> alert('Lookup coming in next step.');
+
+el('clearBtn').onclick = resetSale;
+el('checkoutBtn').onclick = beginCheckout;
+el('cancelCheckout').onclick = ()=> hide(el('checkoutModal'));
+document.querySelectorAll('input[name="pay"]').forEach(r=> r.addEventListener('change', onPayChange));
+el('cashBtn').onclick = ()=>{ 
+  // Quick cash: open modal pre-selected to cash
+  beginCheckout(); 
+  const r = document.querySelector('input[name="pay"][value="cash"]');
+  if (r){ r.checked = true; onPayChange(); }
+};
+
+// ---- init
+(async ()=>{
+  hideAllModals(); // start clean – no modal visible
+
+  // Restore open shift if exists
+  try{ cashup = JSON.parse(localStorage.getItem('pos_cashup')||'null'); }catch{}
+  if (cashup?.id){
+    el('shiftBadge').classList.remove('hidden');
+    el('endShiftBtn').classList.remove('hidden');
+  } else {
+    show(el('shiftModal')); // force opening a shift first
   }
 
-  document.querySelectorAll('[data-inc]').forEach(b=> b.onclick = ()=> addToCart(Number(b.dataset.inc), +1));
-  document.querySelectorAll('[data-dec]').forEach(b=> b.onclick = ()=> addToCart(Number(b.dataset.dec), -1));
-
-  // totals
-  let total = 0;
-  for (const [tid,qty] of CART){
-    const tt = CAT.ticket_types.find(x=>x.id===tid) || {price_cents:0};
-    total += qty * (tt.price_cents||0);
-  }
-  $('totalR').textContent = rands(total);
-  $('kTotal').textContent = rands(total);
-  validateFinish();
-}
-
-function addToCart(tid, delta){
-  const cur = CART.get(tid)||0;
-  const nxt = Math.max(0, cur+delta);
-  if (nxt===0) CART.delete(tid); else CART.set(tid, nxt);
-  renderCart();
-}
-
-function validateFinish(){
-  const totalCents = Array.from(CART.entries()).reduce((s,[tid,q])=>{
-    const tt = CAT.ticket_types.find(x=>x.id===tid) || {price_cents:0};
-    return s + q * (tt.price_cents||0);
-  }, 0);
-  const ok = CART.size>0 && (PAYMENT==='cash' || PAYMENT==='card');
-  $('finishBtn').disabled = !ok;
-  $('payErr').textContent = (!PAYMENT && CART.size>0) ? 'Select payment method' : '';
-}
-
-async function doFinish(){
-  $('msg').textContent = ''; $('payErr').textContent = '';
-  if (!PAYMENT){ $('payErr').textContent = 'Select payment method'; return; }
-  if (CART.size===0){ $('msg').textContent = 'Select tickets first'; return; }
-
-  const items = Array.from(CART.entries()).map(([ticket_type_id, qty])=>({ ticket_type_id, qty }));
-  const buyer_name  = ($('buyer_name').value||'').trim();
-  const buyer_phone = ($('buyer_phone').value||'').trim();
-  const send_to_cashier_if_empty = $('fallback_to_cashier').checked;
-  const body = {
-    event_id: Number(SESSION.event_id),
-    session_id: Number(SESSION.id),
-    items,
-    payment_method: PAYMENT, // 'cash' | 'card'
-    buyer_name, buyer_phone,
-    cashier_fallback_phone: (send_to_cashier_if_empty ? (SESSION.cashier_phone||'') : ''),
-    mode: 'pos'
-  };
-
-  try{
-    const r = await fetch('/api/pos/order/sale', {
-      method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify(body)
-    });
-    const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
-    if (!j.ok) throw new Error(j.error||'unknown');
-
-    // success → clear cart and show message
-    CART.clear(); PAYMENT = null; renderCart();
-    $('buyer_name').value = ''; $('buyer_phone').value = '';
-    $('msg').textContent = 'Sale completed. Order '+(j.short_code||j.order_id||'')+' issued.';
-  }catch(e){
-    $('msg').textContent = 'Error: ' + (e.message||'unknown');
-  }
-}
-
-async function doRecall(){
-  const code = prompt('Enter order code (online “pay at event”):','');
-  if (!code) return;
-  try{
-    const r = await fetch('/api/pos/order/lookup/'+encodeURIComponent(code));
-    const j = await r.json().catch(()=>({ok:false}));
-    if (!j.ok) throw new Error(j.error||'not found');
-
-    // hydrate into cart
-    CART.clear();
-    (j.order.items||[]).forEach(it=>{
-      CART.set(Number(it.ticket_type_id), Number(it.qty||0));
-    });
-    $('buyer_name').value = j.order.buyer_name||'';
-    $('buyer_phone').value = j.order.buyer_phone||'';
-    PAYMENT = null; // must choose again at POS
-    renderCart();
-    $('msg').textContent = 'Order '+(j.order.short_code||'')+' loaded. Adjust items and finish.';
-  }catch(e){
-    alert('Recall failed: '+(e.message||'unknown'));
-  }
-}
-
-async function doCashout(){
-  const mgr = prompt('Manager name (for cash-up):','');
-  if (mgr===null) return;
-  try{
-    const r = await fetch('/api/pos/session/close', {
-      method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ session_id: Number(SESSION.id), closing_manager: String(mgr||'').trim() })
-    });
-    const j = await r.json().catch(()=>({ok:false}));
-    if (!j.ok) throw new Error(j.error||'unknown');
-    clearSession();
-    alert('Shift closed. You are now logged out of POS.');
-    location.href = '/pos';
-  }catch(e){
-    alert('Could not close session: '+(e.message||'unknown'));
-  }
-}
-
-// ---------- helpers ----------
-function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-
-init();
+  await bootstrap();
+  resetSale();
+})();
 </script>
+
 </body></html>`;
