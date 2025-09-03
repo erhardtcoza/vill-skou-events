@@ -1,5 +1,6 @@
 // /src/ui/pos.js
-export const posHTML = `<!doctype html><html><head>
+export function posHTML() {
+  return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>POS · Villiersdorp Skou</title>
 <style>
@@ -90,7 +91,6 @@ $('startBtn').onclick = async () => {
     });
     const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'unknown');
-    // Ready to navigate to the selling screen (to be implemented)
     location.reload();
   } catch (e) {
     $('err').textContent = 'Error: ' + (e.message || 'unknown');
@@ -100,3 +100,4 @@ $('startBtn').onclick = async () => {
 load();
 </script>
 </body></html>`;
+}
