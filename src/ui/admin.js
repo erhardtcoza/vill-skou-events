@@ -44,8 +44,11 @@ export const adminHTML = () => `<!doctype html><html><head>
 
 <script>
 const $ = (s)=>document.querySelector(s);
-const esc = (s)=>String(s??"").replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c]));
+const esc = (s)=>String(s??"").replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;" }[c]));
 const rands = (c)=>"R"+((c||0)/100).toFixed(2);
+function toEpoch(s){ if(!s) return 0; const d=new Date(s); return Math.floor(d.getTime()/1000); }
+function fmtDate(ts){ if(!ts) return "-"; const d=new Date(ts*1000); return d.toISOString().slice(0,10); }
+function fmtDT(ts){ if(!ts) return "-"; const d=new Date(ts*1000); return d.toISOString().replace('T',' ').slice(0,16); }
 
 document.querySelectorAll(".tab").forEach(t=>{
   t.onclick = ()=>{
@@ -61,14 +64,7 @@ document.querySelectorAll(".tab").forEach(t=>{
   };
 });
 
-/* ---------- Helpers ---------- */
-function toEpoch(s){ if(!s) return 0; const d=new Date(s); return Math.floor(d.getTime()/1000); }
-function fmtDate(ts){ if(!ts) return "-"; const d=new Date(ts*1000); return d.toISOString().slice(0,10); }
-function fmtDT(ts){ if(!ts) return "-"; const d=new Date(ts*1000); return d.toISOString().replace('T',' ').slice(0,16); }
-
-/* =========================================================
- * EVENTS (same as previous working version) + Ticket Types
- * ========================================================= */
+/* ============ EVENTS + TICKET TYPES ============ */
 async function loadEvents(){
   const wrap = $("#events");
   wrap.innerHTML = '<div class="card">Loading…</div>';
@@ -76,49 +72,39 @@ async function loadEvents(){
     const res = await fetch('/api/admin/events').then(r=>r.json());
     if(!res.ok) throw new Error(res.error||'load failed');
 
-    const rows = (res.events||[]).map(ev=>`
-      <tr>
-        <td>${ev.id}</td>
-        <td>${esc(ev.slug)}</td>
-        <td>
-          <div>${esc(ev.name)}</div>
-          <div class="muted">${esc(ev.venue||"")}</div>
-        </td>
-        <td>${fmtDate(ev.starts_at)}</td>
-        <td>${fmtDate(ev.ends_at)}</td>
-        <td>${esc(ev.status)}</td>
-        <td class="right">
-          <button class="btn secondary" data-show-tt="${ev.id}" data-slug="${esc(ev.slug)}" data-name="${esc(ev.name)}">Ticket Types</button>
-        </td>
-      </tr>
-    `).join("");
+    const rows = (res.events||[]).map(function(ev){
+      return '<tr>'
+        + '<td>'+ev.id+'</td>'
+        + '<td>'+esc(ev.slug)+'</td>'
+        + '<td><div>'+esc(ev.name)+'</div><div class="muted">'+esc(ev.venue||"")+'</div></td>'
+        + '<td>'+fmtDate(ev.starts_at)+'</td>'
+        + '<td>'+fmtDate(ev.ends_at)+'</td>'
+        + '<td>'+esc(ev.status)+'</td>'
+        + '<td class="right"><button class="btn secondary" data-show-tt="'+ev.id+'" data-slug="'+esc(ev.slug)+'" data-name="'+esc(ev.name)+'">Ticket Types</button></td>'
+        + '</tr>';
+    }).join("");
 
-    wrap.innerHTML = `
-      <div class="card">
-        <h2>Events</h2>
-        <div class="row" style="margin:8px 0 12px">
-          <input id="evSlug" placeholder="slug (e.g. skou-2025)"/>
-          <input id="evName" placeholder="name"/>
-          <input id="evVenue" placeholder="venue"/>
-          <input id="evStart" type="datetime-local"/>
-          <input id="evEnd" type="datetime-local"/>
-          <select id="evStatus">
-            <option value="draft">draft</option>
-            <option value="active" selected>active</option>
-            <option value="archived">archived</option>
-          </select>
-          <button class="btn" id="evCreate">Create</button>
-          <span id="evErr" class="error"></span>
-        </div>
-        <table>
-          <thead><tr><th>ID</th><th>Slug</th><th>Name</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="7" class="muted">No events</td></tr>'}</tbody>
-        </table>
-      </div>
-      <div id="ttPane"></div>
-    `;
+    wrap.innerHTML =
+      '<div class="card">'
+        + '<h2>Events</h2>'
+        + '<div class="row" style="margin:8px 0 12px">'
+          + '<input id="evSlug" placeholder="slug (e.g. skou-2025)"/>'
+          + '<input id="evName" placeholder="name"/>'
+          + '<input id="evVenue" placeholder="venue"/>'
+          + '<input id="evStart" type="datetime-local"/>'
+          + '<input id="evEnd" type="datetime-local"/>'
+          + '<select id="evStatus"><option value="draft">draft</option><option value="active" selected>active</option><option value="archived">archived</option></select>'
+          + '<button class="btn" id="evCreate">Create</button>'
+          + '<span id="evErr" class="error"></span>'
+        + '</div>'
+        + '<table>'
+          + '<thead><tr><th>ID</th><th>Slug</th><th>Name</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>'
+          + '<tbody>'+(rows || '<tr><td colspan="7" class="muted">No events</td></tr>')+'</tbody>'
+        + '</table>'
+      + '</div>'
+      + '<div id="ttPane"></div>';
 
-    $("#evCreate").onclick = async ()=>{
+    $("#evCreate").onclick = async function(){
       $("#evErr").textContent = "";
       try{
         const body = {
@@ -136,11 +122,12 @@ async function loadEvents(){
       }catch(e){ $("#evErr").textContent = e.message||'error'; }
     };
 
-    document.querySelectorAll("[data-show-tt]").forEach(b=>{
-      b.onclick = ()=> showTicketTypes(b.dataset.showTt, b.dataset.slug, b.dataset.name);
+    document.querySelectorAll("[data-show-tt]").forEach(function(b){
+      b.onclick = function(){ showTicketTypes(b.dataset.showTt, b.dataset.slug, b.dataset.name); };
     });
+
   }catch(e){
-    wrap.innerHTML = `<div class="card"><div class="error">Error: ${esc(e.message||'load')}</div></div>`;
+    wrap.innerHTML = '<div class="card"><div class="error">Error: '+esc(e.message||'load')+'</div></div>';
   }
 }
 
@@ -148,42 +135,41 @@ async function showTicketTypes(eventId, slug, name){
   const pane = $("#ttPane");
   pane.innerHTML = '<div class="card">Loading ticket types…</div>';
   try{
-    const r = await fetch(`/api/admin/event/${eventId}/ticket-types`).then(r=>r.json());
+    const r = await fetch('/api/admin/event/'+eventId+'/ticket-types').then(r=>r.json());
     if(!r.ok) throw new Error(r.error||'load failed');
 
-    const rows = (r.ticket_types||[]).map(t=>`
-      <tr>
-        <td>${t.id}</td>
-        <td>${esc(t.name)}</td>
-        <td>${rands(t.price_cents)}</td>
-        <td>${t.capacity}</td>
-        <td>${t.per_order_limit}</td>
-        <td>${esc(t.code||'')}</td>
-        <td>${t.requires_gender? 'Yes':'No'}</td>
-      </tr>
-    `).join("");
+    const rows = (r.ticket_types||[]).map(function(t){
+      return '<tr>'
+        + '<td>'+t.id+'</td>'
+        + '<td>'+esc(t.name)+'</td>'
+        + '<td>'+rands(t.price_cents)+'</td>'
+        + '<td>'+t.capacity+'</td>'
+        + '<td>'+t.per_order_limit+'</td>'
+        + '<td>'+esc(t.code||"")+'</td>'
+        + '<td>'+(t.requires_gender ? 'Yes' : 'No')+'</td>'
+        + '</tr>';
+    }).join("");
 
-    pane.innerHTML = `
-      <div class="card">
-        <h3>Ticket types for ${esc(name)} (${esc(slug)})</h3>
-        <div class="row" style="margin:8px 0 12px">
-          <input id="ttName" placeholder="Name"/>
-          <input id="ttPrice" type="number" min="0" step="1" placeholder="Price (R)"/>
-          <select id="ttGenderReq"><option value="0">Gender req: No</option><option value="1">Gender req: Yes</option></select>
-          <input id="ttCap" type="number" min="0" step="1" placeholder="Capacity"/>
-          <input id="ttLimit" type="number" min="1" step="1" value="10" placeholder="Per-order"/>
-          <input id="ttCode" placeholder="Code (optional)"/>
-          <button class="btn" id="ttAdd">Add ticket type</button>
-          <span id="ttErr" class="error"></span>
-        </div>
-        <table>
-          <thead><tr><th>ID</th><th>Name</th><th>Price (R)</th><th>Capacity</th><th>Per-order</th><th>Code</th><th>Gender req</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="7" class="muted">No ticket types</td></tr>'}</tbody>
-        </table>
-      </div>
-    `;
+    pane.innerHTML =
+      '<div class="card">'
+        + '<h3>Ticket types for '+esc(name)+' ('+esc(slug)+')</h3>'
+        + '<div class="row" style="margin:8px 0 12px">'
+          + '<input id="ttName" placeholder="Name"/>'
+          + '<input id="ttPrice" type="number" min="0" step="1" placeholder="Price (R)"/>'
+          + '<select id="ttGenderReq"><option value="0">Gender req: No</option><option value="1">Gender req: Yes</option></select>'
+          + '<input id="ttCap" type="number" min="0" step="1" placeholder="Capacity"/>'
+          + '<input id="ttLimit" type="number" min="1" step="1" value="10" placeholder="Per-order"/>'
+          + '<input id="ttCode" placeholder="Code (optional)"/>'
+          + '<button class="btn" id="ttAdd">Add ticket type</button>'
+          + '<span id="ttErr" class="error"></span>'
+        + '</div>'
+        + '<table>'
+          + '<thead><tr><th>ID</th><th>Name</th><th>Price (R)</th><th>Capacity</th><th>Per-order</th><th>Code</th><th>Gender req</th></tr></thead>'
+          + '<tbody>'+(rows || '<tr><td colspan="7" class="muted">No ticket types</td></tr>')+'</tbody>'
+        + '</table>'
+      + '</div>';
 
-    $("#ttAdd").onclick = async ()=>{
+    $("#ttAdd").onclick = async function(){
       $("#ttErr").textContent = "";
       try{
         const body = {
@@ -194,96 +180,85 @@ async function showTicketTypes(eventId, slug, name){
           code: $("#ttCode").value.trim() || null,
           requires_gender: $("#ttGenderReq").value === "1"
         };
-        const r2 = await fetch(`/api/admin/event/${eventId}/ticket-type`,{
+        const j = await fetch('/api/admin/event/'+eventId+'/ticket-type',{
           method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)
         }).then(r=>r.json());
-        if(!r2.ok) throw new Error(r2.error||'add failed');
+        if(!j.ok) throw new Error(j.error||'add failed');
         showTicketTypes(eventId, slug, name);
       }catch(e){ $("#ttErr").textContent = e.message||'error'; }
     };
 
   }catch(e){
-    pane.innerHTML = `<div class="card"><div class="error">Error: ${esc(e.message||'load')}</div></div>`;
+    pane.innerHTML = '<div class="card"><div class="error">Error: '+esc(e.message||'load')+'</div></div>';
   }
 }
 
-/* =========================================================
- * POS SESSIONS (summary)
- * ========================================================= */
+/* ============ POS SESSIONS ============ */
 async function loadPOS(){
   const wrap = $("#pos");
   wrap.innerHTML = '<div class="card">Loading…</div>';
   try{
     const r = await fetch('/api/admin/pos/sessions').then(r=>r.json());
     if(!r.ok) throw new Error(r.error||'load failed');
-    const rows = (r.sessions||[]).map(s=>`
-      <tr>
-        <td>${s.id}</td>
-        <td>${esc(s.cashier_name||'')}</td>
-        <td>${esc(s.gate_name||'')}</td>
-        <td>${fmtDT(s.opened_at)}</td>
-        <td>${s.closed_at? fmtDT(s.closed_at) : '-'}</td>
-        <td>${rands(s.cash_cents||0)}</td>
-        <td>${rands(s.card_cents||0)}</td>
-      </tr>
-    `).join("");
-    wrap.innerHTML = `
-      <div class="card">
-        <h2>POS Sessions</h2>
-        <div class="row" style="margin:8px 0 12px">
-          <button class="btn" id="psReload">Reload</button>
-        </div>
-        <table>
-          <thead><tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Cash (R)</th><th>Card (R)</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="7" class="muted">No sessions</td></tr>'}</tbody>
-        </table>
-      </div>`;
+    const rows = (r.sessions||[]).map(function(s){
+      return '<tr>'
+        + '<td>'+s.id+'</td>'
+        + '<td>'+esc(s.cashier_name||"")+'</td>'
+        + '<td>'+esc(s.gate_name||"")+'</td>'
+        + '<td>'+fmtDT(s.opened_at)+'</td>'
+        + '<td>'+(s.closed_at?fmtDT(s.closed_at):'-')+'</td>'
+        + '<td>'+rands(s.cash_cents||0)+'</td>'
+        + '<td>'+rands(s.card_cents||0)+'</td>'
+        + '</tr>';
+    }).join("");
+    wrap.innerHTML =
+      '<div class="card">'
+        + '<h2>POS Sessions</h2>'
+        + '<div class="row" style="margin:8px 0 12px"><button class="btn" id="psReload">Reload</button></div>'
+        + '<table>'
+          + '<thead><tr><th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Cash (R)</th><th>Card (R)</th></tr></thead>'
+          + '<tbody>'+(rows || '<tr><td colspan="7" class="muted">No sessions</td></tr>')+'</tbody>'
+        + '</table>'
+      + '</div>';
     $("#psReload").onclick = loadPOS;
   }catch(e){
-    wrap.innerHTML = `<div class="card"><div class="error">Error: ${esc(e.message||'load')}</div></div>`;
+    wrap.innerHTML = '<div class="card"><div class="error">Error: '+esc(e.message||'load')+'</div></div>';
   }
 }
 
-/* =========================================================
- * USERS
- * ========================================================= */
+/* ============ USERS ============ */
 async function loadUsers(){
   const wrap = $("#users");
   wrap.innerHTML = '<div class="card">Loading…</div>';
   try{
     const r = await fetch('/api/admin/users').then(r=>r.json());
     if(!r.ok) throw new Error(r.error||'load failed');
-    const rows = (r.users||[]).map(u=>`
-      <tr>
-        <td>${u.id}</td>
-        <td>${esc(u.username)}</td>
-        <td>${esc(u.role)}</td>
-        <td class="right"><button class="btn secondary" data-del-user="${u.id}">Delete</button></td>
-      </tr>
-    `).join("");
+    const rows = (r.users||[]).map(function(u){
+      return '<tr>'
+        + '<td>'+u.id+'</td>'
+        + '<td>'+esc(u.username)+'</td>'
+        + '<td>'+esc(u.role)+'</td>'
+        + '<td class="right"><button class="btn secondary" data-del-user="'+u.id+'">Delete</button></td>'
+        + '</tr>';
+    }).join("");
 
-    wrap.innerHTML = `
-      <div class="card">
-        <h2>Users</h2>
-        <div class="row" style="margin:8px 0 12px">
-          <input id="uName" placeholder="username"/>
-          <select id="uRole">
-            <option value="admin">admin</option>
-            <option value="pos">pos</option>
-            <option value="scan">scan</option>
-          </select>
-          <input id="uHash" placeholder="password hash (optional)"/>
-          <button class="btn" id="uAdd">Add user</button>
-          <span id="uErr" class="error"></span>
-        </div>
-        <table>
-          <thead><tr><th>ID</th><th>Username</th><th>Role</th><th></th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="4" class="muted">No users</td></tr>'}</tbody>
-        </table>
-      </div>
-    `;
+    wrap.innerHTML =
+      '<div class="card">'
+        + '<h2>Users</h2>'
+        + '<div class="row" style="margin:8px 0 12px">'
+          + '<input id="uName" placeholder="username"/>'
+          + '<select id="uRole"><option value="admin">admin</option><option value="pos">pos</option><option value="scan">scan</option></select>'
+          + '<input id="uHash" placeholder="password hash (optional)"/>'
+          + '<button class="btn" id="uAdd">Add user</button>'
+          + '<span id="uErr" class="error"></span>'
+        + '</div>'
+        + '<table>'
+          + '<thead><tr><th>ID</th><th>Username</th><th>Role</th><th></th></tr></thead>'
+          + '<tbody>'+(rows || '<tr><td colspan="4" class="muted">No users</td></tr>')+'</tbody>'
+        + '</table>'
+      + '</div>';
 
-    $("#uAdd").onclick = async ()=>{
+    $("#uAdd").onclick = async function(){
       $("#uErr").textContent = "";
       try{
         const body = {
@@ -297,45 +272,44 @@ async function loadUsers(){
       }catch(e){ $("#uErr").textContent = e.message||'error'; }
     };
 
-    document.querySelectorAll("[data-del-user]").forEach(b=>{
-      b.onclick = async ()=>{
+    document.querySelectorAll("[data-del-user]").forEach(function(b){
+      b.onclick = async function(){
         if(!confirm("Delete user #"+b.dataset.delUser+"?")) return;
-        await fetch(`/api/admin/users/${b.dataset.delUser}`,{method:'DELETE'});
+        await fetch('/api/admin/users/'+b.dataset.delUser,{method:'DELETE'});
         loadUsers();
       };
     });
 
   }catch(e){
-    wrap.innerHTML = `<div class="card"><div class="error">Error: ${esc(e.message||'load')}</div></div>`;
+    wrap.innerHTML = '<div class="card"><div class="error">Error: '+esc(e.message||'load')+'</div></div>';
   }
 }
 
-/* =========================================================
- * VENDORS + PASSES
- * ========================================================= */
+/* ============ VENDORS + PASSES ============ */
 async function loadVendors(){
   const wrap = $("#vendors");
   wrap.innerHTML = '<div class="card">Loading…</div>';
   try{
     const evs = await fetch('/api/admin/events').then(r=>r.json());
     if(!evs.ok) throw new Error('events load failed');
-    const options = (evs.events||[]).map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join("");
+    const options = (evs.events||[]).map(function(e){
+      return '<option value="'+e.id+'">'+esc(e.name)+' ('+esc(e.slug)+')</option>';
+    }).join("");
 
-    wrap.innerHTML = `
-      <div class="card">
-        <h2>Vendors</h2>
-        <div class="row" style="margin:8px 0 12px">
-          <select id="vEvent">${options}</select>
-          <button class="btn" id="vLoad">Load vendors</button>
-          <span id="vErr" class="error"></span>
-        </div>
-        <div id="vList"></div>
-      </div>
-    `;
+    wrap.innerHTML =
+      '<div class="card">'
+        + '<h2>Vendors</h2>'
+        + '<div class="row" style="margin:8px 0 12px">'
+          + '<select id="vEvent">'+options+'</select>'
+          + '<button class="btn" id="vLoad">Load vendors</button>'
+          + '<span id="vErr" class="error"></span>'
+        + '</div>'
+        + '<div id="vList"></div>'
+      + '</div>';
 
-    $("#vLoad").onclick = ()=> loadVendorList(Number($("#vEvent").value||0));
+    $("#vLoad").onclick = function(){ loadVendorList(Number($("#vEvent").value||0)); };
   }catch(e){
-    wrap.innerHTML = `<div class="card"><div class="error">Error: ${esc(e.message||'load')}</div></div>`;
+    wrap.innerHTML = '<div class="card"><div class="error">Error: '+esc(e.message||'load')+'</div></div>';
   }
 }
 
@@ -343,47 +317,40 @@ async function loadVendorList(eventId){
   const box = $("#vList");
   box.innerHTML = 'Loading…';
   try{
-    const r = await fetch(`/api/admin/vendors?event_id=${eventId}`).then(r=>r.json());
+    const r = await fetch('/api/admin/vendors?event_id='+eventId).then(r=>r.json());
     if(!r.ok) throw new Error(r.error||'load failed');
 
-    const rows = (r.vendors||[]).map(v=>`
-      <tr>
-        <td>${v.id}</td>
-        <td>
-          <div>${esc(v.name)}</div>
-          <div class="muted">${esc(v.stand_number||'')}</div>
-        </td>
-        <td>${esc(v.contact_name||'')}</td>
-        <td>${esc(v.phone||'')}</td>
-        <td>${esc(v.email||'')}</td>
-        <td>${v.staff_quota||0} / ${v.vehicle_quota||0}</td>
-        <td class="right">
-          <button class="btn secondary" data-pass="${v.id}">Passes</button>
-          <button class="btn secondary" data-del-v="${v.id}">Delete</button>
-        </td>
-      </tr>
-    `).join("");
+    const rows = (r.vendors||[]).map(function(v){
+      return '<tr>'
+        + '<td>'+v.id+'</td>'
+        + '<td><div>'+esc(v.name)+'</div><div class="muted">'+esc(v.stand_number||"")+'</div></td>'
+        + '<td>'+esc(v.contact_name||"")+'</td>'
+        + '<td>'+esc(v.phone||"")+'</td>'
+        + '<td>'+esc(v.email||"")+'</td>'
+        + '<td>'+(v.staff_quota||0)+' / '+(v.vehicle_quota||0)+'</td>'
+        + '<td class="right"><button class="btn secondary" data-pass="'+v.id+'">Passes</button> <button class="btn secondary" data-del-v="'+v.id+'">Delete</button></td>'
+        + '</tr>';
+    }).join("");
 
-    box.innerHTML = `
-      <div class="row" style="margin:8px 0 12px">
-        <input id="vnName" placeholder="Vendor name"/>
-        <input id="vnContact" placeholder="Contact name"/>
-        <input id="vnPhone" placeholder="Phone"/>
-        <input id="vnEmail" placeholder="Email"/>
-        <input id="vnStand" placeholder="Stand #"/>
-        <input id="vnStaff" type="number" min="0" step="1" placeholder="Staff quota"/>
-        <input id="vnVeh" type="number" min="0" step="1" placeholder="Vehicle quota"/>
-        <button class="btn" id="vnAdd">Add vendor</button>
-        <span id="vnErr" class="error"></span>
-      </div>
-      <table>
-        <thead><tr><th>ID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Quotas S/V</th><th></th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="7" class="muted">No vendors</td></tr>'}</tbody>
-      </table>
-      <div id="vPassPane" style="margin-top:12px"></div>
-    `;
+    box.innerHTML =
+      '<div class="row" style="margin:8px 0 12px">'
+        + '<input id="vnName" placeholder="Vendor name"/>'
+        + '<input id="vnContact" placeholder="Contact name"/>'
+        + '<input id="vnPhone" placeholder="Phone"/>'
+        + '<input id="vnEmail" placeholder="Email"/>'
+        + '<input id="vnStand" placeholder="Stand #"/>'
+        + '<input id="vnStaff" type="number" min="0" step="1" placeholder="Staff quota"/>'
+        + '<input id="vnVeh" type="number" min="0" step="1" placeholder="Vehicle quota"/>'
+        + '<button class="btn" id="vnAdd">Add vendor</button>'
+        + '<span id="vnErr" class="error"></span>'
+      + '</div>'
+      + '<table>'
+        + '<thead><tr><th>ID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Quotas S/V</th><th></th></tr></thead>'
+        + '<tbody>'+(rows || '<tr><td colspan="7" class="muted">No vendors</td></tr>')+'</tbody>'
+      + '</table>'
+      + '<div id="vPassPane" style="margin-top:12px"></div>';
 
-    $("#vnAdd").onclick = async ()=>{
+    $("#vnAdd").onclick = async function(){
       $("#vnErr").textContent = "";
       try{
         const body = {
@@ -402,19 +369,19 @@ async function loadVendorList(eventId){
       }catch(e){ $("#vnErr").textContent = e.message||'error'; }
     };
 
-    document.querySelectorAll("[data-del-v]").forEach(b=>{
-      b.onclick = async ()=>{
+    document.querySelectorAll("[data-del-v]").forEach(function(b){
+      b.onclick = async function(){
         if(!confirm("Delete vendor #"+b.dataset.delV+"?")) return;
-        await fetch(`/api/admin/vendors/${b.dataset.delV}`,{method:'DELETE'});
+        await fetch('/api/admin/vendors/'+b.dataset.delV,{method:'DELETE'});
         loadVendorList(eventId);
       };
     });
-    document.querySelectorAll("[data-pass]").forEach(b=>{
-      b.onclick = ()=> loadVendorPasses(Number(b.dataset.pass), eventId);
+    document.querySelectorAll("[data-pass]").forEach(function(b){
+      b.onclick = function(){ loadVendorPasses(Number(b.dataset.pass), eventId); };
     });
 
   }catch(e){
-    box.innerHTML = `<div class="error">Error: ${esc(e.message||'load')}</div>`;
+    box.innerHTML = '<div class="error">Error: '+esc(e.message||'load')+'</div>';
   }
 }
 
@@ -422,40 +389,39 @@ async function loadVendorPasses(vendorId, eventId){
   const pane = $("#vPassPane");
   pane.innerHTML = 'Loading passes…';
   try{
-    const r = await fetch(`/api/admin/vendor-passes?vendor_id=${vendorId}`).then(r=>r.json());
+    const r = await fetch('/api/admin/vendor-passes?vendor_id='+vendorId).then(r=>r.json());
     if(!r.ok) throw new Error(r.error||'load failed');
 
-    const rows = (r.passes||[]).map(p=>`
-      <tr>
-        <td>${p.id}</td>
-        <td>${esc(p.type)}</td>
-        <td>${esc(p.label||'')}</td>
-        <td>${esc(p.vehicle_reg||'')}</td>
-        <td>${esc(p.qr)}</td>
-        <td>${esc(p.state)}</td>
-        <td class="right"><button class="btn secondary" data-del-pass="${p.id}" data-vid="${vendorId}">Delete</button></td>
-      </tr>
-    `).join("");
+    const rows = (r.passes||[]).map(function(p){
+      return '<tr>'
+        + '<td>'+p.id+'</td>'
+        + '<td>'+esc(p.type)+'</td>'
+        + '<td>'+esc(p.label||"")+'</td>'
+        + '<td>'+esc(p.vehicle_reg||"")+'</td>'
+        + '<td>'+esc(p.qr)+'</td>'
+        + '<td>'+esc(p.state)+'</td>'
+        + '<td class="right"><button class="btn secondary" data-del-pass="'+p.id+'" data-vid="'+vendorId+'">Delete</button></td>'
+        + '</tr>';
+    }).join("");
 
-    pane.innerHTML = `
-      <div class="card">
-        <h3>Vendor #${vendorId} passes</h3>
-        <div class="row" style="margin:8px 0 12px">
-          <select id="vpType"><option value="staff">staff</option><option value="vehicle">vehicle</option></select>
-          <input id="vpLabel" placeholder="Label (e.g. John D.)"/>
-          <input id="vpReg" placeholder="Vehicle reg (if vehicle)"/>
-          <input id="vpQR" placeholder="QR text"/>
-          <button class="btn" id="vpAdd">Add pass</button>
-          <span id="vpErr" class="error"></span>
-        </div>
-        <table>
-          <thead><tr><th>ID</th><th>Type</th><th>Label</th><th>Reg</th><th>QR</th><th>State</th><th></th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="7" class="muted">No passes</td></tr>'}</tbody>
-        </table>
-      </div>
-    `;
+    pane.innerHTML =
+      '<div class="card">'
+        + '<h3>Vendor #'+vendorId+' passes</h3>'
+        + '<div class="row" style="margin:8px 0 12px">'
+          + '<select id="vpType"><option value="staff">staff</option><option value="vehicle">vehicle</option></select>'
+          + '<input id="vpLabel" placeholder="Label (e.g. John D.)"/>'
+          + '<input id="vpReg" placeholder="Vehicle reg (if vehicle)"/>'
+          + '<input id="vpQR" placeholder="QR text"/>'
+          + '<button class="btn" id="vpAdd">Add pass</button>'
+          + '<span id="vpErr" class="error"></span>'
+        + '</div>'
+        + '<table>'
+          + '<thead><tr><th>ID</th><th>Type</th><th>Label</th><th>Reg</th><th>QR</th><th>State</th><th></th></tr></thead>'
+          + '<tbody>'+(rows || '<tr><td colspan="7" class="muted">No passes</td></tr>')+'</tbody>'
+        + '</table>'
+      + '</div>';
 
-    $("#vpAdd").onclick = async ()=>{
+    $("#vpAdd").onclick = async function(){
       $("#vpErr").textContent = "";
       try{
         const body = {
@@ -471,46 +437,45 @@ async function loadVendorPasses(vendorId, eventId){
       }catch(e){ $("#vpErr").textContent = e.message||'error'; }
     };
 
-    document.querySelectorAll("[data-del-pass]").forEach(b=>{
-      b.onclick = async ()=>{
+    document.querySelectorAll("[data-del-pass]").forEach(function(b){
+      b.onclick = async function(){
         if(!confirm("Delete pass #"+b.dataset.delPass+"?")) return;
-        await fetch(`/api/admin/vendor-passes/${b.dataset.delPass}`,{method:'DELETE'});
+        await fetch('/api/admin/vendor-passes/'+b.dataset.delPass,{method:'DELETE'});
         loadVendorPasses(Number(b.dataset.vid), eventId);
       };
     });
 
   }catch(e){
-    pane.innerHTML = `<div class="error">Error: ${esc(e.message||'load')}</div>`;
+    pane.innerHTML = '<div class="error">Error: '+esc(e.message||'load')+'</div>';
   }
 }
 
-/* =========================================================
- * TICKETS ANALYTICS (NEW)
- * ========================================================= */
+/* ============ TICKETS ANALYTICS ============ */
 async function loadTickets(){
   const wrap = $("#tickets");
   wrap.innerHTML = '<div class="card">Loading…</div>';
   try{
     const evs = await fetch('/api/admin/events').then(r=>r.json());
     if(!evs.ok) throw new Error('events load failed');
-    const opts = (evs.events||[]).map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join("");
+    const opts = (evs.events||[]).map(function(e){
+      return '<option value="'+e.id+'">'+esc(e.name)+' ('+esc(e.slug)+')</option>';
+    }).join("");
 
-    wrap.innerHTML = `
-      <div class="card">
-        <h2>Tickets</h2>
-        <div class="row" style="margin:8px 0 12px">
-          <select id="tEvent">${opts}</select>
-          <button class="btn" id="tLoad">Load</button>
-          <span id="tErr" class="error"></span>
-        </div>
-        <div id="tSummary"></div>
-        <div id="tDetails" style="margin-top:12px"></div>
-      </div>
-    `;
+    wrap.innerHTML =
+      '<div class="card">'
+        + '<h2>Tickets</h2>'
+        + '<div class="row" style="margin:8px 0 12px">'
+          + '<select id="tEvent">'+opts+'</select>'
+          + '<button class="btn" id="tLoad">Load</button>'
+          + '<span id="tErr" class="error"></span>'
+        + '</div>'
+        + '<div id="tSummary"></div>'
+        + '<div id="tDetails" style="margin-top:12px"></div>'
+      + '</div>';
 
-    $("#tLoad").onclick = ()=> loadTicketSummary(Number($("#tEvent").value||0));
+    $("#tLoad").onclick = function(){ loadTicketSummary(Number($("#tEvent").value||0)); };
   }catch(e){
-    wrap.innerHTML = `<div class="card"><div class="error">Error: ${esc(e.message||'load')}</div></div>`;
+    wrap.innerHTML = '<div class="card"><div class="error">Error: '+esc(e.message||'load')+'</div></div>';
   }
 }
 
@@ -519,52 +484,52 @@ async function loadTicketSummary(eventId){
   box.innerHTML = 'Loading summary…';
   $("#tDetails").innerHTML = '';
   try{
-    const r = await fetch(`/api/admin/tickets/summary?event_id=${eventId}`).then(r=>r.json());
+    const r = await fetch('/api/admin/tickets/summary?event_id='+eventId).then(r=>r.json());
     if(!r.ok) throw new Error(r.error||'load failed');
 
     const head = r.totals
-      ? `<div class="row" style="margin:8px 0">
-           <span class="pill">Total: ${r.totals.total||0}</span>
-           <span class="pill">In: ${r.totals.in_count||0}</span>
-           <span class="pill">Out: ${r.totals.out_count||0}</span>
-           <span class="pill">Unused: ${r.totals.unused_count||0}</span>
-           <span class="pill">Void: ${r.totals.void_count||0}</span>
-         </div>` : '';
+      ? '<div class="row" style="margin:8px 0">'
+          + '<span class="pill">Total: '+(r.totals.total||0)+'</span>'
+          + '<span class="pill">In: '+(r.totals.in_count||0)+'</span>'
+          + '<span class="pill">Out: '+(r.totals.out_count||0)+'</span>'
+          + '<span class="pill">Unused: '+(r.totals.unused_count||0)+'</span>'
+          + '<span class="pill">Void: '+(r.totals.void_count||0)+'</span>'
+        + '</div>'
+      : '';
 
-    const rows = (r.rows||[]).map(x=>`
-      <tr>
-        <td>${x.ticket_type_id}</td>
-        <td>${esc(x.ticket_type_name)}</td>
-        <td>${x.total||0}</td>
-        <td>${x.in_count||0}</td>
-        <td>${x.out_count||0}</td>
-        <td>${x.unused_count||0}</td>
-        <td>${x.void_count||0}</td>
-      </tr>
-    `).join("");
+    const rows = (r.rows||[]).map(function(x){
+      return '<tr>'
+        + '<td>'+x.ticket_type_id+'</td>'
+        + '<td>'+esc(x.ticket_type_name)+'</td>'
+        + '<td>'+ (x.total||0) +'</td>'
+        + '<td>'+ (x.in_count||0) +'</td>'
+        + '<td>'+ (x.out_count||0) +'</td>'
+        + '<td>'+ (x.unused_count||0) +'</td>'
+        + '<td>'+ (x.void_count||0) +'</td>'
+        + '</tr>';
+    }).join("");
 
-    box.innerHTML = `
-      ${head}
-      <table>
-        <thead><tr><th>Type ID</th><th>Name</th><th>Total</th><th>In</th><th>Out</th><th>Unused</th><th>Void</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="7" class="muted">No tickets</td></tr>'}</tbody>
-      </table>
-      <div class="row" style="margin-top:10px">
-        <span class="muted">Details:</span>
-        <button class="btn secondary" data-tstate="">All</button>
-        <button class="btn secondary" data-tstate="in">In</button>
-        <button class="btn secondary" data-tstate="out">Out</button>
-        <button class="btn secondary" data-tstate="unused">Unused</button>
-        <button class="btn secondary" data-tstate="void">Void</button>
-      </div>
-    `;
+    box.innerHTML =
+      head
+      + '<table>'
+        + '<thead><tr><th>Type ID</th><th>Name</th><th>Total</th><th>In</th><th>Out</th><th>Unused</th><th>Void</th></tr></thead>'
+        + '<tbody>'+(rows || '<tr><td colspan="7" class="muted">No tickets</td></tr>')+'</tbody>'
+      + '</table>'
+      + '<div class="row" style="margin-top:10px">'
+        + '<span class="muted">Details:</span>'
+        + '<button class="btn secondary" data-tstate="">All</button>'
+        + '<button class="btn secondary" data-tstate="in">In</button>'
+        + '<button class="btn secondary" data-tstate="out">Out</button>'
+        + '<button class="btn secondary" data-tstate="unused">Unused</button>'
+        + '<button class="btn secondary" data-tstate="void">Void</button>'
+      + '</div>';
 
-    document.querySelectorAll("[data-tstate]").forEach(b=>{
-      b.onclick = ()=> loadTicketDetails(eventId, b.dataset.tstate);
+    document.querySelectorAll("[data-tstate]").forEach(function(b){
+      b.onclick = function(){ loadTicketDetails(eventId, b.dataset.tstate); };
     });
 
   }catch(e){
-    box.innerHTML = `<div class="error">Error: ${esc(e.message||'load')}</div>`;
+    box.innerHTML = '<div class="error">Error: '+esc(e.message||'load')+'</div>';
   }
 }
 
@@ -572,29 +537,28 @@ async function loadTicketDetails(eventId, state){
   const box = $("#tDetails");
   box.innerHTML = 'Loading details…';
   try{
-    const r = await fetch(`/api/admin/tickets?event_id=${eventId}${state?`&state=${encodeURIComponent(state)}`:''}`).then(r=>r.json());
+    const r = await fetch('/api/admin/tickets?event_id='+eventId+(state?('&state='+encodeURIComponent(state)):'')).then(r=>r.json());
     if(!r.ok) throw new Error(r.error||'load failed');
 
-    const rows = (r.tickets||[]).map(t=>`
-      <tr>
-        <td>${t.id}</td>
-        <td>${t.ticket_type_id}</td>
-        <td>${esc(t.ticket_type_name||'')}</td>
-        <td>${esc(t.state||'')}</td>
-        <td>${t.issued_at? fmtDT(t.issued_at): '-'}</td>
-        <td>${t.first_in_at? fmtDT(t.first_in_at): '-'}</td>
-        <td>${t.last_out_at? fmtDT(t.last_out_at): '-'}</td>
-      </tr>
-    `).join("");
+    const rows = (r.tickets||[]).map(function(t){
+      return '<tr>'
+        + '<td>'+t.id+'</td>'
+        + '<td>'+t.ticket_type_id+'</td>'
+        + '<td>'+esc(t.ticket_type_name||"")+'</td>'
+        + '<td>'+esc(t.state||"")+'</td>'
+        + '<td>'+(t.issued_at?fmtDT(t.issued_at):'-')+'</td>'
+        + '<td>'+(t.first_in_at?fmtDT(t.first_in_at):'-')+'</td>'
+        + '<td>'+(t.last_out_at?fmtDT(t.last_out_at):'-')+'</td>'
+        + '</tr>';
+    }).join("");
 
-    box.innerHTML = `
-      <table>
-        <thead><tr><th>ID</th><th>Type ID</th><th>Type</th><th>State</th><th>Issued</th><th>First in</th><th>Last out</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="7" class="muted">No rows</td></tr>'}</tbody>
-      </table>
-    `;
+    box.innerHTML =
+      '<table>'
+        + '<thead><tr><th>ID</th><th>Type ID</th><th>Type</th><th>State</th><th>Issued</th><th>First in</th><th>Last out</th></tr></thead>'
+        + '<tbody>'+(rows || '<tr><td colspan="7" class="muted">No rows</td></tr>')+'</tbody>'
+      + '</table>';
   }catch(e){
-    box.innerHTML = `<div class="error">Error: ${esc(e.message||'load')}</div>`;
+    box.innerHTML = '<div class="error">Error: '+esc(e.message||'load')+'</div>';
   }
 }
 
