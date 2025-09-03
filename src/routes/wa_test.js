@@ -7,7 +7,7 @@ import { json } from "../utils/http.js";
 // ---------- CHANGE THESE FOR YOUR TEST ----------
 const TEST_VERIFY_TOKEN     = "vs-verify-2025";            // must exactly match what you enter in Meta UI
 const TEST_PHONE_NUMBER_ID  = "780229961841826";            // your WA phone number id
-const TEST_ACCESS_TOKEN     = "PASTE_YOUR_LONG_LIVED_TOKEN"; // Bearer token from Meta (temporary ok)
+const TEST_ACCESS_TOKEN     = "EAFdiPX1jF1cBPfRwH05ag1wB8L4kEFQVNe85KDq0vY7dyhZCd2XZAZCwMffVnjXmJwDtklMHUPEBIM7ZBiupaT9PuORBYv3fBle3omsFKWmtwJuO2AvdsNH8lumV7ZAqW0KlagJl0sPZAthK2KVCR4JogcpTjzBByC3ZAWLK0jPr0awZCgPUU4JYtOA50k8ZC9ZAd7WAZDZD"; // Bearer token from Meta (temporary ok)
 const TEST_TEMPLATE_NAME    = "hello_world";                // or your approved template
 const TEST_TEMPLATE_LANG    = "en_US";                      // e.g. "af" or "en_US"
 // ------------------------------------------------
