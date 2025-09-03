@@ -3,366 +3,354 @@ export const posHTML = () => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>POS · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --bg:#f7f7f8; --muted:#667085; }
+  :root{ --green:#0a7d2b; --bg:#f6f7f8; --muted:#6b7280; }
   *{ box-sizing:border-box }
-  body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#111 }
-  .wrap{ max-width:1100px; margin:16px auto; padding:0 14px }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 24px rgba(0,0,0,.08); padding:16px; margin-bottom:16px }
-  h1,h2{ margin:0 0 12px }
-  label{ display:block; font-size:14px; color:#222; margin:8px 0 6px }
-  input,select{ width:100%; padding:12px; border:1px solid #e5e7eb; border-radius:10px; font-size:16px }
-  .row{ display:flex; gap:10px; flex-wrap:wrap }
-  .btn{ padding:12px 16px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
-  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
-  .btn[disabled]{ opacity:.5; cursor:not-allowed }
+  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  header{ display:flex; align-items:center; gap:8px; justify-content:space-between; padding:14px 16px; background:#fff; border-bottom:1px solid #e5e7eb; position:sticky; top:0; z-index:10 }
+  .brand{ font-weight:800; letter-spacing:.2px }
+  .tag{ font-size:12px; color:#fff; background:var(--green); padding:4px 8px; border-radius:999px }
+  .row{ display:flex; gap:16px; padding:16px; max-width:1200px; margin:0 auto }
+  .col{ flex:1; }
+  .panel{ background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:12px }
+  .pill{ display:flex; align-items:center; justify-content:center; min-height:68px; border:1px solid #e5e7eb; border-radius:14px; background:#fff; cursor:pointer; font-weight:700 }
+  .pill:hover{ outline:3px solid #e5e7eb }
+  .qty{ display:flex; align-items:center; gap:6px }
+  .qty button{ width:36px; height:36px; border-radius:10px; border:1px solid #d1d5db; background:#fff; font-size:20px; font-weight:700; cursor:pointer }
+  .line{ display:grid; grid-template-columns:1fr 90px 90px 110px 36px; align-items:center; gap:8px; padding:8px 0; border-bottom:1px dashed #f0f0f0 }
   .muted{ color:var(--muted) }
-  .grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px }
-  .pill{ border:1px solid #e5e7eb; border-radius:999px; padding:14px 16px; text-align:center; cursor:pointer; user-select:none }
-  .pill:active{ transform:scale(.98) }
-  .summary{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
-  .sumtotal{ font-size:28px; font-weight:800 }
-  .line{ display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #eee }
-  .topbar{ display:flex; justify-content:space-between; align-items:center; }
-  .danger{ background:#8b0000; color:#fff; border-color:transparent }
-  .ok{ color:var(--green) } .err{ color:#b00020 }
-  .tiny{ font-size:12px }
-  .selected{ outline:3px solid var(--green); }
+  .total{ font-size:28px; font-weight:800 }
+  .btn{ border:none; padding:12px 14px; border-radius:12px; cursor:pointer; font-weight:700 }
+  .btn.primary{ background:var(--green); color:#fff }
+  .btn.ghost{ background:#fff; border:1px solid #e5e7eb }
+  .btn.warn{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca }
+  .toolbar{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  select, input{ padding:10px 12px; border:1px solid #d1d5db; border-radius:10px; }
+  .right{ text-align:right }
+  .center{ text-align:center }
+  .hidden{ display:none }
+  /* modal */
+  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; padding:16px; z-index:40 }
+  .card{ background:#fff; border-radius:16px; padding:16px; width:min(560px,96vw); box-shadow:0 30px 60px rgba(0,0,0,.2) }
+  .card h3{ margin:0 0 8px }
+  .split{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
+  @media (max-width:900px){ .row{ flex-direction:column } .line{ grid-template-columns:1fr 70px 80px 100px 36px } }
 </style>
-</head><body><div class="wrap">
+</head><body>
 
-  <!-- Screen: Start Shift -->
-  <div id="screen-start" class="card">
-    <h1>Begin skof</h1>
-    <div class="row">
-      <label style="flex:2">Kassier Naam
-        <input id="iCashier" placeholder="Jou naam"/>
-      </label>
-      <label style="flex:2">Ingang
-        <select id="iGate"></select>
-      </label>
-      <label style="flex:1">Opening float (R)
-        <input id="iFloat" type="number" step="0.01" placeholder="0.00"/>
-      </label>
-    </div>
-    <div class="row">
-      <button class="btn primary" id="btnStart">Begin</button>
-      <span id="startMsg" class="muted"></span>
+<header>
+  <div class="toolbar">
+    <span class="brand">POS</span>
+    <span id="shiftBadge" class="tag hidden">Shift open</span>
+    <button id="endShiftBtn" class="btn warn hidden">End Shift</button>
+  </div>
+  <div class="toolbar">
+    <button id="recallBtn" class="btn ghost">Recall order</button>
+    <select id="eventSel"></select>
+  </div>
+</header>
+
+<div class="row">
+  <div class="col">
+    <div class="panel">
+      <div class="toolbar" style="margin-bottom:10px;">
+        <strong>Ticket Types</strong>
+      </div>
+      <div id="ttGrid" class="grid"></div>
     </div>
   </div>
 
-  <!-- Screen: Sell -->
-  <div id="screen-sell" style="display:none">
-    <div class="card topbar">
-      <div class="row" style="align-items:center">
-        <button class="btn" id="btnEnd">End shift</button>
-        <div class="muted tiny" id="who"></div>
+  <div class="col" style="max-width:520px;">
+    <div class="panel">
+      <div class="toolbar" style="justify-content:space-between">
+        <strong>Current Sale</strong>
+        <button id="clearBtn" class="btn ghost">Clear</button>
       </div>
-      <div class="row" style="align-items:center">
-        <input id="code" placeholder="Recall order code (pickup code)"/>
-        <button class="btn" id="btnRecall">Recall</button>
-        <span id="recallMsg" class="muted tiny"></span>
+      <div id="lines"></div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:12px;">
+        <div class="muted">Items: <span id="itemsCount">0</span></div>
+        <div class="total">R <span id="grand">0.00</span></div>
+      </div>
+      <div class="split" style="margin-top:12px">
+        <button id="checkoutBtn" class="btn primary" disabled>Proceed</button>
+        <button id="cashBtn" class="btn ghost">Cash</button>
+      </div>
+      <small class="muted">Tip: tap ticket buttons. Each tap adds one.</small>
+    </div>
+  </div>
+</div>
+
+<!-- SHIFT MODAL -->
+<div id="shiftModal" class="modal">
+  <div class="card">
+    <h3>Open Shift</h3>
+    <div class="split">
+      <div>
+        <label class="muted">Cashier name</label>
+        <input id="mCashier" placeholder="e.g. Jaco"/>
+      </div>
+      <div>
+        <label class="muted">Gate</label>
+        <select id="mGate"></select>
+      </div>
+      <div>
+        <label class="muted">Opening float (R)</label>
+        <input id="mFloat" type="number" inputmode="decimal" step="0.01" value="0.00"/>
+      </div>
+      <div class="center" style="display:flex; align-items:end; justify-content:end">
+        <button id="openShiftBtn" class="btn primary">Start</button>
       </div>
     </div>
+  </div>
+</div>
 
-    <div class="card">
-      <div class="summary">
-        <div>
-          <h2 id="evName">Event</h2>
-          <div class="muted tiny" id="evMeta"></div>
+<!-- CHECKOUT MODAL -->
+<div id="checkoutModal" class="modal hidden">
+  <div class="card">
+    <h3>Finish Order</h3>
+    <div class="split">
+      <div>
+        <label class="muted">Payment method (required)</label>
+        <div class="toolbar">
+          <label><input type="radio" name="pay" value="cash"> Cash</label>
+          <label><input type="radio" name="pay" value="card"> Card (Yoco)</label>
         </div>
-        <div class="sumtotal" id="sum">R0.00</div>
       </div>
-      <div id="cartLines" style="margin-top:6px"></div>
-      <div class="row" style="justify-content:flex-end;margin-top:10px">
-        <button class="btn" id="btnClear">Clear</button>
-        <button class="btn primary" id="btnProcess">Process</button>
+      <div class="right">
+        <div class="muted">Total</div>
+        <div class="total">R <span id="ckTotal">0.00</span></div>
+      </div>
+      <div>
+        <label class="muted">Buyer name</label>
+        <input id="ckName" placeholder="(optional)"/>
+      </div>
+      <div>
+        <label class="muted">Buyer phone (for WhatsApp)</label>
+        <input id="ckPhone" placeholder="+27…"/>
       </div>
     </div>
-
-    <div class="card">
-      <h2>Kaartjie tipes</h2>
-      <p class="muted tiny">Tik die knoppies. Elke tik voeg 1 kaartjie by.</p>
-      <div id="pills" class="grid"></div>
+    <div class="toolbar" style="justify-content:flex-end; margin-top:10px">
+      <button id="cancelCheckout" class="btn ghost">Cancel</button>
+      <button id="confirmCheckout" class="btn primary" disabled>Finish</button>
     </div>
   </div>
+</div>
 
-  <!-- Screen: Payment (mandatory method + purchaser info) -->
-  <div id="screen-pay" class="card" style="display:none">
-    <h2>Betaling</h2>
-    <div class="sumtotal" id="payTotal">R0.00</div>
-    <p class="muted tiny">Kies betaalmetode:</p>
-    <div class="row" style="margin:10px 0">
-      <button class="btn" id="payCash">Kontant</button>
-      <button class="btn" id="payCard">Kaart</button>
-    </div>
-    <p class="muted tiny">Kliënt besonderhede:</p>
-    <div class="row" style="margin-top:8px">
-      <label style="flex:2">Naam <input id="cName"/></label>
-      <label style="flex:2">Selfoon <input id="cPhone"/></label>
-    </div>
-    <div class="row" style="margin-top:16px">
-      <button class="btn primary" id="btnComplete" disabled>Voltooi</button>
-      <button class="btn" id="btnBackSell">Terug</button>
-      <span id="payMsg" class="muted"></span>
+<!-- END SHIFT MODAL -->
+<div id="closeModal" class="modal hidden">
+  <div class="card">
+    <h3>End Shift</h3>
+    <p class="muted">Enter manager responsible for cash-up.</p>
+    <div class="split">
+      <input id="mgrName" placeholder="Manager name"/>
+      <div class="right">
+        <button id="cancelClose" class="btn ghost">Cancel</button>
+        <button id="confirmClose" class="btn warn">End Shift</button>
+      </div>
     </div>
   </div>
+</div>
 
-  <!-- Screen: End Shift -->
-  <div id="screen-end" class="card" style="display:none">
-    <h2>Beëindig skof</h2>
-    <label>Bestuurder Naam <input id="mName" placeholder="Manager"/></label>
-    <div class="row">
-      <button class="btn danger" id="btnRealEnd">End shift</button>
-      <button class="btn" id="btnCancelEnd">Cancel</button>
-      <span id="endMsg" class="muted"></span>
+<!-- RECALL (placeholder) -->
+<div id="recallModal" class="modal hidden">
+  <div class="card">
+    <h3>Recall Order</h3>
+    <p class="muted">Enter order code for “Pay at event”. (API hookup coming next.)</p>
+    <div class="split">
+      <input id="recCode" placeholder="Order code e.g. ABC123"/>
+      <div class="right">
+        <button id="recCancel" class="btn ghost">Close</button>
+        <button id="recGo" class="btn">Lookup</button>
+      </div>
     </div>
   </div>
-
 </div>
 
 <script>
-const R = (c)=>'R'+((c||0)/100).toFixed(2);
-let state = {
-  session: null,
-  event: null,
-  ticketTypes: [],
-  gateId: null,
-  cart: new Map(), // ticket_type_id -> qty
-  mode: 'new',     // 'new' or 'recall'
-  recalledOrder: null
-};
-let _payMethod = null;
+const centsToRand = c => (Number(c||0)/100).toFixed(2);
+const randsToCents = r => Math.round(Number(r||0)*100);
+let catalog = { events:[], ticket_types_by_event:{} };
+let currentEventId = null;
+let cart = new Map(); // ticket_type_id -> {tt, qty}
+let cashup = null; // { id, cashier_name, gate_name }
 
-/* ---------- Bootstrapping ---------- */
-async function boot(prefCashier, prefGate){
-  const body = { cashier_name: prefCashier||'', gate_id: prefGate||null };
-  const r = await fetch('/api/pos/bootstrap',{
-    method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)
-  }).then(r=>r.json()).catch(()=>({ok:false}));
-  const gateSel = document.getElementById('iGate');
-  gateSel.innerHTML = (r.gates||[]).map(g=>'<option value="'+g.id+'">'+g.name+'</option>').join('');
-  if (prefGate) gateSel.value = String(prefGate);
-  state.event = r.event;
-  state.ticketTypes = r.ticket_types||[];
-  if (r.session){
-    state.session = r.session;
-    state.gateId = r.session.gate_id;
-    document.getElementById('iCashier').value = r.session.cashier_name;
-    gateSel.value = String(r.session.gate_id);
-    gotoSell();
-  }
-}
-boot();
+function el(id){ return document.getElementById(id); }
+function show(e){ e.classList.remove('hidden'); }
+function hide(e){ e.classList.add('hidden'); }
 
-/* ---------- Rendering ---------- */
-function renderCart(){
-  let total=0;
-  const lines=[];
-  for (const [id, qty] of state.cart.entries()){
-    const tt = state.ticketTypes.find(t=>Number(t.id)===Number(id));
-    const name = tt?tt.name:'Ticket';
-    const pc = tt?Number(tt.price_cents)||0:0;
-    const lt = pc*qty;
-    total += lt;
-    lines.push('<div class="line"><div>'+name+' × '+qty+'</div><div>'+R(lt)+'</div></div>');
-  }
-  document.getElementById('cartLines').innerHTML = lines.join('') || '<div class="muted tiny">Geen items nie.</div>';
-  document.getElementById('sum').textContent = R(total);
+async function fetchJSON(url, opt){ 
+  const r = await fetch(url, opt);
+  if (!r.ok) throw new Error('HTTP '+r.status);
+  return r.json();
 }
 
-function renderPills(){
-  const p = document.getElementById('pills');
-  p.innerHTML = state.ticketTypes.map(t=> 
-    '<div class="pill" data-id="'+t.id+'">'+t.name+'<br><span class="muted tiny">'+(t.price_cents?R(t.price_cents):'FREE')+'</span></div>'
-  ).join('');
-  p.querySelectorAll('.pill').forEach(el=>{
-    el.onclick = ()=>{
-      const id = Number(el.getAttribute('data-id'));
-      state.mode = 'new';
-      state.recalledOrder = null;
-      state.cart.set(id, (state.cart.get(id)||0)+1);
-      renderCart();
-    };
+async function bootstrap(){
+  // gates for shift modal
+  try{
+    const gs = await fetchJSON('/api/admin/gates');
+    el('mGate').innerHTML = (gs.gates||[]).map(g=>\`<option>\${g.name}</option>\`).join('') || '<option>Main Gate</option>';
+  }catch{}
+
+  const boot = await fetchJSON('/api/pos/bootstrap', {method:'POST'});
+  catalog = boot;
+  const evSel = el('eventSel');
+  evSel.innerHTML = boot.events.map(e=>\`<option value="\${e.id}">\${e.name}</option>\`).join('');
+  currentEventId = boot.events[0]?.id || null;
+  evSel.value = currentEventId || '';
+  evSel.onchange = () => { currentEventId = Number(evSel.value||0)||null; renderTT(); resetSale(); };
+
+  renderTT();
+}
+
+function renderTT(){
+  const grid = el('ttGrid');
+  const list = catalog.ticket_types_by_event[currentEventId] || [];
+  if (!list.length){ grid.innerHTML = '<div class="muted">No ticket types.</div>'; return; }
+  grid.innerHTML = list.map(t => \`
+    <button class="pill" data-tt="\${t.id}">
+      <div>
+        <div>\${t.name}</div>
+        <div class="muted">R \${centsToRand(t.price_cents||0)}</div>
+      </div>
+    </button>\`).join('');
+  [...grid.querySelectorAll('.pill')].forEach(btn=>{
+    btn.onclick = () => addItem(Number(btn.dataset.tt));
   });
 }
 
-function gotoSell(){
-  document.getElementById('screen-start').style.display='none';
-  document.getElementById('screen-pay').style.display='none';
-  document.getElementById('screen-end').style.display='none';
-  document.getElementById('screen-sell').style.display='block';
-  document.getElementById('who').textContent =
-    'Kassier: '+state.session.cashier_name+' · Ingang: '+document.getElementById('iGate').selectedOptions[0].textContent;
-  document.getElementById('evName').textContent = state.event?state.event.name:'';
-  document.getElementById('evMeta').textContent = state.event ? new Date(state.event.starts_at*1000).toLocaleDateString() : '';
-  renderPills(); renderCart();
-}
-
-/* ---------- Start Shift ---------- */
-document.getElementById('btnStart').onclick = async ()=>{
-  const cashier = document.getElementById('iCashier').value.trim();
-  const gate_id = Number(document.getElementById('iGate').value||0);
-  const opening = Number(document.getElementById('iFloat').value||0);
-  const msg = document.getElementById('startMsg');
-  if (!cashier || !gate_id){ msg.textContent='Vul naam en ingang in.'; return; }
-  const r = await fetch('/api/pos/sessions/start',{
-    method:'POST', headers:{'content-type':'application/json'},
-    body:JSON.stringify({cashier_name:cashier,gate_id,opening_float_rands:opening})
-  }).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ msg.textContent = r.error||'Kon nie begin nie'; return; }
-  state.session = { id:r.session_id, cashier_name:cashier, gate_id };
-  state.gateId = gate_id;
-  gotoSell();
-};
-
-/* ---------- Sell / Cart ---------- */
-document.getElementById('btnClear').onclick = ()=>{ state.cart.clear(); renderCart(); };
-
-document.getElementById('btnProcess').onclick = ()=>{
-  if (!state.cart.size && !state.recalledOrder){ alert('Geen items nie.'); return; }
-  // reset payment screen
-  _payMethod=null;
-  document.getElementById('payCash').classList.remove('primary','selected');
-  document.getElementById('payCard').classList.remove('primary','selected');
-  document.getElementById('cName').value='';
-  document.getElementById('cPhone').value='';
-  updatePayScreen();
-  document.getElementById('screen-sell').style.display='none';
-  document.getElementById('screen-pay').style.display='block';
-};
-
-/* ---------- Recall Order ---------- */
-document.getElementById('btnRecall').onclick = async ()=>{
-  const code = document.getElementById('code').value.trim();
-  const m = document.getElementById('recallMsg');
-  if (!code){ m.textContent='Voer kode in'; return; }
-  m.textContent='…';
-  const r = await fetch('/api/pos/orders/lookup/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ m.textContent=r.error||'Nie gevind nie'; return; }
-  // move items into cart for editing
-  state.cart.clear();
-  for (const it of (r.items||[])) state.cart.set(Number(it.ticket_type_id), Number(it.qty)||0);
-  state.recalledOrder = r;
-  state.mode = 'recall';
-  m.textContent = 'Bestelling gelaai';
+function addItem(ttId){
+  const tt = (catalog.ticket_types_by_event[currentEventId]||[]).find(x=>x.id===ttId);
+  if (!tt) return;
+  const key = String(ttId);
+  const cur = cart.get(key) || { tt, qty:0 };
+  cur.qty++;
+  cart.set(key, cur);
   renderCart();
-};
-
-/* ---------- Payment Screen (mandatory) ---------- */
-function updatePayScreen(){
-  // Compute total from cart
-  let total=0;
-  for (const [id, qty] of state.cart.entries()){
-    const tt = state.ticketTypes.find(t=>Number(t.id)===Number(id));
-    if (!tt) continue;
-    total += (Number(tt.price_cents)||0) * qty;
-  }
-  document.getElementById('payTotal').textContent = R(total);
-
-  const name = document.getElementById('cName').value.trim();
-  const phone = document.getElementById('cPhone').value.trim();
-  const ready = !!_payMethod && (name || phone) && total > 0;
-  document.getElementById('btnComplete').disabled = !ready;
 }
 
-// Selectors for method (visual feedback)
-document.getElementById('payCash').onclick = ()=>{
-  _payMethod='pos_cash';
-  document.getElementById('payCash').classList.add('primary','selected');
-  document.getElementById('payCard').classList.remove('primary','selected');
-  updatePayScreen();
-};
-document.getElementById('payCard').onclick = ()=>{
-  _payMethod='pos_card';
-  document.getElementById('payCard').classList.add('primary','selected');
-  document.getElementById('payCash').classList.remove('primary','selected');
-  updatePayScreen();
-};
-
-// Watch purchaser inputs
-['cName','cPhone'].forEach(id=>{
-  document.getElementById(id).addEventListener('input', updatePayScreen);
-});
-
-// Back to sell
-document.getElementById('btnBackSell').onclick = ()=>{
-  document.getElementById('screen-pay').style.display='none';
-  document.getElementById('screen-sell').style.display='block';
-};
-
-/* ---------- Complete Payment ---------- */
-document.getElementById('btnComplete').onclick = async ()=>{
-  const payMsg = document.getElementById('payMsg');
-  payMsg.textContent = 'Besig…';
-
-  // Recalled order: update items then settle
-  if (state.recalledOrder) {
-    const id = state.recalledOrder.order.id;
-    const items = Array.from(state.cart.entries()).map(([ticket_type_id, qty])=>({ticket_type_id, qty}));
-    const u = await fetch('/api/pos/orders/'+id+'/update-items',{
-      method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({items})
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!u.ok){ payMsg.textContent = u.error||'Kon nie opdateer nie'; return; }
-
-    const settle = await fetch('/api/pos/orders/'+id+'/settle',{
-      method:'POST', headers:{'content-type':'application/json'},
-      body:JSON.stringify({method:_payMethod, session_id: state.session.id})
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!settle.ok){ payMsg.textContent = settle.error||'Kon nie afhandel nie'; return; }
-
-    payMsg.textContent='Klaar!';
-    state.cart.clear(); state.recalledOrder=null; _payMethod=null;
-    gotoSell(); return;
+function renderCart(){
+  const lines = el('lines');
+  const arr = [...cart.values()].filter(v=>v.qty>0);
+  if (!arr.length){
+    lines.innerHTML = '<div class="muted">Nothing yet. Tap ticket buttons to add.</div>';
+    el('itemsCount').textContent = '0';
+    el('grand').textContent = '0.00';
+    el('checkoutBtn').disabled = true;
+    return;
   }
+  let total = 0, count = 0;
+  lines.innerHTML = arr.map(({tt, qty})=>{
+    const unit = Number(tt.price_cents||0);
+    const sub = unit*qty; total += sub; count += qty;
+    return \`
+    <div class="line">
+      <div><strong>\${tt.name}</strong><div class="muted">R \${centsToRand(unit)}</div></div>
+      <div class="qty">
+        <button data-minus="\${tt.id}">−</button>
+        <div>\${qty}</div>
+        <button data-plus="\${tt.id}">+</button>
+      </div>
+      <div class="muted right">R \${centsToRand(unit)}</div>
+      <div class="right"><strong>R \${centsToRand(sub)}</strong></div>
+      <button class="btn ghost" data-del="\${tt.id}">×</button>
+    </div>\`;
+  }).join('');
+  lines.querySelectorAll('[data-plus]').forEach(b=>b.onclick=()=>{ cart.get(String(+b.dataset.plus)).qty++; renderCart(); });
+  lines.querySelectorAll('[data-minus]').forEach(b=>b.onclick=()=>{ const it=cart.get(String(+b.dataset.minus)); it.qty=Math.max(0,it.qty-1); if(it.qty===0) cart.delete(String(+b.dataset.minus)); renderCart(); });
+  lines.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{ cart.delete(String(+b.dataset.del)); renderCart(); });
 
-  // New walk-up order: create pay_later order via public checkout, then settle
-  const items = Array.from(state.cart.entries()).map(([ticket_type_id, qty])=>({ticket_type_id, qty}));
-  if (!items.length){ payMsg.textContent='Geen items.'; return; }
+  el('itemsCount').textContent = String(count);
+  el('grand').textContent = centsToRand(total);
+  el('checkoutBtn').disabled = false;
+}
 
-  const create = await fetch('/api/public/checkout',{
+function resetSale(){ cart.clear(); renderCart(); }
+
+// SHIFT open/close
+async function openShift(){
+  const cashier = el('mCashier').value.trim();
+  const gate = el('mGate').value.trim();
+  const f = el('mFloat').value;
+  if (!cashier || !gate) return;
+  const res = await fetchJSON('/api/pos/cashups/open',{
     method:'POST', headers:{'content-type':'application/json'},
-    body:JSON.stringify({
-      event_id: state.event.id,
+    body: JSON.stringify({ cashier_name:cashier, gate_name:gate, opening_float_rands:f })
+  });
+  cashup = { id: res.id, cashier_name:cashier, gate_name:gate };
+  localStorage.setItem('pos_cashup', JSON.stringify(cashup));
+  hide(el('shiftModal')); el('shiftBadge').classList.remove('hidden'); el('endShiftBtn').classList.remove('hidden');
+}
+
+async function closeShift(){
+  const mgr = el('mgrName').value.trim();
+  if (!mgr || !cashup?.id) return;
+  await fetchJSON('/api/pos/cashups/close',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ cashup_id: cashup.id, manager_name: mgr })
+  });
+  localStorage.removeItem('pos_cashup');
+  location.reload();
+}
+
+// CHECKOUT flow
+function beginCheckout(){
+  const total = el('grand').textContent;
+  el('ckTotal').textContent = total;
+  // reset radios & button
+  document.querySelectorAll('input[name="pay"]').forEach(r=> r.checked=false );
+  el('ckName').value = ''; el('ckPhone').value='';
+  el('confirmCheckout').disabled = true;
+  show(el('checkoutModal'));
+}
+function onPayChange(){
+  const any = [...document.querySelectorAll('input[name="pay"]')].some(r=>r.checked);
+  el('confirmCheckout').disabled = !any;
+}
+
+async function confirmCheckout(){
+  const pay = [...document.querySelectorAll('input[name="pay"]')].find(r=>r.checked)?.value || '';
+  if (!pay) return;
+  const items = [...cart.values()].map(({tt, qty})=>({ ticket_type_id: tt.id, qty }));
+  const res = await fetchJSON('/api/pos/sale',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({
+      cashup_id: cashup.id,
+      event_id: currentEventId,
       items,
-      contact:{ name:document.getElementById('cName').value||'', phone:document.getElementById('cPhone').value||'' },
-      mode:'pay_later'
+      payment_method: pay,
+      buyer_name: el('ckName').value.trim(),
+      buyer_phone: el('ckPhone').value.trim()
     })
-  }).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!create.ok){ payMsg.textContent=create.error||'Kon nie order skep nie'; return; }
+  });
+  hide(el('checkoutModal'));
+  resetSale();
+  alert('Order #' + res.order_id + ' completed. Tickets: ' + (res.tickets?.length||0));
+}
 
-  const settle = await fetch('/api/pos/orders/'+create.order_id+'/settle',{
-    method:'POST', headers:{'content-type':'application/json'},
-    body:JSON.stringify({method:_payMethod, session_id: state.session.id})
-  }).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!settle.ok){ payMsg.textContent = settle.error||'Kon nie afhandel nie'; return; }
+// wire up
+el('openShiftBtn').onclick = openShift;
+el('endShiftBtn').onclick = ()=> show(el('closeModal'));
+el('cancelClose').onclick = ()=> hide(el('closeModal'));
+el('confirmClose').onclick = closeShift;
 
-  payMsg.textContent='Klaar!';
-  state.cart.clear(); _payMethod=null;
-  gotoSell();
-};
+el('recallBtn').onclick = ()=> show(el('recallModal'));
+el('recCancel').onclick = ()=> hide(el('recallModal'));
+el('recGo').onclick = ()=> alert('Lookup coming in next step.');
 
-/* ---------- End Shift ---------- */
-document.getElementById('btnEnd').onclick = ()=>{
-  document.getElementById('screen-end').style.display='block';
-  document.getElementById('screen-sell').style.display='none';
-};
-document.getElementById('btnCancelEnd').onclick = ()=>{
-  document.getElementById('screen-end').style.display='none';
-  document.getElementById('screen-sell').style.display='block';
-};
-document.getElementById('btnRealEnd').onclick = async ()=>{
-  const m = document.getElementById('endMsg');
-  const name = document.getElementById('mName').value.trim();
-  m.textContent='…';
-  const r = await fetch('/api/pos/sessions/'+state.session.id+'/end',{
-    method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({manager_name:name})
-  }).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ m.textContent = r.error||'Kon nie beëindig nie'; return; }
-  m.textContent='Skof klaar.';
-  // Reset to start
-  state.session=null; state.cart.clear(); _payMethod=null;
-  document.getElementById('screen-end').style.display='none';
-  document.getElementById('screen-start').style.display='block';
-};
+el('clearBtn').onclick = resetSale;
+el('checkoutBtn').onclick = beginCheckout;
+el('cancelCheckout').onclick = ()=> hide(el('checkoutModal'));
+document.querySelectorAll('input[name="pay"]').forEach(r=> r.addEventListener('change', onPayChange));
+el('cashBtn').onclick = ()=>{ /* quick-add cash button could open modal preset to cash */ beginCheckout(); document.querySelector('input[name="pay"][value="cash"]').checked = true; onPayChange(); };
+
+// init
+(async ()=>{
+  // Restore open shift if exists
+  try{ cashup = JSON.parse(localStorage.getItem('pos_cashup')||'null'); }catch{}
+  if (cashup?.id){ el('shiftBadge').classList.remove('hidden'); el('endShiftBtn').classList.remove('hidden'); hide(el('shiftModal')); }
+  await bootstrap();
+  resetSale();
+})();
 </script>
+
 </body></html>`;
