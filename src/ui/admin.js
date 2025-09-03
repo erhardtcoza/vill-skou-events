@@ -31,6 +31,7 @@ export const adminHTML = () => `<!doctype html><html><head>
   <div class="tab" data-tab="yoco">Yoco</div>
   <div class="tab" data-tab="tickets">Tickets</div>
   <div class="tab" data-tab="vendors">Vendors</div>
+  <div class="tab" data-tab="users">Users</div>
 </div>
 
 <!-- SITE SETTINGS -->
@@ -86,6 +87,23 @@ export const adminHTML = () => `<!doctype html><html><head>
       <button onclick="cancelEdit()">Cancel</button>
       <span id="edmsg" class="muted"></span>
     </div>
+
+<section id="users" class="panel">
+  <h2>Users</h2>
+  <div class="row">
+    <input id="nu_username" placeholder="username">
+    <input id="nu_name" placeholder="display name">
+    <select id="nu_role">
+      <option value="admin">admin</option>
+      <option value="pos">pos</option>
+      <option value="scan">scan</option>
+    </select>
+    <input id="nu_password" placeholder="password" type="password">
+    <button onclick="createUser()">Create</button>
+    <span id="u_msg" class="muted"></span>
+  </div>
+  <table id="u_table"></table>
+</section>
 
     <hr/>
     <h4>Gates</h4>
@@ -214,6 +232,45 @@ async function editEvent(id){
 }
 function cancelEdit(){ pick('editPanel').style.display='none'; pick('edmsg').textContent=''; }
 
+async function loadUsers(){
+  const r = await fetch('/api/admin/users').then(r=>r.json()).catch(()=>({ok:false}));
+  if(!r.ok){ document.getElementById('u_table').innerHTML = '<tr><td>Failed to load users</td></tr>'; return; }
+  const rows = (r.users||[]).map(u=>`
+    <tr>
+      <td>${u.id}</td>
+      <td>${u.username}</td>
+      <td>${u.display_name||''}</td>
+      <td>${u.role}</td>
+      <td>${u.is_active? 'active':'inactive'}</td>
+      <td>
+        <button onclick="resetPw(${u.id})">Reset PW</button>
+        <button onclick="toggleUser(${u.id}, ${u.is_active?0:1})">${u.is_active?'Deactivate':'Activate'}</button>
+      </td>
+    </tr>`).join('');
+  document.getElementById('u_table').innerHTML =
+    '<tr><th>ID</th><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr>'+rows;
+}
+async function createUser(){
+  const b = {
+    username: document.getElementById('nu_username').value.trim(),
+    display_name: document.getElementById('nu_name').value.trim(),
+    role: document.getElementById('nu_role').value,
+    password: document.getElementById('nu_password').value
+  };
+  const r = await fetch('/api/admin/users',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(b)}).then(r=>r.json());
+  document.getElementById('u_msg').textContent = r.ok? 'Created' : (r.error||'Failed');
+  if(r.ok){ ['nu_username','nu_name','nu_password'].forEach(id=>document.getElementById(id).value=''); loadUsers(); }
+}
+async function resetPw(id){
+  const p = prompt('New password for user #'+id+':'); if(!p) return;
+  await fetch('/api/admin/users/'+id,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({password:p})});
+  loadUsers();
+}
+async function toggleUser(id, active){
+  await fetch('/api/admin/users/'+id,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({is_active: active})});
+  loadUsers();
+}
+
 async function saveEdit(){
   const id = Number(pick('ed_id').value||0); if(!id) return;
   const b = {
@@ -287,6 +344,7 @@ document.querySelectorAll('.tab').forEach(btn=>{
   await loadSettings();
   await loadEvents();
   loadPOS();
+  loadUsers(); // NEW
 })();
 </script>
 
