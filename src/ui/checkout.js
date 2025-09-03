@@ -1,175 +1,216 @@
 // /src/ui/checkout.js
-//
-// Public checkout page for /shop/:slug/checkout
-// Reads the cart from sessionStorage key: vs_cart_<slug>
-// Cart structure expected: { event_id, slug, items: [{ticket_type_id, qty}], total_cents? }
-//
-// Shows buyer contact form and two actions:
-//  - Pay now     -> createOrderPayNow (returns payment_url placeholder)
-//  - Pay at event-> createOrderPayLater (shows short pickup/order code)
-//
-// Afrikaans copy per your request.
-
 export const checkoutHTML = (slug) => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Checkout</title>
 <style>
-  :root{--green:#0a7d2b;--muted:#667085;--bg:#f7f7f8}
-  *{box-sizing:border-box} body{font-family:system-ui;margin:0;background:var(--bg);color:#111}
-  .wrap{max-width:1100px;margin:20px auto;padding:0 16px}
-  .bar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
-  .card{background:#fff;border-radius:16px;box-shadow:0 20px 40px rgba(0,0,0,.07);padding:16px;margin-bottom:16px}
-  h1{margin:0 0 8px}
-  .grid{display:grid;grid-template-columns:1fr 360px;gap:16px}
-  @media (max-width:900px){.grid{grid-template-columns:1fr}}
+  :root{--bg:#f6f7f8;--card:#fff;--line:#e5e7eb;--muted:#6b7280;--brand:#0a7d2b}
+  html,body{margin:0;background:var(--bg);font:16px/1.45 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b0b0b}
+  .wrap{max-width:1100px;margin:24px auto;padding:0 16px}
+  h1{margin:0 0 18px}
+  a{color:#0b4b9d;text-decoration:none}
+  .grid{display:grid;grid-template-columns:2fr 1.1fr;gap:16px}
+  @media (max-width:900px){ .grid{grid-template-columns:1fr} }
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px}
   input,button{padding:12px;border:1px solid #d1d5db;border-radius:12px}
-  button{cursor:pointer}
-  .primary{background:var(--green);color:#fff;border-color:var(--green)}
+  input{width:100%}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
   .muted{color:var(--muted)}
-  .total{font-weight:800;font-size:22px;text-align:right}
-  .row{display:flex;gap:10px;flex-wrap:wrap}
-  .err{color:#b00020}
+  button.primary{background:var(--brand);border-color:var(--brand);color:#fff;cursor:pointer}
+  .total{font-size:28px;font-weight:800}
   .ok{color:#0a7d2b}
-  .actions{display:flex;gap:10px;flex-wrap:wrap}
-  .line{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #eee}
+  .err{color:#b00020}
+  .li{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #eee}
 </style>
 </head><body><div class="wrap">
-
-  <div class="bar">
-    <h1>Checkout</h1>
-    <div style="margin-left:auto"><a href="/shop/${slug}">← Terug na event</a></div>
+  <h1>Checkout</h1>
+  <div class="row" style="margin:-6px 0 14px">
+    <a href="/shop/${slug}">← Terug na event</a>
   </div>
 
   <div class="grid">
-    <div class="card">
-      <h2>Jou besonderhede</h2>
+    <section class="card">
+      <h2 style="margin:0 0 12px">Jou besonderhede</h2>
       <div class="row">
-        <input id="first" placeholder="Naam" style="flex:1 1 180px"/>
-        <input id="last" placeholder="Van" style="flex:1 1 180px"/>
+        <input id="first" placeholder="Naam" style="flex:1 1 200px"/>
+        <input id="last"  placeholder="Van" style="flex:1 1 200px"/>
       </div>
       <div class="row">
-        <input id="email" placeholder="E-pos" style="flex:1 1 280px"/>
-        <input id="phone" placeholder="Selfoon" style="flex:1 1 180px"/>
+        <input id="email" type="email" placeholder="E-pos" style="flex:1 1 260px"/>
+        <input id="phone" placeholder="Selfoon" style="flex:1 1 200px"/>
       </div>
-      <div class="actions">
-        <button class="primary" id="btnPayNow">Pay now</button>
-        <button id="btnPayLater">Pay at event</button>
-        <span id="status" class="muted" role="status"></span>
+      <div class="row" style="margin-top:10px">
+        <button id="payNow" class="primary">Pay now</button>
+        <button id="payLater">Pay at event</button>
+        <span id="msg" class="muted" style="align-self:center"></span>
       </div>
-      <p class="muted" style="margin-top:10px;">
-        Attendee-besonderhede (bv. geslag) kan by die hek ingevul word indien nodig.
-      </p>
-    </div>
+    </section>
 
-    <div class="card">
-      <h2>Jou keuse</h2>
-      <div id="lines" class="muted">Laai keuse…</div>
-      <div class="line"><strong>Totaal</strong><div id="total" class="total">R0.00</div></div>
-      <p class="muted">Let wel: pryse word bevestig en herbereken op die volgende stap.</p>
-    </div>
+    <aside class="card">
+      <h2 style="margin:0 0 12px">Jou keuse</h2>
+      <div id="items"></div>
+      <div class="row" style="justify-content:space-between;margin-top:8px">
+        <div class="muted" style="font-weight:700">Totaal</div>
+        <div class="total" id="total">R0.00</div>
+      </div>
+      <div class="muted" style="margin-top:8px">Let wel: pryse word bevestig en herbereken op die volgende stap.</div>
+    </aside>
   </div>
-
 </div>
 
 <script>
-const slug = ${JSON.stringify(slug)};
-const cartKey = 'vs_cart_'+slug;
-let cart = null;         // {event_id, slug, items:[{ticket_type_id, qty}]}
-let ttById = new Map();  // ticket_type details for display
+const SLUG = ${JSON.stringify(slug)};
+const $ = id => document.getElementById(id);
+const fmtR = cents => 'R' + (Math.round(cents)/100).toFixed(2);
 
-function rands(c){ return 'R'+((c||0)/100).toFixed(2); }
-function qs(id){ return document.getElementById(id); }
+let catalog = null;     // { event, ticket_types }
+let cartMap = {};       // { ticket_type_id: qty }
+let priceById = {};     // { id: price_cents }
+let itemsArray = [];    // [{ticket_type_id, qty, price_cents, name}]
 
-async function loadCatalog(){
-  // Fetch event catalog to resolve ticket names + prices
-  const res = await fetch('/api/public/events/'+encodeURIComponent(slug));
-  if(!res.ok){ throw new Error('kon nie event laai nie'); }
-  const data = await res.json();
-  const tts = data.ticket_types || [];
-  ttById = new Map(tts.map(t=> [t.id, t]));
+start();
+
+async function start(){
+  cartMap = readCartFromStorage();
+  // load catalog
+  const res = await fetch('/api/public/events/'+encodeURIComponent(SLUG)).then(r=>r.json()).catch(()=>({ok:false}));
+  if(!res.ok){ $('msg').textContent = 'Kon nie event laai nie.'; return; }
+  catalog = res;
+  (res.ticket_types||[]).forEach(t=> priceById[t.id] = Number(t.price_cents||0));
+  rebuildItems();
+  wire();
 }
 
-function render(){
-  const el = qs('lines');
-  if(!cart || !Array.isArray(cart.items) || cart.items.length===0){
-    el.textContent = 'Geen kaartjies gekies nie.';
-    qs('total').textContent = rands(0);
-    qs('btnPayNow').disabled = true;
-    qs('btnPayLater').disabled = true;
+function readCartFromStorage(){
+  // Try several keys to be resilient across UI versions
+  const keys = [
+    'vs_cart_'+SLUG,
+    'cart_'+SLUG,
+    'cart'
+  ];
+  for (const k of keys){
+    try{
+      const raw = localStorage.getItem(k);
+      if(!raw) continue;
+      const v = JSON.parse(raw);
+      // Accept array of {ticket_type_id, qty} OR map {id:qty}
+      if (Array.isArray(v)) {
+        const m = {};
+        v.forEach(it => { if (it && it.ticket_type_id && it.qty) m[it.ticket_type_id] = Number(it.qty)||0; });
+        if (Object.keys(m).length) return m;
+      } else if (v && typeof v === 'object') {
+        // if nested like {items:[...]}
+        if (Array.isArray(v.items)) {
+          const m = {};
+          v.items.forEach(it => { if (it && it.ticket_type_id && it.qty) m[it.ticket_type_id] = Number(it.qty)||0; });
+          if (Object.keys(m).length) return m;
+        } else {
+          // assume direct map
+          let any=false, m={};
+          Object.keys(v).forEach(id => { const q = Number(v[id])||0; if(q>0){ m[Number(id)] = q; any=true; }});
+          if (any) return m;
+        }
+      }
+    }catch(e){}
+  }
+  return {};
+}
+
+function rebuildItems(){
+  // Convert cartMap to displayable array with names/prices
+  const types = (catalog && catalog.ticket_types) || [];
+  const byId = {}; types.forEach(t=>byId[t.id]=t);
+  itemsArray = Object.entries(cartMap)
+    .map(([id,qty])=>{
+      id = Number(id); qty = Number(qty)||0;
+      const t = byId[id];
+      if(!t || qty<=0) return null;
+      return { ticket_type_id:id, qty, price_cents: Number(t.price_cents||0), name: t.name };
+    })
+    .filter(Boolean);
+
+  renderItems();
+}
+
+function renderItems(){
+  const el = $('items');
+  if (!itemsArray.length){
+    el.innerHTML = '<div class="muted">Geen kaartjies gekies nie.</div>';
+    $('total').textContent = 'R0.00';
     return;
   }
-  let html = '';
   let total = 0;
-  for (const it of cart.items) {
-    const tt = ttById.get(it.ticket_type_id);
-    if (!tt) continue;
-    const qty = Number(it.qty||0);
-    const line = qty * Number(tt.price_cents||0);
+  el.innerHTML = itemsArray.map(it=>{
+    const line = it.qty * (it.price_cents||0);
     total += line;
-    const nm = tt.name || ('Tipe '+it.ticket_type_id);
-    html += '<div class="line"><span>'+nm+' × '+qty+'</span><strong>'+rands(line)+'</strong></div>';
-  }
-  el.innerHTML = html || '<div class="muted">Geen kaartjies nie.</div>';
-  qs('total').textContent = rands(total);
-  qs('btnPayNow').disabled = false;
-  qs('btnPayLater').disabled = false;
+    return \`<div class="li"><div>\${it.name} × \${it.qty}</div><div>\${fmtR(line)}</div></div>\`;
+  }).join('');
+  $('total').textContent = fmtR(total);
 }
 
-function buyerFromForm(){
+function readBuyer(){
   return {
-    first: qs('first').value.trim(),
-    last:  qs('last').value.trim(),
-    email: qs('email').value.trim(),
-    phone: qs('phone').value.trim(),
+    first: $('first').value.trim(),
+    last:  $('last').value.trim(),
+    email: $('email').value.trim(),
+    phone: $('phone').value.trim(),
   };
 }
 
-async function submit(mode){
-  if(!cart?.event_id || !cart?.items?.length){
-    qs('status').textContent = 'Geen kaartjies gekies nie.';
-    return;
-  }
-  qs('status').textContent = 'Laai…';
-  const body = {
-    mode,
-    event_id: cart.event_id,
-    items: cart.items.map(i=>({ticket_type_id:i.ticket_type_id, qty:Number(i.qty||0)})),
-    buyer: buyerFromForm()
+function payload(mode){
+  const buyer = readBuyer();
+  // minimal validation for pay_now; relaxed for pay_later
+  const items = itemsArray.map(it=>({ ticket_type_id: it.ticket_type_id, qty: it.qty }));
+  return {
+    mode, 
+    event_id: catalog.event?.id,
+    items,
+    contact: buyer
   };
-  const res = await fetch('/api/public/checkout', {
-    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)
-  }).then(r=>r.json()).catch(e=>({ok:false,error:String(e)}));
-
-  if(!res.ok){
-    qs('status').className = 'err';
-    qs('status').textContent = 'Error: '+(res.error||'Kon nie voortgaan nie');
-    return;
-  }
-
-  if(mode === 'pay_later'){
-    // Afrikaans copy you requested:
-    // Bestelling geskep.
-    // Jou bestel nommer is as volg: CODE.
-    // Wys dit by die hek om te betaal en jou kaartjies te ontvang.
-    qs('status').className = 'ok';
-    qs('status').innerHTML =
-      'Bestelling geskep. <br/>' +
-      'Jou bestel nommer is as volg: <strong>'+res.pickup_code+'</strong>. '+
-      'Wys dit by die hek om te betaal en jou kaartjies te ontvang.';
-    try { sessionStorage.removeItem(cartKey); } catch {}
-  } else {
-    // pay_now: redirect to placeholder URL (later: Yoco hosted payment)
-    location.href = res.payment_url || '/';
-  }
 }
 
-document.getElementById('btnPayLater').addEventListener('click', ()=>submit('pay_later'));
-document.getElementById('btnPayNow').addEventListener('click', ()=>submit('pay_now'));
+function wire(){
+  $('payLater').addEventListener('click', async ()=>{
+    $('msg').textContent = '';
+    const body = payload('pay_later');
+    if (!body.items.length) { $('msg').textContent = 'Kies ten minste een kaartjie.'; return; }
+    const res = await fetch('/api/public/checkout', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(r=>r.json()).catch(()=>({ok:false,error:'Netwerkfout'}));
+    if(!res.ok){ $('msg').textContent = res.error || 'Kon nie bestelling skep nie.'; return; }
+    $('msg').innerHTML = '<span class="ok">Bestelling geskep.</span>';
+    const code = res.pickup_code || res.short_code || '—';
+    // Clear cart on success
+    try{ localStorage.removeItem('vs_cart_'+SLUG); localStorage.removeItem('cart_'+SLUG); }catch{}
+    // Show friendly message
+    const box = document.createElement('div');
+    box.className = 'card';
+    box.style.marginTop = '10px';
+    box.innerHTML = \`
+      <div class="ok" style="font-weight:700;margin-bottom:6px">Jou bestel nommer is as volg: \${code}.</div>
+      <div>Wys dit by die hek om te betaal en jou kaartjies te ontvang.</div>\`;
+    document.querySelector('.wrap .grid').prepend(box);
+  });
 
-(async function init(){
-  try { cart = JSON.parse(sessionStorage.getItem(cartKey)||'null'); } catch { cart = null; }
-  await loadCatalog().catch(()=>{});
-  render();
-})();
+  $('payNow').addEventListener('click', async ()=>{
+    $('msg').textContent = '';
+    const b = readBuyer();
+    if(!b.first || !b.last || !b.email || !b.phone){
+      $('msg').textContent = 'Vul asseblief jou besonderhede in om voort te gaan.'; return;
+    }
+    const body = payload('pay_now');
+    if (!body.items.length) { $('msg').textContent = 'Kies ten minste een kaartjie.'; return; }
+
+    const res = await fetch('/api/public/checkout', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(r=>r.json()).catch(()=>({ok:false,error:'Netwerkfout'}));
+
+    if(!res.ok){ $('msg').textContent = res.error || 'Kon nie betaal stap begin nie.'; return; }
+    const url = res.payment_url || '';
+    if (url) location.href = url;
+    else $('msg').textContent = 'Payment URL nie beskikbaar nie.';
+  });
+}
 </script>
 </body></html>`;
