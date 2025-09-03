@@ -17,7 +17,7 @@ import { mountWhatsApp } from "./routes/whatsapp.js";
 import { landingHTML } from "./ui/landing.js";
 import { adminHTML } from "./ui/admin.js";
 import { shopHTML } from "./ui/shop.js";
-import { posHTML, posSellHTML } from "./ui/pos.js";   // ⬅️ import both
+import { posHTML, posSellHTML } from "./ui/pos.js";
 import { scannerHTML } from "./ui/scanner.js";
 import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
@@ -28,6 +28,16 @@ import { requireRole } from "./utils/auth.js";
 
 const router = Router();
 
+// Helper: accept either a function (returning HTML) or a string export
+function renderHTML(mod, ...args) {
+  try {
+    const html = (typeof mod === "function") ? mod(...args) : mod;
+    return new Response(html, { headers: { "content-type": "text/html" } });
+  } catch (e) {
+    return new Response("Internal error rendering page", { status: 500 });
+  }
+}
+
 /* ---------------------- API ROUTES ---------------------- */
 mountAuth(router);       // /api/auth/login, /api/auth/logout
 mountPublic(router);     // /api/public/*
@@ -35,56 +45,48 @@ mountAdmin(router);      // /api/admin/*
 mountPOS(router);        // /api/pos/*
 mountScan(router);       // /api/scan/*
 mountSync(router);       // /api/sync/*
-mountWhatsApp(router);   // /api/whatsapp/webhook, /api/whatsapp/send, /api/whatsapp/debug
+mountWhatsApp(router);   // /api/whatsapp/*
 mountWATest(router);
 
 /* ---------------------- UI ROUTES ----------------------- */
 
 // Landing
-router.add("GET", "/", async () =>
-  new Response(landingHTML(), { headers: { "content-type": "text/html" }})
-);
+router.add("GET", "/", async () => renderHTML(landingHTML));
 
 // Admin UI (guarded)
-router.add("GET", "/admin", requireRole("admin", async () =>
-  new Response(adminHTML(), { headers: { "content-type": "text/html" }})
-));
-router.add("GET", "/admin/login", async () =>
-  new Response(loginHTML("admin"), { headers: { "content-type": "text/html" }})
-);
+router.add("GET", "/admin", requireRole("admin", async () => renderHTML(adminHTML)));
+// Admin login UI
+router.add("GET", "/admin/login", async () => renderHTML(() => loginHTML("admin")));
 
 // POS UI (guarded)
-router.add("GET", "/pos", requireRole("pos", async () =>
-  new Response(posHTML(), { headers: { "content-type": "text/html" }})
-));
-// POS sell screen (guarded)
-router.add("GET", "/pos/sell", requireRole("pos", async () =>
-  new Response(posSellHTML(), { headers: { "content-type": "text/html" }})
-));
+router.add("GET", "/pos", requireRole("pos", async () => renderHTML(posHTML)));
 // POS login UI
-router.add("GET", "/pos/login", async () =>
-  new Response(loginHTML("pos"), { headers: { "content-type": "text/html" }})
-);
+router.add("GET", "/pos/login", async () => renderHTML(() => loginHTML("pos")));
+
+// POS sell screen (guarded)
+router.add("GET", "/pos/sell", requireRole("pos", async (req) => {
+  const u = new URL(req.url);
+  const session_id = Number(u.searchParams.get("session_id") || 0);
+  return renderHTML(posSellHTML, session_id);
+}));
 
 // Scanner UI (guarded)
-router.add("GET", "/scan", requireRole("scan", async () =>
-  new Response(scannerHTML(), { headers: { "content-type": "text/html" }})
-));
-router.add("GET", "/scan/login", async () =>
-  new Response(loginHTML("scan"), { headers: { "content-type": "text/html" }})
-);
+router.add("GET", "/scan", requireRole("scan", async () => renderHTML(scannerHTML)));
+// Scanner login UI
+router.add("GET", "/scan/login", async () => renderHTML(() => loginHTML("scan")));
 
 // Event shop + checkout
 router.add("GET", "/shop/:slug", async (_req, _env, _ctx, { slug }) =>
-  new Response(shopHTML(slug), { headers: { "content-type": "text/html" }})
+  renderHTML(() => shopHTML(slug))
 );
+
 router.add("GET", "/shop/:slug/checkout", async (_req, _env, _ctx, { slug }) =>
-  new Response(checkoutHTML(slug), { headers: { "content-type": "text/html" }})
+  renderHTML(() => checkoutHTML(slug))
 );
 
 // Ticket display
 router.add("GET", "/t/:code", async (_req, _env, _ctx, { code }) =>
-  new Response(ticketHTML(code), { headers: { "content-type": "text/html" }})
+  renderHTML(() => ticketHTML(code))
 );
 
 /* ---------------------- WORKER EXPORT ------------------- */
