@@ -1,4 +1,6 @@
 // /src/ui/pos.js
+
+/* ---------- Start shift screen ---------- */
 export const posHTML = `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>POS · Villiersdorp Skou</title>
@@ -11,6 +13,7 @@ export const posHTML = `<!doctype html><html><head>
   input, select{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
   .btn{ padding:10px 14px; border-radius:10px; border:0; background:#0a7d2b; color:#fff; cursor:pointer; font-weight:600 }
   .muted{ color:var(--muted) } .error{ color:#b42318; font-weight:600 }
+  .ok{ color:#0a7d2b; font-weight:600 }
 </style>
 </head><body>
 <div class="wrap">
@@ -19,7 +22,7 @@ export const posHTML = `<!doctype html><html><head>
     <h2 style="margin:0 0 10px">Start shift</h2>
     <div class="row" style="margin-bottom:10px">
       <input id="cashier" placeholder="Cashier name" style="min-width:220px"/>
-      <select id="event" style="min-width:280px"></select>
+      <select id="event" style="min-width:320px"></select>
       <select id="gate" style="min-width:180px"></select>
     </div>
     <div class="row">
@@ -27,8 +30,12 @@ export const posHTML = `<!doctype html><html><head>
         <div class="muted" style="margin-bottom:4px">Opening float (R)</div>
         <input id="float" type="number" min="0" step="1" value="0" style="width:120px"/>
       </div>
-      <input id="phone" placeholder="Cashier phone (optional)" style="min-width:200px"/>
+      <div>
+        <div class="muted" style="margin-bottom:4px">Cashier phone (optional)</div>
+        <input id="cashier_msisdn" placeholder="+27…" style="width:180px"/>
+      </div>
       <button id="startBtn" class="btn">Start</button>
+      <div id="msg" class="ok"></div>
       <div id="err" class="error"></div>
     </div>
   </div>
@@ -37,7 +44,6 @@ export const posHTML = `<!doctype html><html><head>
 <script>
 const $ = (id)=>document.getElementById(id);
 const cents = (rands)=> Math.max(0, Math.round(Number(rands||0) * 100));
-let EVENTS = []; // [{id,slug,name}]
 
 async function load() {
   $('err').textContent = '';
@@ -49,29 +55,28 @@ async function load() {
     if (!j.ok) throw new Error(j.error || 'bootstrap failed');
 
     // Events
-    EVENTS = j.events || [];
     const ev = $('event');
-    ev.innerHTML = EVENTS.map(e => 
-      \`<option value="\${e.id}" data-slug="\${e.slug||''}">\${e.name} (\${e.slug})</option>\`
+    ev.innerHTML = (j.events||[]).map(e =>
+      \`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`
     ).join('') || '<option value="0">No events</option>';
 
     // Gates
     const gt = $('gate');
-    gt.innerHTML = (j.gates||[]).map(g => 
+    gt.innerHTML = (j.gates||[]).map(g =>
       \`<option value="\${g.id}">\${g.name}</option>\`
-    ).join('');
+    ).join('') || '<option value="0">No gates</option>';
   } catch (e) {
     $('err').textContent = 'Error: ' + (e.message || 'network');
   }
 }
 
 $('startBtn').onclick = async () => {
-  $('err').textContent = '';
+  $('err').textContent = ''; $('msg').textContent = '';
   const cashier_name = ($('cashier').value || '').trim();
   const event_id = Number(($('event').value || '0'));
   const gate_id = Number(($('gate').value || '0'));
   const opening_float_cents = cents($('float').value);
-  const cashier_msisdn = ($('phone').value||'').trim();
+  const cashier_msisdn = ($('cashier_msisdn').value || '').trim() || null;
 
   if (!cashier_name) return $('err').textContent = 'cashier name required';
   if (!event_id) return $('err').textContent = 'event required';
@@ -85,16 +90,9 @@ $('startBtn').onclick = async () => {
     });
     const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'unknown');
-
-    // find slug for sell page
-    const ev = EVENTS.find(e=> Number(e.id)===event_id);
-    const slug = ev?.slug || '';
-    const qs = new URLSearchParams({
-      session_id: String(j.session_id),
-      event_id: String(event_id),
-      event_slug: slug
-    });
-    location.href = '/pos/sell?' + qs.toString();
+    $('msg').textContent = 'Shift started (session #' + j.session_id + ').';
+    // go to sell screen
+    location.href = '/pos/sell?session_id=' + encodeURIComponent(j.session_id);
   } catch (e) {
     $('err').textContent = 'Error: ' + (e.message || 'unknown');
   }
@@ -102,4 +100,26 @@ $('startBtn').onclick = async () => {
 
 load();
 </script>
+</body></html>`;
+
+/* ---------- Sell screen (stub for now) ---------- */
+export const posSellHTML = (sessionId = "0") => `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>POS · Sell</title>
+<style>
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  .wrap{ max-width:1000px; margin:20px auto; padding:0 16px }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
+  a{ color:#0a7d2b; text-decoration:underline }
+</style>
+</head><body>
+<div class="wrap">
+  <h1>POS</h1>
+  <div class="card">
+    <p>Session #${String(sessionId)} active.</p>
+    <p>This is the POS sell screen stub. We’ll add ticket buttons, recall by code, and tender (cash/card) here.</p>
+    <p><a href="/pos">← Back to start</a></p>
+  </div>
+</div>
 </body></html>`;
