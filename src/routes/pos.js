@@ -1,10 +1,25 @@
 // /src/routes/pos.js
 import { json, bad } from "../utils/http.js";
 import { requireAny, requireRole } from "../utils/auth.js";
+import { sendOrderOnWhatsApp } from "../services/whatsapp.js";
 
 /** Small helpers */
 const int = (v) => Number.parseInt(v, 10) || 0;
 const cents = (v) => Math.max(0, Number(v) | 0);
+const now = () => Math.floor(Date.now() / 1000);
+
+/** Create a short, human friendly order code (kept to letters+numbers). */
+function shortCode(seed) {
+  const rnd = Math.floor(Math.random() * 36 ** 3).toString(36);
+  return (Number(seed || 0).toString(36) + rnd).slice(-7).toUpperCase();
+}
+
+/** Generate a compact ticket QR/token. */
+function ticketQR(orderId, ticketTypeId, i) {
+  // format: T-<base36(order)>-<base36(tt)>-<n>-<random>
+  const r = Math.random().toString(36).slice(2, 6);
+  return `T-${Number(orderId).toString(36)}-${Number(ticketTypeId).toString(36)}-${i}-${r}`.toUpperCase();
+}
 
 /** POS endpoints */
 export function mountPOS(router) {
@@ -43,15 +58,14 @@ export function mountPOS(router) {
       if (!event_id) return bad("event_id required");
       if (!gate_id) return bad("gate_id required");
 
-      // Some databases won't have cashier_msisdn column; try optional insert
       let r;
       try {
         r = await env.DB.prepare(
           `INSERT INTO pos_sessions (event_id, cashier_name, gate_id, opening_float_cents, opened_at, cashier_msisdn)
            VALUES (?1, ?2, ?3, ?4, unixepoch(), NULLIF(?5,''))`
         ).bind(event_id, cashier_name, gate_id, opening_float_cents, cashier_msisdn).run();
-      } catch (_e) {
-        // Fallback without cashier_msisdn if the column doesn't exist
+      } catch {
+        // Fallback for schemas without cashier_msisdn
         r = await env.DB.prepare(
           `INSERT INTO pos_sessions (event_id, cashier_name, gate_id, opening_float_cents, opened_at)
            VALUES (?1, ?2, ?3, ?4, unixepoch())`
@@ -83,7 +97,7 @@ export function mountPOS(router) {
     })
   );
 
-  // -------- Sell screen context (event + ticket types) ----------
+  // Sell screen context (event + ticket types)
   router.add(
     "GET",
     "/api/pos/session/:id/context",
@@ -92,7 +106,7 @@ export function mountPOS(router) {
       if (!session_id) return bad("session_id required");
 
       const sQ = await env.DB.prepare(
-        `SELECT ps.id, ps.event_id, ps.cashier_name, ps.gate_id, g.name AS gate_name
+        `SELECT ps.id, ps.event_id, ps.cashier_name, ps.gate_id, ps.cashier_msisdn, g.name AS gate_name
            FROM pos_sessions ps
            LEFT JOIN gates g ON g.id = ps.gate_id
           WHERE ps.id = ?1`
@@ -114,7 +128,8 @@ export function mountPOS(router) {
         ok: true,
         session: {
           id: sQ.id, event_id: sQ.event_id,
-          cashier_name: sQ.cashier_name, gate_id: sQ.gate_id, gate_name: sQ.gate_name
+          cashier_name: sQ.cashier_name, gate_id: sQ.gate_id, gate_name: sQ.gate_name,
+          cashier_msisdn: sQ.cashier_msisdn || null,
         },
         event: ev || null,
         ticket_types: (ttQ.results || []).map(t => ({ id:t.id, name:t.name, price_cents:t.price_cents }))
@@ -122,7 +137,7 @@ export function mountPOS(router) {
     })
   );
 
-  // -------- Create & tender a POS order (cash/card) ------------
+  // Create & tender a POS order (cash/card) + issue tickets + WhatsApp
   router.add(
     "POST",
     "/api/pos/order/tender",
@@ -140,13 +155,15 @@ export function mountPOS(router) {
       if (!items.length) return bad("no items");
       if (method !== "cash" && method !== "card") return bad("method must be cash or card");
 
-      // Load session -> event
+      // Load session -> event (and cashier fallback number)
       const s = await env.DB.prepare(
-        `SELECT id, event_id FROM pos_sessions WHERE id = ?1 AND closed_at IS NULL`
+        `SELECT ps.id, ps.event_id, ps.cashier_msisdn
+           FROM pos_sessions ps
+          WHERE ps.id = ?1 AND ps.closed_at IS NULL`
       ).bind(session_id).first();
       if (!s) return bad("session not found/closed");
 
-      // Price lookup for the selected types
+      // Price lookup
       const ids = items.map(i => int(i.ticket_type_id)).filter(Boolean);
       const placeholders = ids.map(()=>"?").join(",");
       const prices = await env.DB.prepare(
@@ -166,25 +183,23 @@ export function mountPOS(router) {
       }
       if (!normItems.length) return bad("no valid items");
 
-      const now = Math.floor(Date.now()/1000);
       const methodTag = method === "cash" ? "pos_cash" : "pos_card";
-      const status = "paid";
 
-      // Insert order
+      // Insert order (paid)
+      const createdAt = now();
       const orderRes = await env.DB.prepare(
         `INSERT INTO orders
            (short_code, event_id, status, payment_method, payment_ref, total_cents,
             contact_json, created_at, paid_at, source, buyer_name, buyer_email, buyer_phone, items_json)
          VALUES
-           (NULL, ?1, ?2, ?3, NULL, ?4,
-            ?5, ?6, ?6, 'pos', ?7, NULL, ?8, ?9)`
+           (NULL, ?1, 'paid', ?2, NULL, ?3,
+            ?4, ?5, ?5, 'pos', ?6, NULL, ?7, ?8)`
       ).bind(
         s.event_id,
-        status,
         methodTag,
         total_cents,
         JSON.stringify({ name: buyer_name, phone: buyer_phone }),
-        now,
+        createdAt,
         buyer_name || null,
         buyer_phone || null,
         JSON.stringify(normItems)
@@ -192,7 +207,13 @@ export function mountPOS(router) {
 
       const order_id = orderRes.meta.last_row_id;
 
-      // Insert order_items rows
+      // Ensure the order has a short_code (useful for links / scanning parity)
+      const code = shortCode(order_id);
+      await env.DB.prepare(
+        `UPDATE orders SET short_code = ?1 WHERE id = ?2`
+      ).bind(code, order_id).run();
+
+      // Insert order_items
       for (const it of normItems) {
         await env.DB.prepare(
           `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
@@ -200,15 +221,46 @@ export function mountPOS(router) {
         ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
       }
 
-      // Record POS payment (if table exists)
+      // Issue tickets (best effort — skip silently if table/columns differ)
+      try {
+        for (const it of normItems) {
+          for (let i = 1; i <= it.qty; i++) {
+            const qr = ticketQR(order_id, it.ticket_type_id, i);
+            await env.DB.prepare(
+              `INSERT INTO tickets (event_id, order_id, ticket_type_id, qr, state, issued_at)
+               VALUES (?1, ?2, ?3, ?4, 'unused', unixepoch())`
+            ).bind(s.event_id, order_id, it.ticket_type_id, qr).run();
+          }
+        }
+      } catch {
+        // If your schema is different (e.g., extra cols), the sale still succeeds.
+      }
+
+      // POS payment journal (optional)
       try {
         await env.DB.prepare(
           `INSERT INTO pos_payments (session_id, order_id, method, amount_cents, created_at)
            VALUES (?1, ?2, ?3, ?4, unixepoch())`
         ).bind(session_id, order_id, methodTag, total_cents).run();
-      } catch { /* table may not exist on older DBs */ }
+      } catch {}
 
-      return json({ ok:true, order_id, total_cents });
+      // WhatsApp delivery (template) — prefer buyer; else fall back to cashier number
+      const msisdn = (buyer_phone && buyer_phone.trim()) || (s.cashier_msisdn && s.cashier_msisdn.trim());
+      if (msisdn) {
+        // We send a compact message via your template helper.
+        // It links to /t/<short_code> so the customer can open tickets.
+        try {
+          await sendOrderOnWhatsApp(env, msisdn, {
+            short_code: code,
+            total_cents,
+            event_slug: null // set if you want deep-link context; template helper handles default link
+          });
+        } catch {
+          // Don't fail the sale if WA delivery fails.
+        }
+      }
+
+      return json({ ok:true, order_id, total_cents, short_code: code });
     })
   );
 }
