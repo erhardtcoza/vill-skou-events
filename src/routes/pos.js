@@ -7,8 +7,14 @@ import { sendOrderOnWhatsApp } from "../services/whatsapp.js";
 const int = (v) => Number.parseInt(v, 10) || 0;
 const cents = (v) => Math.max(0, Number(v) | 0);
 const now = () => Math.floor(Date.now() / 1000);
+const splitName = (full) => {
+  const s = String(full || "").trim();
+  if (!s) return { first: null, last: null };
+  const parts = s.split(/\s+/);
+  return { first: parts[0] || null, last: parts.slice(1).join(" ") || null };
+};
 
-/** Create a short, human friendly order code (kept to letters+numbers). */
+/** Create a short, human friendly order code (letters+numbers). */
 function shortCode(seed) {
   const rnd = Math.floor(Math.random() * 36 ** 3).toString(36);
   return (Number(seed || 0).toString(36) + rnd).slice(-7).toUpperCase();
@@ -207,7 +213,7 @@ export function mountPOS(router) {
 
       const order_id = orderRes.meta.last_row_id;
 
-      // Ensure the order has a short_code (useful for links / scanning parity)
+      // Ensure order.short_code (useful for links / scanning parity)
       const code = shortCode(order_id);
       await env.DB.prepare(
         `UPDATE orders SET short_code = ?1 WHERE id = ?2`
@@ -221,20 +227,32 @@ export function mountPOS(router) {
         ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
       }
 
-      // Issue tickets (best effort — skip silently if table/columns differ)
-      try {
-        for (const it of normItems) {
-          for (let i = 1; i <= it.qty; i++) {
-            const qr = ticketQR(order_id, it.ticket_type_id, i);
-            await env.DB.prepare(
-              `INSERT INTO tickets (event_id, order_id, ticket_type_id, qr, state, issued_at)
-               VALUES (?1, ?2, ?3, ?4, 'unused', unixepoch())`
-            ).bind(s.event_id, order_id, it.ticket_type_id, qr).run();
-          }
+      // --- ISSUE TICKETS (matches your schema exactly) -----------------------
+      const { first: attFirst, last: attLast } = splitName(buyer_name);
+      for (const it of normItems) {
+        for (let i = 1; i <= it.qty; i++) {
+          const qr = ticketQR(order_id, it.ticket_type_id, i);
+          await env.DB.prepare(
+            `INSERT INTO tickets
+               (order_id, event_id, ticket_type_id,
+                attendee_first, attendee_last, gender, email, phone,
+                qr, state, first_in_at, last_out_at, issued_at)
+             VALUES
+               (?1, ?2, ?3,
+                ?4, ?5, NULL, NULL, ?6,
+                ?7, 'unused', NULL, NULL, unixepoch())`
+          ).bind(
+            order_id,
+            s.event_id,
+            it.ticket_type_id,
+            attFirst,
+            attLast,
+            buyer_phone || null,
+            qr
+          ).run();
         }
-      } catch {
-        // If your schema is different (e.g., extra cols), the sale still succeeds.
       }
+      // ----------------------------------------------------------------------
 
       // POS payment journal (optional)
       try {
@@ -247,16 +265,14 @@ export function mountPOS(router) {
       // WhatsApp delivery (template) — prefer buyer; else fall back to cashier number
       const msisdn = (buyer_phone && buyer_phone.trim()) || (s.cashier_msisdn && s.cashier_msisdn.trim());
       if (msisdn) {
-        // We send a compact message via your template helper.
-        // It links to /t/<short_code> so the customer can open tickets.
         try {
           await sendOrderOnWhatsApp(env, msisdn, {
             short_code: code,
             total_cents,
-            event_slug: null // set if you want deep-link context; template helper handles default link
+            event_slug: null
           });
         } catch {
-          // Don't fail the sale if WA delivery fails.
+          // don't fail the sale if WA delivery fails
         }
       }
 
