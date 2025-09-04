@@ -4,19 +4,23 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
 <title>Checkout</title>
 <style>
   :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
-  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:980px; margin:18px auto; padding:0 14px }
-  .grid{ display:grid; grid-template-columns:1.1fr .9fr; gap:16px }
+  *{ box-sizing:border-box }
+  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
+  h1{ margin:0 0 14px }
+  .grid{ display:grid; grid-template-columns: 1fr 1fr; gap:16px }
   @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
-  h1{ margin:8px 0 14px } .muted{ color:#9aa3af }
-  input{ width:100%; padding:12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
+  label{ display:block; font-size:13px; color:var(--muted); margin:6px 0 6px }
+  input{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit }
   .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
-  .btn{ padding:12px 14px; border-radius:10px; border:0; background:var(--green); color:#fff; cursor:pointer; font-weight:700 }
-  .btn.ghost{ background:#fff; color:#111; border:1px solid #e5e7eb }
-  .totals{ display:flex; justify-content:space-between; margin-top:10px; font-weight:700; font-size:20px }
-  .err{ color:#b42318; margin-top:8px; font-weight:600 }
-  .ok{ color:#0f7b2e; margin-top:8px; font-weight:700 }
+  .btn{ padding:12px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .muted{ color:var(--muted) }
+  .totals{ font-weight:700; font-size:20px; text-align:right }
+  .err{ color:#b42318; font-weight:600; margin-top:8px }
+  .ok{ color:#0a7d2b; font-weight:700; margin-top:8px }
+  .line{ display:flex; justify-content:space-between; align-items:center; margin:6px 0 }
 </style>
 </head><body>
 <div class="wrap">
@@ -25,99 +29,118 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
 
   <div class="grid">
     <div class="card">
-      <h2>Jou besonderhede</h2>
-      <div class="row" style="margin-bottom:10px">
-        <input id="first" placeholder="Naam"/>
-        <input id="last" placeholder="Van"/>
+      <h2 style="margin:0 0 10px">Jou besonderhede</h2>
+      <div class="row">
+        <div><label>Naam</label><input id="first" autocomplete="given-name"/></div>
+        <div><label>Van</label><input id="last" autocomplete="family-name"/></div>
       </div>
-      <div class="row" style="margin-bottom:10px">
-        <input id="email" placeholder="E-pos"/>
-        <input id="phone" placeholder="Selfoon"/>
+      <div class="row" style="margin-top:8px">
+        <div><label>E-pos</label><input id="email" type="email" autocomplete="email"/></div>
+        <div><label>Selfoon</label><input id="phone" inputmode="tel" placeholder="27…"/></div>
       </div>
-      <div class="row" style="gap:8px">
-        <button id="payNow" type="button" class="btn">Pay now</button>
-        <button id="payEvent" type="button" class="btn ghost">(Pay at event)</button>
+      <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap">
+        <button id="payNow" class="btn primary">Pay now</button>
+        <button id="payAtEvent" class="btn">(Pay at event)</button>
       </div>
       <div id="msg" class="err"></div>
       <div id="ok" class="ok" style="display:none"></div>
     </div>
 
     <div class="card">
-      <h2>Jou keuse</h2>
-      <div id="list" class="muted">Geen kaartjies gekies nie.</div>
-      <div class="totals">
-        <span>Totaal</span>
-        <span id="total">R0.00</span>
+      <h2 style="margin:0 0 10px">Jou keuse</h2>
+      <div id="cartList" class="muted">Geen kaartjies gekies nie.</div>
+      <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700">Totaal</span>
+        <span id="total" class="totals">R0.00</span>
       </div>
-      <p class="muted">Let wel: pryse word bevestig en herbereken op die volgende stap.</p>
+      <div class="muted" style="margin-top:8px">Let wel: pryse word bevestig en herbereken op die volgende stap.</div>
     </div>
   </div>
 </div>
 
 <script>
 const slug = ${JSON.stringify(slug)};
-const R = c => 'R' + ((c||0)/100).toFixed(2);
-const $ = id => document.getElementById(id);
+const $ = (id)=>document.getElementById(id);
+const esc = (s)=>String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+const rands = (c)=>'R'+((c||0)/100).toFixed(2);
 
-function loadCart() {
-  try {
-    const c = JSON.parse(sessionStorage.getItem('pending_cart')||'null');
-    return (c && Array.isArray(c.items) && c.event_id) ? c : null;
-  } catch { return null; }
+let EVENT=null, TTMAP=null, CART=null, TOTAL=0;
+
+// Load event (with ticket_types) and draw the right panel from session cart.
+async function bootstrap(){
+  $('msg').textContent=''; $('ok').style.display='none';
+  CART = JSON.parse(sessionStorage.getItem('pending_cart')||'null');
+  if (!CART || !CART.items || !CART.items.length){
+    $('cartList').textContent = 'Geen kaartjies gekies nie.';
+    return;
+  }
+  // Fetch event detail (+ticket_types)
+  const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!res.ok){ $('msg').textContent = 'Kon nie event laai nie'; return; }
+  EVENT = res.event||{};
+  const types = res.ticket_types||[];
+  TTMAP = new Map(types.map(t=>[Number(t.id), t]));
+
+  // Build cart UI with names/prices
+  let lines = [];
+  TOTAL = 0;
+  for (const it of CART.items){
+    const t = TTMAP.get(Number(it.ticket_type_id));
+    const qty = Number(it.qty||0);
+    if (!t || !qty) continue;
+    const line = qty * Number(t.price_cents||0);
+    TOTAL += line;
+    lines.push(\`<div class="line"><div>\${esc(t.name)} × \${qty}</div><div>\${line?rands(line):'FREE'}</div></div>\`);
+  }
+  if (!lines.length){
+    $('cartList').textContent = 'Geen kaartjies gekies nie.';
+  } else {
+    $('cartList').innerHTML = lines.join('');
+  }
+  $('total').textContent = rands(TOTAL);
 }
 
-function renderCart(cart) {
-  if (!cart || !cart.items.length) { $('list').textContent = 'Geen kaartjies gekies nie.'; $('total').textContent = 'R0.00'; return; }
-  $('list').innerHTML = cart.items.map(i => 
-    '<div style="display:flex;justify-content:space-between;margin:6px 0"><div>Type #'+i.ticket_type_id+' × '+i.qty+'</div><div>—</div></div>'
-  ).join('');
-}
-
-async function createOrder(method) {
+async function createOrder(method){
   $('msg').textContent = ''; $('ok').style.display='none';
-  const cart = loadCart();
-  if (!cart) { $('msg').textContent = 'Geen kaartjies in jou mandjie nie.'; return; }
+  if (!EVENT || !CART) return;
+
+  const buyer_name = [ $('first').value||'', $('last').value||'' ].map(s=>s.trim()).filter(Boolean).join(' ').trim();
+  if (!buyer_name){ $('msg').textContent='Vul asb jou naam in.'; return; }
 
   const body = {
-    event_id: cart.event_id,
-    items: cart.items,
-    method,
-    buyer_name: ($('first').value||'').trim(),
-    buyer_surname: ($('last').value||'').trim(),
-    email: ($('email').value||'').trim(),
-    phone: ($('phone').value||'').trim(),
+    event_id: CART.event_id || EVENT.id,
+    buyer_name,
+    email: $('email').value||'',
+    phone: $('phone').value||'',
+    items: CART.items.map(i=>({ ticket_type_id:Number(i.ticket_type_id), qty:Number(i.qty) })),
+    method: method === 'now' ? 'pay_now' : 'pay_at_event'
   };
 
-  try {
+  try{
     const r = await fetch('/api/public/orders/create', {
-      method:'POST',
-      headers:{ 'content-type':'application/json' },
-      body: JSON.stringify(body)
+      method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body)
     });
+    const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
+    if (!j.ok) throw new Error(j.error || ('HTTP '+r.status));
 
-    // If the server responded with HTML (e.g. CF error or redirect), show it plainly
-    const ct = r.headers.get('content-type')||'';
-    if (!ct.includes('application/json')) {
-      const txt = await r.text();
-      throw new Error('Unexpected response: ' + String(txt).slice(0,140));
+    // Success UX
+    if (method === 'later'){
+      $('ok').textContent = 'Bestelling vasgelê. Wys jou kode by die hek: ' + (j.order?.short_code || '');
+      $('ok').style.display = 'block';
+      // keep cart for now
+    } else {
+      $('ok').textContent = 'Bestelling aangemaak. (Online betaling integrasie volg.)';
+      $('ok').style.display = 'block';
+      // sessionStorage.removeItem('pending_cart'); // uncomment once you redirect to payment
     }
-
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error||'server');
-    $('ok').textContent = 'Order created (' + j.order.short_code + ').';
-    $('ok').style.display = 'block';
-
-    // For "pay_event" we could redirect to the ticket page once paid/issued;
-    // for now we just confirm.
-  } catch (e) {
+  }catch(e){
     $('msg').textContent = 'Fout: ' + (e.message || 'network');
   }
 }
 
-$('payNow').onclick = () => createOrder('pay_now');
-$('payEvent').onclick = () => createOrder('pay_event');
+$('payNow').onclick = ()=>createOrder('now');
+$('payAtEvent').onclick = ()=>createOrder('later');
 
-// Render initial cart (totals are confirmed server-side on create)
-renderCart(loadCart());
+bootstrap();
 </script>
 </body></html>`;
