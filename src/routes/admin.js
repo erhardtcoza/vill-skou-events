@@ -1,192 +1,207 @@
 // /src/routes/admin.js
 import { json, bad } from "../utils/http.js";
-import { requireRole } from "../utils/auth.js";
-import { sendOrderOnWhatsApp } from "../services/whatsapp.js"; 
 
 export function mountAdmin(router) {
-  /* ---------------- Events ---------------- */
-  router.add("GET", "/api/admin/events", requireRole("admin", async (_req, env) => {
+  /* -------------------- Events (minimal list for selects) -------------------- */
+  router.add("GET", "/api/admin/events", async (_req, env) => {
     const q = await env.DB.prepare(
-      `SELECT id, slug, name, venue, starts_at, ends_at, status,
-              hero_url, poster_url, gallery_urls
+      `SELECT id, slug, name, venue, starts_at, ends_at, status
          FROM events
         ORDER BY starts_at DESC`
     ).all();
     return json({ ok: true, events: q.results || [] });
-  }));
+  });
 
-  router.add("GET", "/api/admin/events/:id/ticket-types", requireRole("admin", async (_req, env, _ctx, p) => {
-    const q = await env.DB.prepare(
-      `SELECT id, name, code, price_cents, capacity, per_order_limit, requires_gender
-         FROM ticket_types WHERE event_id=?1 ORDER BY id ASC`
-    ).bind(Number(p.id)).all();
-    return json({ ok: true, ticket_types: q.results || [] });
-  }));
+  /* ----------------------- Ticket summaries per event ----------------------- */
+  // GET /api/admin/tickets/summary?event_id=1
+  router.add("GET", "/api/admin/tickets/summary", async (req, env) => {
+    const url = new URL(req.url);
+    const event_id = Number(url.searchParams.get("event_id") || 0);
+    if (!event_id) return bad("event_id required");
 
-  /* ---------------- Users ---------------- */
-  router.add("GET", "/api/admin/users", requireRole("admin", async (_req, env) => {
-    const q = await env.DB.prepare(
-      `SELECT id, username, role FROM users ORDER BY id ASC`
-    ).all();
-    return json({ ok: true, users: q.results || [] });
-  }));
+    const rows = await env.DB.prepare(
+      `SELECT
+         tt.id      AS ticket_type_id,
+         tt.name    AS type_name,
+         tt.price_cents,
+         COALESCE(SUM(1), 0)                            AS total,
+         COALESCE(SUM(CASE WHEN t.state='unused' THEN 1 END), 0) AS unused,
+         COALESCE(SUM(CASE WHEN t.state='in'     THEN 1 END), 0) AS in_count,
+         COALESCE(SUM(CASE WHEN t.state='out'    THEN 1 END), 0) AS out_count,
+         COALESCE(SUM(CASE WHEN t.state='void'   THEN 1 END), 0) AS void_count
+       FROM ticket_types tt
+       LEFT JOIN tickets t
+              ON t.ticket_type_id = tt.id AND t.event_id = tt.event_id
+      WHERE tt.event_id = ?1
+      GROUP BY tt.id, tt.name, tt.price_cents
+      ORDER BY tt.id ASC`
+    ).bind(event_id).all();
 
-  /* ---------------- Vendors ---------------- */
-  router.add("GET", "/api/admin/vendors/:eventId", requireRole("admin", async (_req, env, _ctx, p) => {
-    const evId = Number(p.eventId || 0);
-    const v = await env.DB.prepare(
-      `SELECT id, name, contact_name, phone, email, stand_number,
-              staff_quota, vehicle_quota
-         FROM vendors WHERE event_id=?1 ORDER BY name ASC`
-    ).bind(evId).all();
-    return json({ ok: true, vendors: v.results || [] });
-  }));
+    const list = (rows.results || []).map(r => ({
+      ticket_type_id: Number(r.ticket_type_id),
+      type_name: r.type_name,
+      price_cents: Number(r.price_cents || 0),
+      total: Number(r.total || 0),
+      unused: Number(r.unused || 0),
+      in: Number(r.in_count || 0),
+      out: Number(r.out_count || 0),
+      void: Number(r.void_count || 0),
+    }));
 
-  router.add("POST", "/api/admin/vendors/upsert", requireRole("admin", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = Number(b?.id || 0);
-    const event_id = Number(b?.event_id || 0);
-    const name = String(b?.name || "").trim();
-    const contact_name = String(b?.contact_name || "").trim();
-    const phone = String(b?.phone || "").trim();
-    const email = String(b?.email || "").trim();
-    const stand_number = String(b?.stand_number || "").trim();
-    const staff_quota = Math.max(0, Number(b?.staff_quota || 0));
-    const vehicle_quota = Math.max(0, Number(b?.vehicle_quota || 0));
-    if (!event_id || !name) return bad("event_id and name required");
+    // overall line
+    const sum = list.reduce((a, r) => {
+      a.total += r.total; a.unused += r.unused; a.in += r.in; a.out += r.out; a.void += r.void;
+      a.value_cents += r.total * r.price_cents; return a;
+    }, { total: 0, unused: 0, in: 0, out: 0, void: 0, value_cents: 0 });
 
-    if (id) {
-      await env.DB.prepare(
-        `UPDATE vendors
-            SET name=?1, contact_name=?2, phone=?3, email=?4, stand_number=?5,
-                staff_quota=?6, vehicle_quota=?7
-          WHERE id=?8`
-      ).bind(name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota, id).run();
-      return json({ ok: true, id });
-    } else {
-      const r = await env.DB.prepare(
-        `INSERT INTO vendors (event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
-      ).bind(event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota).run();
-      return json({ ok: true, id: r.meta.last_row_id });
-    }
-  }));
+    return json({ ok: true, event_id, list, totals: sum });
+  });
 
-  /* ---------------- Tickets lookup by order code ---------------- */
-  router.add("GET", "/api/admin/orders/lookup/:code", requireRole("admin", async (_req, env, _ctx, p) => {
-    const code = String(p.code || "").trim();
-    const ordQ = await env.DB.prepare(
-      `SELECT id, short_code, event_id, status, payment_method, total_cents,
-              buyer_name, buyer_email, buyer_phone, created_at, paid_at
-         FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
+  /* -------------------------- Order lookup by code -------------------------- */
+  // GET /api/admin/orders/by-code/:code
+  router.add("GET", "/api/admin/orders/by-code/:code", async (_req, env, _ctx, p) => {
+    const code = String(p.code || "").trim().toUpperCase();
+    if (!code) return bad("code required");
+
+    // Order (by short_code)
+    const oQ = await env.DB.prepare(
+      `SELECT id, short_code, event_id, status, buyer_name, buyer_email, buyer_phone, total_cents
+         FROM orders WHERE UPPER(short_code) = ?1 LIMIT 1`
     ).bind(code).all();
-    const o = (ordQ.results || [])[0];
-    if (!o) return bad("Order not found", 404);
+    const order = (oQ.results || [])[0];
+    if (!order) return bad("Not found", 404);
 
+    // Tickets for the order
     const tQ = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents
          FROM tickets t
-         JOIN ticket_types tt ON tt.id=t.ticket_type_id
-        WHERE t.order_id=?1 ORDER BY t.id ASC`
-    ).bind(o.id).all();
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+        WHERE t.order_id = ?1
+        ORDER BY t.id ASC`
+    ).bind(order.id).all();
 
-    return json({ ok: true, order: o, tickets: tQ.results || [] });
-  }));
+    return json({
+      ok: true,
+      order,
+      tickets: tQ.results || [],
+      ticket_link: `${(env.PUBLIC_BASE_URL || "").replace(/\/$/, "")}/t/${order.short_code}`
+    });
+  });
 
-  /* ---------------- POS Admin: sessions & cashups ---------------- */
+  /* --------------------- Send tickets via WhatsApp (admin) ------------------ */
+  // POST /api/admin/orders/:code/send-wa  { to?: "2771...", template?, lang? }
+  router.add("POST", "/api/admin/orders/:code/send-wa", async (req, env, _ctx, p) => {
+    let b = {}; try { b = await req.json(); } catch {}
+    const code = String(p.code || "").trim().toUpperCase();
+    if (!code) return bad("code required");
 
-  // Sessions list with computed totals from pos_payments
-  router.add("GET", "/api/admin/pos/sessions", requireRole("admin", async (_req, env) => {
-    const sQ = await env.DB.prepare(
-      `SELECT id, event_id, cashier_name, cashier_msisdn, gate_id,
-              opening_float_cents, opened_at, closed_at, closing_manager
-         FROM pos_sessions
-        ORDER BY id DESC LIMIT 200`
-    ).all();
-    const sessions = sQ.results || [];
+    // lookup order for default phone and name
+    const oQ = await env.DB.prepare(
+      `SELECT id, short_code, buyer_name, buyer_phone
+         FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
+    ).bind(code).all();
+    const order = (oQ.results || [])[0];
+    if (!order) return bad("Order not found", 404);
 
-    // Map totals
-    const ids = sessions.map(s => s.id);
-    let totals = new Map();
-    if (ids.length) {
-      const inClause = ids.map(()=>"?").join(",");
-      const pQ = await env.DB.prepare(
-        `SELECT session_id,
-                SUM(CASE WHEN method='pos_cash' THEN amount_cents ELSE 0 END) AS cash_cents,
-                SUM(CASE WHEN method='pos_card' THEN amount_cents ELSE 0 END) AS card_cents
-           FROM pos_payments
-          WHERE session_id IN (${inClause})
-          GROUP BY session_id`
-      ).bind(...ids).all();
-      (pQ.results || []).forEach(r => {
-        totals.set(r.session_id, {
-          cash_cents: Number(r.cash_cents || 0),
-          card_cents: Number(r.card_cents || 0),
-        });
-      });
-    }
+    const to = String(b.to || order.buyer_phone || "").trim();
+    if (!to) return bad("No WhatsApp number");
 
-    // attach totals
-    const out = sessions.map(s => ({
-      ...s,
-      cash_cents: totals.get(s.id)?.cash_cents || 0,
-      card_cents: totals.get(s.id)?.card_cents || 0
-    }));
-    return json({ ok: true, sessions: out });
-  }));
+    const link = `${(env.PUBLIC_BASE_URL || "").replace(/\/$/, "")}/t/${order.short_code}`;
+    const template = b.template || env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery";
+    const lang = b.lang || env.WHATSAPP_TEMPLATE_LANG || "af";
 
-  // Materialize a cashup when closing a session
-  router.add("POST", "/api/admin/pos/cashup/create", requireRole("admin", async (req, env) => {
+    // Reuse existing WhatsApp endpoint mounted elsewhere
+    const payload = {
+      to,
+      kind: "template",
+      template,
+      lang,
+      // common simple structure your /api/whatsapp/send supports:
+      // body (optional greeting name) and url button param
+      body: order.buyer_name || "",
+      button_url: link
+    };
+
+    const resp = await fetch(new URL("/api/whatsapp/send", req.url).toString(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const j = await resp.json().catch(() => ({}));
+
+    if (!j.ok) return bad(j.error || "Failed to send", 502);
+    return json({ ok: true, sent_to: to, code, link });
+  });
+
+  /* ------------------------------ Vendors CRUD ------------------------------ */
+  // List vendors by event
+  router.add("GET", "/api/admin/vendors", async (req, env) => {
+    const url = new URL(req.url);
+    const event_id = Number(url.searchParams.get("event_id") || 0);
+    if (!event_id) return bad("event_id required");
+    const q = await env.DB.prepare(
+      `SELECT id, name, contact_name, phone, email, stand_number,
+              staff_quota, vehicle_quota
+         FROM vendors
+        WHERE event_id = ?1
+        ORDER BY name ASC`
+    ).bind(event_id).all();
+    return json({ ok: true, vendors: q.results || [] });
+  });
+
+  // Create vendor
+  router.add("POST", "/api/admin/vendors/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const session_id = Number(b?.session_id || 0);
-    const manager_id = Number(b?.manager_id || 0);
-    const notes = String(b?.notes || "").trim();
-    if (!session_id || !manager_id) return bad("session_id and manager_id required");
+    const event_id = Number(b?.event_id || 0);
+    const name = String(b?.name || "").trim();
+    if (!event_id || !name) return bad("event_id & name required");
 
-    // read session
-    const sQ = await env.DB.prepare(
-      `SELECT id, gate_id, opening_float_cents
-         FROM pos_sessions WHERE id=?1 LIMIT 1`
-    ).bind(session_id).all();
-    const s = (sQ.results || [])[0];
-    if (!s) return bad("Session not found", 404);
-
-    // totals
-    const tQ = await env.DB.prepare(
-      `SELECT
-         SUM(CASE WHEN method='pos_cash' THEN amount_cents ELSE 0 END) AS cash_cents,
-         SUM(CASE WHEN method='pos_card' THEN amount_cents ELSE 0 END) AS card_cents
-       FROM pos_payments WHERE session_id=?1`
-    ).bind(session_id).all();
-    const t = (tQ.results || [])[0] || {};
-    const cashTaken = Number(t.cash_cents || 0);
-    const cardTaken = Number(t.card_cents || 0);
-
-    // Create cashup row
-    const ins = await env.DB.prepare(
-      `INSERT INTO cashups
-         (gate_id, manager_id, opened_at, closed_at,
-          opening_float_cents, cash_taken_cents, card_taken_cents,
-          expected_cash_cents, notes)
-       VALUES (?1, ?2, unixepoch(), unixepoch(),
-               ?3, ?4, ?5, ?6, ?7)`
+    const r = await env.DB.prepare(
+      `INSERT INTO vendors (event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
     ).bind(
-      s.gate_id, manager_id, s.opening_float_cents,
-      cashTaken, cardTaken, cashTaken + s.opening_float_cents, notes
+      event_id, name,
+      String(b.contact_name || ""),
+      String(b.phone || ""),
+      String(b.email || ""),
+      String(b.stand_number || ""),
+      Number(b.staff_quota || 0),
+      Number(b.vehicle_quota || 0)
     ).run();
-    const cashup_id = ins.meta.last_row_id;
+    return json({ ok: true, id: r.meta.last_row_id });
+  });
 
-    // Link orders included in pos session (derive from pos_payments)
-    const ords = await env.DB.prepare(
-      `SELECT DISTINCT order_id FROM pos_payments WHERE session_id=?1`
-    ).bind(session_id).all();
-    for (const row of (ords.results || [])) {
-      await env.DB.prepare(
-        `INSERT INTO cashup_orders (cashup_id, order_id) VALUES (?1, ?2)`
-      ).bind(cashup_id, row.order_id).run();
-    }
+  // Update vendor
+  router.add("POST", "/api/admin/vendors/:id/update", async (req, env, _ctx, p) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const id = Number(p.id || 0);
+    if (!id) return bad("id required");
 
-    return json({ ok: true, cashup_id, totals: { cashTaken, cardTaken } });
-  }));
+    await env.DB.prepare(
+      `UPDATE vendors SET
+         name=?1, contact_name=?2, phone=?3, email=?4,
+         stand_number=?5, staff_quota=?6, vehicle_quota=?7
+       WHERE id=?8`
+    ).bind(
+      String(b.name || ""),
+      String(b.contact_name || ""),
+      String(b.phone || ""),
+      String(b.email || ""),
+      String(b.stand_number || ""),
+      Number(b.staff_quota || 0),
+      Number(b.vehicle_quota || 0),
+      id
+    ).run();
+
+    return json({ ok: true, id });
+  });
+
+  // Delete vendor
+  router.add("POST", "/api/admin/vendors/:id/delete", async (_req, env, _ctx, p) => {
+    const id = Number(p.id || 0);
+    if (!id) return bad("id required");
+    await env.DB.prepare(`DELETE FROM vendors WHERE id=?1`).bind(id).run();
+    return json({ ok: true, id });
+  });
 }
