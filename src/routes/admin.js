@@ -1,12 +1,12 @@
 // /src/routes/admin.js
 import { json, bad } from "../utils/http.js";
 import { requireRole } from "../utils/auth.js";
+import { sendWhatsAppTextIfSession, sendWhatsAppTemplate } from "../services/whatsapp.js";
 
 export function mountAdmin(router) {
 
   /* ===================== EVENTS ===================== */
 
-  // List events
   router.add("GET", "/api/admin/events", requireRole("admin", async (_req, env) => {
     const q = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -17,7 +17,6 @@ export function mountAdmin(router) {
     return json({ ok: true, events: q.results || [] });
   }));
 
-  // Create event
   router.add("POST", "/api/admin/events", requireRole("admin", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const { slug, name, venue, starts_at, ends_at, status, hero_url, poster_url, gallery_urls } = b || {};
@@ -32,7 +31,6 @@ export function mountAdmin(router) {
     return json({ ok: true, id: r.meta.last_row_id });
   }));
 
-  // Update event
   router.add("PUT", "/api/admin/events/:id", requireRole("admin", async (req, env, _ctx, p) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const id = Number(p.id || 0);
@@ -54,7 +52,6 @@ export function mountAdmin(router) {
 
   /* ===================== TICKET TYPES ===================== */
 
-  // List ticket types for an event
   router.add("GET", "/api/admin/events/:id/ticket-types", requireRole("admin", async (_req, env, _c, p) => {
     const eventId = Number(p.id || 0);
     if (!eventId) return bad("Invalid event id");
@@ -67,7 +64,6 @@ export function mountAdmin(router) {
     return json({ ok: true, items: q.results || [] });
   }));
 
-  // Create ticket type
   router.add("POST", "/api/admin/events/:id/ticket-types", requireRole("admin", async (req, env, _c, p) => {
     const eventId = Number(p.id || 0);
     if (!eventId) return bad("Invalid event id");
@@ -92,7 +88,6 @@ export function mountAdmin(router) {
     return json({ ok: true, id: r.meta.last_row_id });
   }));
 
-  // Update ticket type
   router.add("PUT", "/api/admin/ticket-types/:id", requireRole("admin", async (req, env, _c, p) => {
     const id = Number(p.id || 0);
     if (!id) return bad("Invalid id");
@@ -119,7 +114,6 @@ export function mountAdmin(router) {
 
   /* ===================== TICKETS (REPORT) ===================== */
 
-  // Tickets summary + recent for an event
   router.add("GET", "/api/admin/tickets/summary/:eventId", requireRole("admin", async (_req, env, _c, p) => {
     const eventId = Number(p.eventId || 0);
     if (!eventId) return bad("Invalid event id");
@@ -162,7 +156,6 @@ export function mountAdmin(router) {
     });
   }));
 
-  // Lookup order (by short code) with tickets
   router.add("GET", "/api/admin/orders/by-code/:code", requireRole("admin", async (_req, env, _c, p) => {
     const code = String(p.code || "").trim();
     if (!code) return bad("Missing code");
@@ -173,10 +166,7 @@ export function mountAdmin(router) {
     ).bind(code).first();
     if (!o) return bad("Order not found", 404);
 
-    const ev = await env.DB.prepare(
-      `SELECT id, slug, name FROM events WHERE id=?1`
-    ).bind(o.event_id).first();
-
+    const ev = await env.DB.prepare(`SELECT id, slug, name FROM events WHERE id=?1`).bind(o.event_id).first();
     const t = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, tt.name AS type_name
          FROM tickets t
@@ -188,10 +178,9 @@ export function mountAdmin(router) {
     return json({ ok: true, order: o, event: ev, tickets: t.results || [] });
   }));
 
-  /* ===================== POS ADMIN (read-only summary) ===================== */
+  /* ===================== POS ADMIN ===================== */
 
   router.add("GET", "/api/admin/pos/sessions", requireRole("admin", async (_req, env) => {
-    // sessions + totals from pos_payments
     const sess = await env.DB.prepare(
       `SELECT s.id, s.cashier_name, s.event_id, s.gate_id, s.opened_at, s.closed_at, s.opening_float_cents, s.closing_manager
          FROM pos_sessions s
@@ -230,7 +219,6 @@ export function mountAdmin(router) {
 
   /* ===================== VENDORS ===================== */
 
-  // List vendors by event
   router.add("GET", "/api/admin/vendors", requireRole("admin", async (req, env) => {
     const url = new URL(req.url);
     const eventId = Number(url.searchParams.get("event_id") || 0);
@@ -242,7 +230,6 @@ export function mountAdmin(router) {
     return json({ ok:true, vendors: q.results || [] });
   }));
 
-  // Create vendor
   router.add("POST", "/api/admin/vendors", requireRole("admin", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const { event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota } = b || {};
@@ -258,7 +245,6 @@ export function mountAdmin(router) {
     return json({ ok:true, id: r.meta.last_row_id });
   }));
 
-  // Update vendor
   router.add("PUT", "/api/admin/vendors/:id", requireRole("admin", async (req, env, _c, p) => {
     const id = Number(p.id || 0);
     if (!id) return bad("Invalid id");
@@ -275,7 +261,47 @@ export function mountAdmin(router) {
     return json({ ok:true });
   }));
 
-  /* ===================== USERS (read-only) ===================== */
+  // NEW: Send passes to vendor via WhatsApp
+  router.add("POST", "/api/admin/vendors/:id/send-wa", requireRole("admin", async (_req, env, _c, p) => {
+    const id = Number(p.id || 0);
+    if (!id) return bad("Invalid id");
+
+    const v = await env.DB.prepare(
+      `SELECT id, event_id, name, phone FROM vendors WHERE id=?1`
+    ).bind(id).first();
+    if (!v) return bad("Vendor not found", 404);
+    if (!v.phone) return bad("Vendor has no phone");
+
+    const passes = await env.DB.prepare(
+      `SELECT id, type, label, vehicle_reg, qr, state
+         FROM vendor_passes WHERE vendor_id=?1 ORDER BY id ASC`
+    ).bind(id).all();
+
+    const list = (passes.results || []).map(p =>
+      `• ${p.type.toUpperCase()}${p.label? ' - '+p.label:''}${p.vehicle_reg? ' ('+p.vehicle_reg+')':''}\n  QR: ${p.qr}`
+    ).join('\n');
+
+    const body =
+      `Hallo ${v.name || 'verkoper'}!\n` +
+      `Jou Skou-passe is gereed:\n\n` +
+      (list || 'Geen passe gevind nie.') +
+      `\n\nWys QR-kodes by die hek vir toegang.`;
+
+    // Try session text first; fallback to template if needed
+    try {
+      const j = await sendWhatsAppTextIfSession(env, String(v.phone), body);
+      return json({ ok:true, mode:"text", response:j });
+    } catch (e) {
+      try {
+        const j2 = await sendWhatsAppTemplate(env, String(v.phone), body, (env.WHATSAPP_TEMPLATE_LANG || "en_US"));
+        return json({ ok:true, mode:"template", response:j2 });
+      } catch (e2) {
+        return bad(String(e2), 400);
+      }
+    }
+  }));
+
+  /* ===================== USERS ===================== */
 
   router.add("GET", "/api/admin/users", requireRole("admin", async (_req, env) => {
     const q = await env.DB.prepare(
