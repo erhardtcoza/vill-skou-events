@@ -226,6 +226,7 @@ export function mountAdmin(router) {
 router.add("GET", "/api/public/tickets/by-code/:code", 
   async (_req, env, _ctx, p) => {
     const code = String(p.code || "").trim();
+
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents,
@@ -236,6 +237,13 @@ router.add("GET", "/api/public/tickets/by-code/:code",
         WHERE UPPER(o.short_code) = UPPER(?)
         ORDER BY t.id ASC`
     ).bind(code).all();
+
+    if (!q || !q.results || q.results.length === 0) {
+      return new Response(JSON.stringify({ ok: false, error: "No tickets found" }), {
+        headers: { "content-type": "application/json" },
+        status: 404
+      });
+    }
 
     return new Response(JSON.stringify({ ok: true, tickets: q.results }), {
       headers: { "content-type": "application/json" }
