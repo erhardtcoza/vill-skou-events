@@ -130,47 +130,54 @@ export function mountAdmin(router) {
     })
   );
 
-  /* -------------------- POS Admin: sessions list -------------------- */
-  router.add("GET", "/api/admin/pos/sessions",
-    guard(async (_req, env) => {
-      // sessions
-      const sQ = await env.DB.prepare(
-        `SELECT s.id, s.cashier_name, s.gate_id, s.opened_at, s.closed_at, s.closing_manager,
-                g.name AS gate_name
-           FROM pos_sessions s
-           LEFT JOIN gates g ON g.id = s.gate_id
-          ORDER BY s.id DESC
-          LIMIT 500`
-      ).all();
-      const sessions = sQ.results || [];
 
-      // cash / card sums from pos_payments
-      const sumsQ = await env.DB.prepare(
-        `SELECT session_id,
-                SUM(CASE WHEN method='pos_cash' THEN amount_cents ELSE 0 END) AS cash_cents,
-                SUM(CASE WHEN method='pos_card' THEN amount_cents ELSE 0 END) AS card_cents
-           FROM pos_payments
-          GROUP BY session_id`
-      ).all();
-      const sums = new Map((sumsQ.results || []).map(r => [r.session_id, r]));
+// 🔁 Replace your existing /api/admin/pos/sessions handler with this:
+router.add("GET", "/api/admin/pos/sessions", requireRole("admin", async (req, env) => {
+  const url = new URL(req.url);
+  const from = Number(url.searchParams.get("from") || 0); // unix seconds (optional)
+  const to   = Number(url.searchParams.get("to")   || 0); // unix seconds (optional)
 
-      const rows = sessions.map(s => {
-        const sum = sums.get(s.id) || { cash_cents:0, card_cents:0 };
-        return {
-          id: s.id,
-          cashier_name: s.cashier_name,
-          gate_name: s.gate_name || (`#${s.gate_id}`),
-          opened_at: s.opened_at,
-          closed_at: s.closed_at,
-          closing_manager: s.closing_manager || "",
-          cash_cents: Number(sum.cash_cents || 0),
-          card_cents: Number(sum.card_cents || 0),
-        };
-      });
+  // Build a WHERE clause only if filters present
+  const where = [];
+  const bind = [];
+  if (from) { where.push("s.opened_at >= ?"); bind.push(from); }
+  if (to)   { where.push("s.opened_at <= ?"); bind.push(to); }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-      return json({ ok: true, rows });
-    })
-  );
+  // Sum pos_payments for each session (cash & card)
+  const q = await env.DB.prepare(
+    `
+    SELECT
+      s.id,
+      s.cashier_name,
+      g.name AS gate_name,
+      s.opened_at,
+      s.closed_at,
+      s.closing_manager,
+      COALESCE(SUM(CASE WHEN p.method = 'pos_cash' THEN p.amount_cents END), 0) AS cash_cents,
+      COALESCE(SUM(CASE WHEN p.method = 'pos_card' THEN p.amount_cents END), 0) AS card_cents
+    FROM pos_sessions s
+    JOIN gates g ON g.id = s.gate_id
+    LEFT JOIN pos_payments p ON p.session_id = s.id
+    ${whereSql}
+    GROUP BY s.id
+    ORDER BY s.id DESC
+    `
+  ).bind(...bind).all();
+
+  const sessions = (q.results || []).map(r => ({
+    id: Number(r.id),
+    cashier_name: r.cashier_name,
+    gate_name: r.gate_name,
+    opened_at: Number(r.opened_at || 0),
+    closed_at: r.closed_at ? Number(r.closed_at) : null,
+    closing_manager: r.closing_manager || null,
+    cash_cents: Number(r.cash_cents || 0),
+    card_cents: Number(r.card_cents || 0),
+  }));
+
+  return json({ ok: true, sessions });
+}));
 
   /* -------------------- Vendors -------------------- */
   // list vendors for an event
