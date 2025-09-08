@@ -1,248 +1,215 @@
 // /src/ui/scanner.js
-export function scannerHTML() {
-  return /*html*/`<!doctype html>
-<html lang="af">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Skandeerder · Villiersdorp Skou</title>
-  <style>
-    :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --ink:#111; --warn:#92400e; --bad:#991b1b; --ok:#065f46; }
-    *{ box-sizing:border-box }
-    body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial }
-    .wrap{ max-width:960px; margin:18px auto; padding:0 14px }
-    h1{ margin:0 0 10px }
-    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap }
-    .panel{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:14px; margin-bottom:14px }
-    .muted{ color:var(--muted) }
-    .btn{ padding:10px 12px; border-radius:10px; border:0; background:var(--green); color:#fff; font-weight:600; cursor:pointer }
-    .btn.ghost{ background:#e5e7eb; color:#111 }
-    .btn.warn{ background:var(--warn); color:#fff }
-    .btn.bad{ background:var(--bad); color:#fff }
-    input{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff; min-width:260px }
-    video{ width:100%; max-height:56vh; border-radius:12px; background:#000 }
-    .status{ font-weight:700 }
-    .ok{ color:var(--ok) } .warn{ color:var(--warn) } .bad{ color:var(--bad) }
-    .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:14px }
-    @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
-    .ticket{ display:flex; flex-direction:column; gap:8px }
-    .kv{ display:flex; justify-content:space-between; gap:10px; }
-    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#e5e7eb; font-size:12px }
-    .state-unused{ color:var(--ok) } .state-in{ color:var(--ok) } .state-out{ color:var(--warn) } .state-void{ color:var(--bad) }
-    .qrbox{ display:flex; justify-content:center; }
-    .qrbox img{ width:180px; height:180px; image-rendering: pixelated; }
-    .actions{ display:flex; gap:8px; flex-wrap:wrap }
-    .error{ color:var(--bad); font-weight:600 }
-    .small{ font-size:13px }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>Skandeerder</h1>
-
-    <div class="grid">
-      <div class="panel">
-        <div class="row" style="justify-content:space-between">
-          <div class="muted small">
-            Gebruik jou kamera om ’n kaartjie se QR te skandeer. Indien die kamera nie beskikbaar is nie, tik die kode onder.
-          </div>
-          <div class="row">
-            <button id="btnStart" class="btn">Begin kamera</button>
-            <button id="btnStop" class="btn ghost">Stop</button>
-            <button id="btnTorch" class="btn ghost" title="Skakel flits">🔦</button>
-          </div>
-        </div>
-        <div style="margin-top:10px">
-          <video id="video" muted playsinline></video>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <input id="manual" placeholder="Tik of plak QR / kaartjiekode" />
-          <button id="btnCheck" class="btn">Kontroleer</button>
-          <span id="scanMsg" class="muted small"></span>
+export const scannerHTML = `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Scanner · Villiersdorp Skou</title>
+<style>
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  .wrap{ max-width:960px; margin:16px auto; padding:0 14px }
+  h1{ margin:0 0 10px }
+  .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:14px }
+  @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
+  .muted{ color:var(--muted) }
+  .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
+  input{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
+  .btn{ padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .state{ display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; border:1px solid #e5e7eb }
+  .ok{ color:#065f46; border-color:#a7f3d0; background:#ecfdf5 }
+  .warn{ color:#92400e; border-color:#fcd34d; background:#fffbeb }
+  .bad{ color:#991b1b; border-color:#fecaca; background:#fef2f2 }
+  video{ width:100%; border-radius:10px; background:#000 }
+  canvas{ display:none }
+  .result{ font-size:14px }
+  .code{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:700 }
+</style>
+<!-- jsQR (small, fast) -->
+<script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
+</head><body>
+<div class="wrap">
+  <h1>Scanner</h1>
+  <div class="grid">
+    <div class="card">
+      <div class="row" style="justify-content:space-between;align-items:center">
+        <div class="muted">Camera live scan</div>
+        <div class="row">
+          <button id="toggle" class="btn">Pause</button>
+          <button id="flip" class="btn">Flip</button>
+          <button id="torch" class="btn">Torch</button>
         </div>
       </div>
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas"></canvas>
+      <div id="liveMsg" class="muted" style="margin-top:8px">Point the camera at a QR code.</div>
+    </div>
 
-      <div class="panel">
-        <div id="resultEmpty" class="muted small">Geen kaartjie gelaai nie.</div>
-        <div id="result" class="ticket" style="display:none">
-          <div class="kv"><div>Kaartjie tipe</div><div id="tType" class="pill">–</div></div>
-          <div class="kv"><div>Naam</div><div id="tName">–</div></div>
-          <div class="kv"><div>Status</div><div id="tState" class="pill">–</div></div>
-          <div class="kv"><div>Bestel nommer</div><div id="tOrder">–</div></div>
-          <div class="kv"><div>Prys</div><div id="tPrice">–</div></div>
-          <div class="qrbox" style="margin-top:6px"><img id="tQR" alt="QR"></div>
-          <div class="actions" style="margin-top:6px">
-            <button id="btnIn" class="btn">Merk IN</button>
-            <button id="btnOut" class="btn warn">Merk UIT</button>
-          </div>
-          <div id="actMsg" class="muted small" style="margin-top:6px"></div>
-        </div>
-        <div id="err" class="error"></div>
+    <div class="card">
+      <div class="row">
+        <input id="code" placeholder="Type code manually (e.g. E4F3917274E7)" style="flex:1;min-width:220px"/>
+        <button id="lookup" class="btn primary">Lookup</button>
       </div>
+      <div id="status" class="muted" style="margin-top:8px"></div>
+      <div id="result" class="result" style="margin-top:10px"></div>
     </div>
   </div>
+</div>
 
 <script>
 const $ = (id)=>document.getElementById(id);
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
-const qrPNG = (data, size=220)=>\`https://api.qrserver.com/v1/create-qr-code/?format=png&size=\${size}x\${size}&data=\${encodeURIComponent(data)}\`;
 
-let stream = null;
-let detector = null;
-let scanning = false;
-let lastValue = "";
-let lastAt = 0;
-let track = null;
+let stream = null, track = null, facing = 'environment', scanning = true, torchOn = false;
+let lastCode = '', lastAt = 0;
 
-function setMsg(el, text, cls=""){
-  el.textContent = text || "";
-  el.className = (cls ? cls + " " : "") + el.className.replace(/\b(ok|warn|bad)\b/g,"").trim();
-}
+function norm(s){ return String(s||'').trim().toUpperCase(); }
 
-function showTicket(t){
-  $("resultEmpty").style.display = "none";
-  $("result").style.display = "flex";
-  $("tType").textContent = t.type_name || "–";
-  $("tName").textContent = [t.attendee_first,t.attendee_last].filter(Boolean).join(" ") || "–";
-  const st = (t.state || "unused").toLowerCase();
-  $("tState").textContent = st;
-  $("tState").className = "pill state-" + (st==="in"?"in":st==="out"?"out":st==="void"?"void":"unused");
-  $("tOrder").textContent = t.short_code || "–";
-  $("tPrice").textContent = typeof t.price_cents==="number" ? ("R"+(t.price_cents/100).toFixed(2)) : "–";
-  $("tQR").src = qrPNG(t.qr || "");
-}
-
-async function lookupTicket(qr){
-  // try primary, then fallback
-  let r = await fetch(\`/api/scan/ticket?qr=\${encodeURIComponent(qr)}\`, {credentials:"include"});
-  if (r.status === 404) r = await fetch(\`/api/scan/lookup?qr=\${encodeURIComponent(qr)}\`, {credentials:"include"});
-  const j = await r.json().catch(()=>({}));
-  if (!j.ok) throw new Error(j.error || "Lookup het misluk");
-  return j.ticket || j.tickets?.[0] || j;
-}
-
-async function mark(direction, qr){
-  // primary endpoints
-  let r = await fetch(\`/api/scan/\${direction}\`, {
-    method:"POST", headers:{ "content-type":"application/json" }, credentials:"include",
-    body: JSON.stringify({ qr })
-  });
-  if (r.status === 404) {
-    // fallback mark API
-    r = await fetch("/api/scan/mark", {
-      method:"POST", headers:{ "content-type":"application/json" }, credentials:"include",
-      body: JSON.stringify({ qr, direction })
-    });
-  }
-  const j = await r.json().catch(()=>({}));
-  if (!j.ok) throw new Error(j.error || "Aksie het misluk");
-  return j.ticket || j;
-}
-
-async function handleValue(val){
-  const now = Date.now();
-  if (val === lastValue && (now - lastAt) < 2000) return; // debounce same code
-  lastValue = val; lastAt = now;
-  $("err").textContent = ""; $("actMsg").textContent = ""; setMsg($("scanMsg"), ""); 
-
-  try {
-    setMsg($("scanMsg"), "Soek kaartjie…");
-    const t = await lookupTicket(val);
-    showTicket(t);
-    setMsg($("scanMsg"), "Gevind", "ok");
-    $("btnIn").onclick = async ()=>{
-      $("actMsg").textContent = "Merk IN…";
-      try{
-        const r = await mark("in", t.qr || val);
-        showTicket(r.ticket || r);
-        setMsg($("actMsg"), "IN gemerk", "ok");
-      }catch(e){ $("actMsg").textContent = e.message || "Fout"; }
-    };
-    $("btnOut").onclick = async ()=>{
-      $("actMsg").textContent = "Merk UIT…";
-      try{
-        const r = await mark("out", t.qr || val);
-        showTicket(r.ticket || r);
-        setMsg($("actMsg"), "UIT gemerk", "ok");
-      }catch(e){ $("actMsg").textContent = e.message || "Fout"; }
-    };
-  } catch(e){
-    $("result").style.display = "none";
-    $("resultEmpty").style.display = "block";
-    $("err").textContent = e.message || "Kon nie kaartjie vind nie";
-    setMsg($("scanMsg"), "Nie gevind nie", "bad");
-  }
-}
-
-async function startCam(){
-  $("err").textContent = "";
+async function startCamera(){
+  if (stream) await stopCamera();
   try{
-    // Prefer environment (rear) camera
-    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" }, audio:false });
-    const v = $("video");
-    v.srcObject = stream;
-    await v.play();
-    track = stream.getVideoTracks()[0];
-
-    // BarcodeDetector if available
-    if ("BarcodeDetector" in window) {
-      detector = new BarcodeDetector({ formats: ["qr_code"] });
-      scanning = true;
-      loopDetect();
-    } else {
-      setMsg($("scanMsg"), "Geen BarcodeDetector; gebruik handmatige invoer", "warn");
-    }
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing, width: {ideal:1280}, height:{ideal:720} },
+      audio: false
+    });
+    $('video').srcObject = stream;
+    track = stream.getVideoTracks()[0] || null;
+    $('liveMsg').textContent = 'Camera running.';
   }catch(e){
-    $("err").textContent = "Kamera fout: " + (e.message || e);
+    $('liveMsg').textContent = 'Camera error: ' + (e.message||e);
   }
 }
 
-async function loopDetect(){
-  const v = $("video");
-  while (scanning && detector) {
+async function stopCamera(){
+  if (stream){
+    stream.getTracks().forEach(t=>t.stop());
+    stream = null; track = null;
+  }
+}
+
+async function setTorch(on){
+  try{
+    if (!track) return false;
+    const caps = track.getCapabilities?.();
+    if (!caps || !caps.torch) return false;
+    await track.applyConstraints({ advanced: [{ torch: !!on }] });
+    torchOn = !!on;
+    return true;
+  }catch{ return false; }
+}
+
+async function loop(){
+  const video = $('video'); const canvas = $('canvas'); const ctx = canvas.getContext('2d', { willReadFrequently:true });
+  while(true){
     try{
-      const codes = await detector.detect(v);
-      if (codes && codes.length) {
-        const val = String(codes[0].rawValue || "").trim();
-        if (val) await handleValue(val);
+      if (scanning && video.readyState === video.HAVE_ENOUGH_DATA){
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const qr = jsQR(img.data, img.width, img.height, { inversionAttempts:'dontInvert' });
+        if (qr && qr.data){
+          const code = norm(qr.data);
+          const tooSoon = (Date.now() - lastAt) < 1400;
+          if (!tooSoon && code && code !== lastCode){
+            lastCode = code; lastAt = Date.now();
+            $('code').value = code;
+            await handleLookup(code, true);
+          }
+        }
       }
-    }catch{}
+    }catch(e){
+      $('status').textContent = 'Scan error: ' + (e.message||e);
+    }
     await sleep(120);
   }
 }
 
-function stopCam(){
-  scanning = false;
-  if (track) { try { track.stop(); } catch{} track = null; }
-  if (stream) { try { stream.getTracks().forEach(t=>t.stop()); } catch{} stream = null; }
-  detector = null;
-}
-
-async function toggleTorch(){
+async function handleLookup(code, fromCamera=false){
+  $('status').textContent = 'Looking up ' + code + '…';
+  $('result').innerHTML = '';
   try{
-    if (!track) return;
-    const caps = track.getCapabilities?.() || {};
-    if (!("torch" in caps)) return;
-    const st = track.getSettings?.() || {};
-    const want = !st.torch;
-    await track.applyConstraints({ advanced:[{ torch: want }] });
-  }catch{}
+    const r = await fetch('/api/scan/lookup/' + encodeURIComponent(code));
+    const j = await r.json();
+    if (!j.ok){
+      $('status').innerHTML = '<span class="state bad">Lookup failed</span>';
+      $('result').innerHTML = '<div class="muted">No record for <span class="code">'+code+'</span>.</div>';
+      return;
+    }
+    $('status').innerHTML = '<span class="state ok">Found</span>';
+
+    // Build a small card depending on kind
+    const k = j.kind; // 'ticket' | 'vendor_pass' | 'pass'
+    if (k === 'ticket'){
+      const t = j.ticket;
+      const who = [t.attendee_first, t.attendee_last].filter(Boolean).join(' ') || '(no name)';
+      const btnIn = (t.state !== 'in') ? '<button id="markIn" class="btn primary">Mark IN</button>' : '';
+      const btnOut= (t.state === 'in') ? '<button id="markOut" class="btn">Mark OUT</button>' : '';
+      $('result').innerHTML = \`
+        <div><div class="muted">Ticket</div>
+          <div style="font-weight:700">\${who}</div>
+          <div>\${t.type_name || ''} · <span class="code">\${t.qr}</span></div>
+          <div style="margin:6px 0">State: <span class="state \${t.state==='in'?'warn':(t.state==='unused'?'ok':'bad')}">\${t.state}</span></div>
+          <div class="row">\${btnIn} \${btnOut}</div>
+        </div>\`;
+      $('markIn')?.addEventListener('click', ()=> mark('ticket', t.id, 'IN'));
+      $('markOut')?.addEventListener('click', ()=> mark('ticket', t.id, 'OUT'));
+    } else if (k === 'vendor_pass' || k === 'pass'){
+      const v = j.pass;
+      const btnIn = (v.state !== 'in') ? '<button id="markIn" class="btn primary">Mark IN</button>' : '';
+      const btnOut= (v.state === 'in') ? '<button id="markOut" class="btn">Mark OUT</button>' : '';
+      $('result').innerHTML = \`
+        <div><div class="muted">Vendor/Pass</div>
+          <div style="font-weight:700">\${v.label || v.holder_name || '(no label)'}</div>
+          <div>\${v.type || v.kind} · <span class="code">\${v.qr}</span></div>
+          <div style="margin:6px 0">State: <span class="state \${v.state==='in'?'warn':(v.state==='unused'?'ok':'bad')}">\${v.state}</span></div>
+          <div class="row">\${btnIn} \${btnOut}</div>
+        </div>\`;
+      $('markIn')?.addEventListener('click', ()=> mark(k, v.id, 'IN'));
+      $('markOut')?.addEventListener('click', ()=> mark(k, v.id, 'OUT'));
+    } else {
+      $('result').innerHTML = '<div class="muted">Unknown kind.</div>';
+    }
+  }catch(e){
+    $('status').innerHTML = '<span class="state bad">Network</span>';
+  }
 }
 
-$("btnStart").onclick = startCam;
-$("btnStop").onclick = stopCam;
-$("btnTorch").onclick = toggleTorch;
+async function mark(kind, id, action){
+  $('status').textContent = 'Updating…';
+  try{
+    const r = await fetch('/api/scan/mark', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify({ kind, id, action })
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'mark failed');
+    $('status').innerHTML = '<span class="state ok">Updated</span>';
+  }catch(e){
+    $('status').innerHTML = '<span class="state bad">Failed</span>';
+  }
+}
 
-$("btnCheck").onclick = ()=>{
-  const val = ($("manual").value||"").trim();
-  if (val) handleValue(val);
+// UI wiring
+$('lookup').onclick = ()=> {
+  const code = norm($('code').value);
+  if (!code) { $('status').textContent = 'Enter a code.'; return; }
+  handleLookup(code, false);
+};
+$('toggle').onclick = ()=> {
+  scanning = !scanning;
+  $('toggle').textContent = scanning ? 'Pause' : 'Resume';
+};
+$('flip').onclick = async ()=> {
+  facing = (facing === 'environment') ? 'user' : 'environment';
+  await startCamera();
+};
+$('torch').onclick = async ()=> {
+  const ok = await setTorch(!torchOn);
+  if (!ok) $('status').textContent = 'Torch not supported on this device';
 };
 
-// Auto start if permissions previously allowed
-if (navigator.mediaDevices?.getUserMedia) {
-  // don’t auto start on desktop if you prefer; leave manual
-}
+startCamera();
+loop();
 </script>
-</body>
-</html>`;
-}
+</body></html>`;
