@@ -223,9 +223,7 @@ export function mountAdmin(router) {
   }));
 
   /* ---------------- Public ticket page helper --------------------- */
-  // This powers /t/:code UI by giving the tickets for an order short_code (case-insensitive).
-  router.add("GET", "/api/public/tickets/by-code/:code", requireRole("admin", async (_req, env, _c, p) => {
-    // ^ we keep it admin-guarded for now to avoid scraping; flip to public if you prefer.
+  router.add("GET", "/api/public/tickets/by-code/:code", 
     const code = String(p.code || "").trim();
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
