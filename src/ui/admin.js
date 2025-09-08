@@ -183,25 +183,24 @@ async function loadEvents(){
     const j = await jget('/api/admin/events');
     EVENTS = j.events||[];
     const tb = $('eventsTbl').querySelector('tbody');
-    tb.innerHTML = (EVENTS.map(ev => `
+    tb.innerHTML = (EVENTS.map(ev => \`
       <tr>
-        <td>${ev.id}</td>
-        <td>${esc(ev.slug)}</td>
-        <td><div style="font-weight:600">${esc(ev.name)}</div><div class="muted">${esc(ev.venue||'')}</div></td>
-        <td>${fmtDate(ev.starts_at)}</td>
-        <td>${fmtDate(ev.ends_at)}</td>
-        <td>${esc(ev.status)}</td>
-        <td><button class="btn ghost" data-tt="${ev.id}">Ticket Types</button></td>
+        <td>\${ev.id}</td>
+        <td>\${esc(ev.slug)}</td>
+        <td><div style="font-weight:600">\${esc(ev.name)}</div><div class="muted">\${esc(ev.venue||'')}</div></td>
+        <td>\${fmtDate(ev.starts_at)}</td>
+        <td>\${fmtDate(ev.ends_at)}</td>
+        <td>\${esc(ev.status)}</td>
+        <td><button class="btn ghost" data-tt="\${ev.id}">Ticket Types</button></td>
       </tr>
-    `).join('')) || '<tr><td colspan="7" class="muted">No events</td></tr>';
+    \`).join('')) || '<tr><td colspan="7" class="muted">No events</td></tr>';
 
     tb.querySelectorAll('[data-tt]').forEach(b=>{
       b.onclick = ()=> openTicketTypes(Number(b.dataset.tt));
     });
 
-    // Fill Tickets tab event selector too
     const sel = $('tEvSelect');
-    sel.innerHTML = EVENTS.map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join('');
+    sel.innerHTML = EVENTS.map(e=>\`<option value="\${e.id}">\${esc(e.name)} (\${esc(e.slug)})</option>\`).join('');
   }catch(e){
     $('evErr').textContent = 'Error: '+(e.message||'load failed');
   }
@@ -221,17 +220,17 @@ async function openTicketTypes(event_id){
 async function loadTicketTypes(event_id){
   const j = await jget('/api/admin/events/'+event_id+'/ticket-types');
   const rows = j.ticket_types || [];
-  $('ttTbl').querySelector('tbody').innerHTML = rows.map(r=>`
+  $('ttTbl').querySelector('tbody').innerHTML = rows.map(r=>\`
     <tr>
-      <td>${r.id}</td>
-      <td>${esc(r.name)}</td>
-      <td class="right">${rands(r.price_cents||0)}</td>
-      <td class="right">${r.capacity||0}</td>
-      <td class="right">${r.per_order_limit||0}</td>
-      <td>${esc(r.code||'')}</td>
-      <td>${(r.requires_gender? 'Yes':'No')}</td>
+      <td>\${r.id}</td>
+      <td>\${esc(r.name)}</td>
+      <td class="right">\${rands(r.price_cents||0)}</td>
+      <td class="right">\${r.capacity||0}</td>
+      <td class="right">\${r.per_order_limit||0}</td>
+      <td>\${esc(r.code||'')}</td>
+      <td>\${(r.requires_gender? 'Yes':'No')}</td>
     </tr>
-  `).join('') || '<tr><td colspan="7" class="muted">No ticket types yet</td></tr>';
+  \`).join('') || '<tr><td colspan="7" class="muted">No ticket types yet</td></tr>';
 }
 
 $('ttAdd').onclick = async ()=>{
@@ -267,17 +266,17 @@ async function loadTicketsSummary(){
   try{
     const j = await jget('/api/admin/tickets?event_id='+event_id);
     const tb = $('tTbl').querySelector('tbody');
-    tb.innerHTML = (j.types||[]).map(r=>`
+    tb.innerHTML = (j.types||[]).map(r=>\`
       <tr>
-        <td>${esc(r.name)}</td>
-        <td class="right">${rands(r.price_cents||0)}</td>
-        <td class="right">${r.total||0}</td>
-        <td class="right">${r.unused||0}</td>
-        <td class="right">${r.in||0}</td>
-        <td class="right">${r.out||0}</td>
-        <td class="right">${r.void||0}</td>
+        <td>\${esc(r.name)}</td>
+        <td class="right">\${rands(r.price_cents||0)}</td>
+        <td class="right">\${r.total||0}</td>
+        <td class="right">\${r.unused||0}</td>
+        <td class="right">\${r.in||0}</td>
+        <td class="right">\${r.out||0}</td>
+        <td class="right">\${r.void||0}</td>
       </tr>
-    `).join('') || '<tr><td colspan="7" class="muted">No tickets yet</td></tr>';
+    \`).join('') || '<tr><td colspan="7" class="muted">No tickets yet</td></tr>';
 
     $('tSummary').textContent =
       \`Total: \${(j.summary?.total||0)} • In: \${(j.summary?.in||0)} • Out: \${(j.summary?.out||0)} • Unused: \${(j.summary?.unused||0)} • Void: \${(j.summary?.void||0)}\`;
@@ -288,7 +287,8 @@ async function loadTicketsSummary(){
 }
 
 // order lookup
-$('olBtn').onclick = doOrderLookup;
+$('olBtn')?.addEventListener('click', doOrderLookup); // guard if id typo
+$('olBtn') || (document.getElementById('olBtn').onclick = doOrderLookup);
 async function doOrderLookup(){
   const code = ($('olCode').value||'').trim();
   $('olMsg').textContent=''; $('olResult').innerHTML='';
@@ -316,17 +316,17 @@ async function loadPOS(){
   try{
     const j = await jget('/api/admin/pos/sessions');
     const tb = $('posTbl').querySelector('tbody');
-    tb.innerHTML = (j.sessions||[]).map(s=>`
+    tb.innerHTML = (j.sessions||[]).map(s=>\`
       <tr>
-        <td>${s.id}</td>
-        <td>${esc(s.cashier_name||'')}</td>
-        <td>${esc(s.gate_name||'')}</td>
-        <td>${fmtDT(s.opened_at)}</td>
-        <td>${s.closed_at ? fmtDT(s.closed_at) : '-'}</td>
-        <td class="right">${rands(s.cash_cents||0)}</td>
-        <td class="right">${rands(s.card_cents||0)}</td>
+        <td>\${s.id}</td>
+        <td>\${esc(s.cashier_name||'')}</td>
+        <td>\${esc(s.gate_name||'')}</td>
+        <td>\${fmtDT(s.opened_at)}</td>
+        <td>\${s.closed_at ? fmtDT(s.closed_at) : '-'}</td>
+        <td class="right">\${rands(s.cash_cents||0)}</td>
+        <td class="right">\${rands(s.card_cents||0)}</td>
       </tr>
-    `).join('') || '<tr><td colspan="7" class="muted">No sessions</td></tr>';
+    \`).join('') || '<tr><td colspan="7" class="muted">No sessions</td></tr>';
   }catch(e){
     $('posErr').textContent = 'Error: '+(e.message||'load failed');
   }
