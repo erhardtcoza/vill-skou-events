@@ -1,4 +1,8 @@
 // /src/ui/pos.js
+
+/** --------------------------
+ *  Start-shift screen (POS)
+ *  -------------------------- */
 export const posHTML = `<!doctype html><html lang="en">
 <head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -43,7 +47,6 @@ const $ = (id)=>document.getElementById(id);
 const cents = (rands)=> Math.max(0, Math.round(Number(rands||0) * 100));
 
 async function safeJson(res){
-  // Try JSON, fall back to text so we can display CF/HTML errors nicely
   try { return await res.json(); }
   catch {
     const t = await res.text().catch(()=> '');
@@ -60,13 +63,11 @@ async function load() {
     const j = await safeJson(r);
     if (!j.ok) throw new Error(j.error || 'bootstrap failed');
 
-    // Events
     const ev = $('event');
     ev.innerHTML = (j.events||[]).map(e =>
       \`<option value="\${e.id}">\${e.name} (\${e.slug})</option>\`
     ).join('') || '<option value="0">No events</option>';
 
-    // Gates
     const gt = $('gate');
     gt.innerHTML = (j.gates||[]).map(g =>
       \`<option value="\${g.id}">\${g.name}</option>\`
@@ -97,7 +98,6 @@ $('startBtn').onclick = async () => {
     const j = await safeJson(r);
     if (!j.ok) throw new Error(j.error || 'unknown');
 
-    // Go to sell screen
     const sid = j.session_id;
     if (sid) location.href = '/pos/sell?session_id=' + encodeURIComponent(sid);
     else $('err').textContent = 'Error: missing session id';
@@ -109,3 +109,31 @@ $('startBtn').onclick = async () => {
 load();
 </script>
 </body></html>`;
+
+/** --------------------------
+ *  Sell screen (stub for now)
+ *  -------------------------- */
+export function posSellHTML(sessionId) {
+  const sid = String(sessionId || "");
+  return `<!doctype html><html lang="en">
+  <head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>POS · Sell</title>
+  <style>
+    :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+    *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+    .wrap{ max-width:1000px; margin:20px auto; padding:0 16px }
+    .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
+    a{ color:var(--green); text-decoration:none }
+  </style>
+  </head><body>
+  <div class="wrap">
+    <h1>POS</h1>
+    <div class="card">
+      <p>Session #${sid} active.</p>
+      <p>This is the POS sell screen stub. We’ll add ticket buttons, recall by code, and tender (cash/card) here.</p>
+      <p><a href="/pos">← Back to start</a></p>
+    </div>
+  </div>
+  </body></html>`;
+}
