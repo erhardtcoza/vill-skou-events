@@ -3,7 +3,7 @@ export const scannerHTML = `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Scanner · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  :root{ --green:#10b981; --amber:#f59e0b; --red:#ef4444; --muted:#667085; --bg:#f7f7f8; }
   *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
   .wrap{ max-width:960px; margin:16px auto; padding:0 14px }
   h1{ margin:0 0 10px }
@@ -14,7 +14,7 @@ export const scannerHTML = `<!doctype html><html><head>
   .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
   input{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
   .btn{ padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
-  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .btn.primary{ background:#0a7d2b; color:#fff; border-color:transparent }
   .state{ display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; border:1px solid #e5e7eb }
   .ok{ color:#065f46; border-color:#a7f3d0; background:#ecfdf5 }
   .warn{ color:#92400e; border-color:#fcd34d; background:#fffbeb }
@@ -23,6 +23,9 @@ export const scannerHTML = `<!doctype html><html><head>
   canvas{ display:none }
   .result{ font-size:14px }
   .code{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:700 }
+  /* Flash overlay */
+  .flash{ position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .14s ease; }
+  .flash.show{ opacity:0.50 }
 </style>
 <!-- jsQR (small, fast) -->
 <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
@@ -55,10 +58,67 @@ export const scannerHTML = `<!doctype html><html><head>
   </div>
 </div>
 
+<!-- Flash overlays -->
+<div id="flashSuccess" class="flash" style="background:var(--green)"></div>
+<div id="flashWarn" class="flash" style="background:var(--amber)"></div>
+<div id="flashError" class="flash" style="background:var(--red)"></div>
+
 <script>
 const $ = (id)=>document.getElementById(id);
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 
+/* ---------- Audio + Haptics + Flash helpers ---------- */
+let actx = null;
+function ensureAudio(){ if (!actx) try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} }
+
+function beep(pattern){
+  // pattern: array of [freqHz, ms, gain] steps
+  if (!actx){ ensureAudio(); if(!actx) return; }
+  const now = actx.currentTime;
+  let t = now;
+  pattern.forEach(([f, ms, g=0.2])=>{
+    const osc = actx.createOscillator();
+    const gain = actx.createGain();
+    osc.frequency.value = f;
+    gain.gain.setValueAtTime(g, t);
+    osc.connect(gain).connect(actx.destination);
+    osc.start(t);
+    t += ms/1000;
+    gain.gain.linearRampToValueAtTime(0.0001, t-0.02);
+    osc.stop(t);
+  });
+}
+
+function vibrate(pattern){ try{ navigator.vibrate && navigator.vibrate(pattern); }catch{} }
+
+function flash(kind){
+  const el = kind==='ok' ? $('flashSuccess') : kind==='warn' ? $('flashWarn') : $('flashError');
+  el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'), 180);
+}
+
+function fx(kind){
+  // Success: short pleasant beep + short vibrate + green flash
+  if (kind==='ok'){
+    beep([[880,100,0.18],[1320,120,0.16]]);
+    vibrate([60,40,40]);
+    flash('ok');
+  }
+  // Warn: mid beep + amber flash
+  else if (kind==='warn'){
+    beep([[660,160,0.18]]);
+    vibrate([100]);
+    flash('warn');
+  }
+  // Error: low buzz + red flash
+  else {
+    beep([[220,180,0.22],[180,140,0.20]]);
+    vibrate([160,60,160]);
+    flash('err');
+  }
+}
+
+/* ---------- Camera + QR ---------- */
 let stream = null, track = null, facing = 'environment', scanning = true, torchOn = false;
 let lastCode = '', lastAt = 0;
 
@@ -124,7 +184,16 @@ async function loop(){
   }
 }
 
+/* ---------- API ---------- */
+function classifyState(state){
+  const s = String(state||'').toLowerCase();
+  if (s==='unused') return 'ok';
+  if (s==='in' || s==='out') return 'warn';
+  return 'err';
+}
+
 async function handleLookup(code, fromCamera=false){
+  ensureAudio();
   $('status').textContent = 'Looking up ' + code + '…';
   $('result').innerHTML = '';
   try{
@@ -133,15 +202,19 @@ async function handleLookup(code, fromCamera=false){
     if (!j.ok){
       $('status').innerHTML = '<span class="state bad">Lookup failed</span>';
       $('result').innerHTML = '<div class="muted">No record for <span class="code">'+code+'</span>.</div>';
+      fx('err');
       return;
     }
     $('status').innerHTML = '<span class="state ok">Found</span>';
 
-    // Build a small card depending on kind
-    const k = j.kind; // 'ticket' | 'vendor_pass' | 'pass'
-    if (k === 'ticket'){
+    // Visual classification by current state
+    const kind = j.kind; // 'ticket' | 'vendor_pass' | 'pass'
+    if (kind === 'ticket'){
       const t = j.ticket;
       const who = [t.attendee_first, t.attendee_last].filter(Boolean).join(' ') || '(no name)';
+      const level = classifyState(t.state);
+      if (level==='ok') fx('ok'); else if (level==='warn') fx('warn'); else fx('err');
+
       const btnIn = (t.state !== 'in') ? '<button id="markIn" class="btn primary">Mark IN</button>' : '';
       const btnOut= (t.state === 'in') ? '<button id="markOut" class="btn">Mark OUT</button>' : '';
       $('result').innerHTML = \`
@@ -153,24 +226,30 @@ async function handleLookup(code, fromCamera=false){
         </div>\`;
       $('markIn')?.addEventListener('click', ()=> mark('ticket', t.id, 'IN'));
       $('markOut')?.addEventListener('click', ()=> mark('ticket', t.id, 'OUT'));
-    } else if (k === 'vendor_pass' || k === 'pass'){
+    } else if (kind === 'vendor_pass' || kind === 'pass'){
       const v = j.pass;
+      const label = v.label || v.holder_name || '(no label)';
+      const level = classifyState(v.state);
+      if (level==='ok') fx('ok'); else if (level==='warn') fx('warn'); else fx('err');
+
       const btnIn = (v.state !== 'in') ? '<button id="markIn" class="btn primary">Mark IN</button>' : '';
       const btnOut= (v.state === 'in') ? '<button id="markOut" class="btn">Mark OUT</button>' : '';
       $('result').innerHTML = \`
         <div><div class="muted">Vendor/Pass</div>
-          <div style="font-weight:700">\${v.label || v.holder_name || '(no label)'}</div>
+          <div style="font-weight:700">\${label}</div>
           <div>\${v.type || v.kind} · <span class="code">\${v.qr}</span></div>
           <div style="margin:6px 0">State: <span class="state \${v.state==='in'?'warn':(v.state==='unused'?'ok':'bad')}">\${v.state}</span></div>
           <div class="row">\${btnIn} \${btnOut}</div>
         </div>\`;
-      $('markIn')?.addEventListener('click', ()=> mark(k, v.id, 'IN'));
-      $('markOut')?.addEventListener('click', ()=> mark(k, v.id, 'OUT'));
+      $('markIn')?.addEventListener('click', ()=> mark(kind, v.id, 'IN'));
+      $('markOut')?.addEventListener('click', ()=> mark(kind, v.id, 'OUT'));
     } else {
+      fx('warn');
       $('result').innerHTML = '<div class="muted">Unknown kind.</div>';
     }
   }catch(e){
     $('status').innerHTML = '<span class="state bad">Network</span>';
+    fx('err');
   }
 }
 
@@ -185,12 +264,14 @@ async function mark(kind, id, action){
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'mark failed');
     $('status').innerHTML = '<span class="state ok">Updated</span>';
+    fx('ok');
   }catch(e){
     $('status').innerHTML = '<span class="state bad">Failed</span>';
+    fx('err');
   }
 }
 
-// UI wiring
+/* ---------- UI wiring ---------- */
 $('lookup').onclick = ()=> {
   const code = norm($('code').value);
   if (!code) { $('status').textContent = 'Enter a code.'; return; }
