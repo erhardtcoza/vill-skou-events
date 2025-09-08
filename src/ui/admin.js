@@ -1,8 +1,5 @@
 // /src/ui/admin.js
-import { esc } from "../utils/http.js";
 
-
-// Small helpers (keep local to avoid extra imports)
 const esc = (v) =>
   String(v ?? "")
     .replace(/&/g, "&amp;")
