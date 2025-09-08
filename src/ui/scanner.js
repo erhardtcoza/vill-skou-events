@@ -1,233 +1,248 @@
 // /src/ui/scanner.js
-export const scannerHTML = () => `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Scanner · Villiersdorp Skou</title>
-<style>
-  :root{--green:#0a7d2b;--bg:#0b0f12;--card:#11151a;--text:#e6efe6;--muted:#9fb1a1;--bad:#b00020;--ok:#18a957}
-  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui}
-  .wrap{max-width:900px;margin:0 auto;padding:12px}
-  h1{margin:10px 0 12px;font-size:22px}
-  .card{background:var(--card);border:1px solid #1c2228;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:12px;margin-bottom:12px}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  input,select,button{font-size:16px;padding:10px 12px;border-radius:12px;border:1px solid #2a3238;background:#0e1318;color:var(--text)}
-  .primary{background:var(--green);border-color:var(--green)}
-  .ok{color:var(--ok)} .bad{color:var(--bad)} .muted{color:var(--muted)}
-  #video{width:100%;aspect-ratio:16/10;border-radius:14px;background:#000;object-fit:cover}
-  .big{font-size:18px;font-weight:700}
-  .pill{border-radius:999px;padding:6px 10px;border:1px solid #263037;background:#0e151a}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  @media (max-width:740px){.grid2{grid-template-columns:1fr}}
-</style>
-</head><body><div class="wrap">
+export function scannerHTML() {
+  return /*html*/`<!doctype html>
+<html lang="af">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Skandeerder · Villiersdorp Skou</title>
+  <style>
+    :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --ink:#111; --warn:#92400e; --bad:#991b1b; --ok:#065f46; }
+    *{ box-sizing:border-box }
+    body{ margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial }
+    .wrap{ max-width:960px; margin:18px auto; padding:0 14px }
+    h1{ margin:0 0 10px }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap }
+    .panel{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:14px; margin-bottom:14px }
+    .muted{ color:var(--muted) }
+    .btn{ padding:10px 12px; border-radius:10px; border:0; background:var(--green); color:#fff; font-weight:600; cursor:pointer }
+    .btn.ghost{ background:#e5e7eb; color:#111 }
+    .btn.warn{ background:var(--warn); color:#fff }
+    .btn.bad{ background:var(--bad); color:#fff }
+    input{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff; min-width:260px }
+    video{ width:100%; max-height:56vh; border-radius:12px; background:#000 }
+    .status{ font-weight:700 }
+    .ok{ color:var(--ok) } .warn{ color:var(--warn) } .bad{ color:var(--bad) }
+    .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:14px }
+    @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
+    .ticket{ display:flex; flex-direction:column; gap:8px }
+    .kv{ display:flex; justify-content:space-between; gap:10px; }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; background:#e5e7eb; font-size:12px }
+    .state-unused{ color:var(--ok) } .state-in{ color:var(--ok) } .state-out{ color:var(--warn) } .state-void{ color:var(--bad) }
+    .qrbox{ display:flex; justify-content:center; }
+    .qrbox img{ width:180px; height:180px; image-rendering: pixelated; }
+    .actions{ display:flex; gap:8px; flex-wrap:wrap }
+    .error{ color:var(--bad); font-weight:600 }
+    .small{ font-size:13px }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Skandeerder</h1>
 
-  <h1>Scanner</h1>
+    <div class="grid">
+      <div class="panel">
+        <div class="row" style="justify-content:space-between">
+          <div class="muted small">
+            Gebruik jou kamera om ’n kaartjie se QR te skandeer. Indien die kamera nie beskikbaar is nie, tik die kode onder.
+          </div>
+          <div class="row">
+            <button id="btnStart" class="btn">Begin kamera</button>
+            <button id="btnStop" class="btn ghost">Stop</button>
+            <button id="btnTorch" class="btn ghost" title="Skakel flits">🔦</button>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <video id="video" muted playsinline></video>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <input id="manual" placeholder="Tik of plak QR / kaartjiekode" />
+          <button id="btnCheck" class="btn">Kontroleer</button>
+          <span id="scanMsg" class="muted small"></span>
+        </div>
+      </div>
 
-  <div id="loginCard" class="card" style="display:none">
-    <div class="row"><strong>Sign in</strong><span class="muted"> · scanner</span></div>
-    <div class="row">
-      <input id="lg_name" placeholder="Your name" style="flex:1 1 180px" />
-      <input id="lg_token" placeholder="Scanner token" style="flex:1 1 180px" />
-      <button class="primary" id="lg_btn">Login</button>
-      <span id="lg_msg" class="muted"></span>
+      <div class="panel">
+        <div id="resultEmpty" class="muted small">Geen kaartjie gelaai nie.</div>
+        <div id="result" class="ticket" style="display:none">
+          <div class="kv"><div>Kaartjie tipe</div><div id="tType" class="pill">–</div></div>
+          <div class="kv"><div>Naam</div><div id="tName">–</div></div>
+          <div class="kv"><div>Status</div><div id="tState" class="pill">–</div></div>
+          <div class="kv"><div>Bestel nommer</div><div id="tOrder">–</div></div>
+          <div class="kv"><div>Prys</div><div id="tPrice">–</div></div>
+          <div class="qrbox" style="margin-top:6px"><img id="tQR" alt="QR"></div>
+          <div class="actions" style="margin-top:6px">
+            <button id="btnIn" class="btn">Merk IN</button>
+            <button id="btnOut" class="btn warn">Merk UIT</button>
+          </div>
+          <div id="actMsg" class="muted small" style="margin-top:6px"></div>
+        </div>
+        <div id="err" class="error"></div>
+      </div>
     </div>
   </div>
-
-  <div id="setupCard" class="card" style="display:none">
-    <div class="row">
-      <select id="gateSel"></select>
-      <button id="startBtn" class="primary">Start camera</button>
-      <button id="stopBtn">Stop</button>
-      <input id="manual" placeholder="Type/scan code…" style="flex:1 1 220px"/>
-      <button id="goBtn">Lookup</button>
-    </div>
-    <div class="muted" style="margin-top:6px">Tip: If your device blocks the camera, use the manual box or a USB scanner into the same field.</div>
-  </div>
-
-  <div id="videoCard" class="card" style="display:none">
-    <video id="video" playsinline></video>
-  </div>
-
-  <div id="resultCard" class="card" style="display:none"></div>
-
-  <audio id="beepOK" preload="auto" src="data:audio/wav;base64,UklGRoQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAAA..."></audio>
-  <audio id="beepNO" preload="auto" src="data:audio/wav;base64,UklGRoQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAAA..."></audio>
 
 <script>
-(function(){
-  const S = {
-    stream: null,
-    detector: ('BarcodeDetector' in window) ? new BarcodeDetector({formats:['qr_code']}) : null,
-    gate: ''
-  };
+const $ = (id)=>document.getElementById(id);
+const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
+const qrPNG = (data, size=220)=>\`https://api.qrserver.com/v1/create-qr-code/?format=png&size=\${size}x\${size}&data=\${encodeURIComponent(data)}\`;
 
-  async function haveSession(){
-    const r = await fetch('/api/scan/ping').catch(()=>({ok:false,status:0}));
-    return r.ok;
-  }
+let stream = null;
+let detector = null;
+let scanning = false;
+let lastValue = "";
+let lastAt = 0;
+let track = null;
 
-  async function login(){
-    const name = document.getElementById('lg_name').value.trim();
-    const token = document.getElementById('lg_token').value.trim();
-    const res = await fetch('/api/auth/login', {
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body: JSON.stringify({ role:'scan', token, name })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if(res.ok){ location.reload(); }
-    else document.getElementById('lg_msg').textContent = 'Wrong token';
-  }
+function setMsg(el, text, cls=""){
+  el.textContent = text || "";
+  el.className = (cls ? cls + " " : "") + el.className.replace(/\b(ok|warn|bad)\b/g,"").trim();
+}
 
-  async function loadGates(){
-    const g = await fetch('/api/admin/gates').then(r=>r.json()).catch(()=>({gates:[]}));
-    const sel = document.getElementById('gateSel');
-    const gs = (g.gates||[]); if (!gs.length) gs.push({id:0,name:'Main Gate'});
-    sel.innerHTML = gs.map(function(x){ return '<option>'+x.name+'</option>'; }).join('');
-    S.gate = sel.value = gs[0].name;
-    sel.onchange = function(){ S.gate = sel.value; };
-  }
+function showTicket(t){
+  $("resultEmpty").style.display = "none";
+  $("result").style.display = "flex";
+  $("tType").textContent = t.type_name || "–";
+  $("tName").textContent = [t.attendee_first,t.attendee_last].filter(Boolean).join(" ") || "–";
+  const st = (t.state || "unused").toLowerCase();
+  $("tState").textContent = st;
+  $("tState").className = "pill state-" + (st==="in"?"in":st==="out"?"out":st==="void"?"void":"unused");
+  $("tOrder").textContent = t.short_code || "–";
+  $("tPrice").textContent = typeof t.price_cents==="number" ? ("R"+(t.price_cents/100).toFixed(2)) : "–";
+  $("tQR").src = qrPNG(t.qr || "");
+}
 
-  function show(id, on){ document.getElementById(id).style.display = on?'block':'none'; }
+async function lookupTicket(qr){
+  // try primary, then fallback
+  let r = await fetch(\`/api/scan/ticket?qr=\${encodeURIComponent(qr)}\`, {credentials:"include"});
+  if (r.status === 404) r = await fetch(\`/api/scan/lookup?qr=\${encodeURIComponent(qr)}\`, {credentials:"include"});
+  const j = await r.json().catch(()=>({}));
+  if (!j.ok) throw new Error(j.error || "Lookup het misluk");
+  return j.ticket || j.tickets?.[0] || j;
+}
 
-  async function startCam(){
-    try {
-      S.stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
-      const v = document.getElementById('video');
-      v.srcObject = S.stream; await v.play();
-      show('videoCard', true);
-      if (S.detector) tick();
-    } catch(e){
-      alert('Camera blocked: '+e);
-    }
-  }
-  function stopCam(){
-    if (S.stream) { for (const t of S.stream.getTracks()) t.stop(); S.stream = null; }
-    show('videoCard', false);
-  }
-
-  async function tick(){
-    if (!S.stream || !S.detector) return;
-    const v = document.getElementById('video');
-    try {
-      const codes = await S.detector.detect(v);
-      if (codes && codes.length) {
-        const val = codes[0].rawValue || '';
-        if (val) { handleCode(val); await new Promise(function(r){ setTimeout(r, 800); }); }
-      }
-    } catch(e){}
-    requestAnimationFrame(tick);
-  }
-
-  function renderResult(html){
-    const c = document.getElementById('resultCard');
-    c.innerHTML = html;
-    show('resultCard', true);
-  }
-
-  async function lookup(code){
-    const r = await fetch('/api/public/tickets/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
-    return r.ok ? r : null;
-  }
-
-  async function mark(code, action, gender){
-    const payload = { code: code, action: action, gate_name: S.gate };
-    if (gender) payload.gender = gender;
-    const r = await fetch('/api/scan/mark', {
-      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload)
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    return r.ok ? r : null;
-  }
-
-  function feedback(ok){
-    try {
-      (ok ? document.getElementById('beepOK') : document.getElementById('beepNO')).play();
-      if (navigator.vibrate) navigator.vibrate(ok ? 40 : [80,40,80]);
-    } catch(e){}
-  }
-
-  async function handleCode(raw){
-    const code = String(raw).trim();
-    if (!code) return;
-    const d = await lookup(code);
-    if (!d){ feedback(false); return renderResult('<div class="bad big">❌ Ongeldige kaartjie</div>'); }
-
-    const t = d.ticket, tt = d.ticket_type || {}, ev = d.event || {};
-    const who = t.holder_name || '(onbekend)';
-    const st  = t.state || 'unused';
-
-    var def = 'in';
-    if (st === 'in') def = 'out';
-
-    var genderAsk = (!t.gender && (tt.requires_gender || 0));
-    var genderCtl = '';
-    if (genderAsk){
-      genderCtl =
-        '<div class="row" style="margin-top:6px">' +
-          '<label class="pill"><input type="radio" name="g" value="male"> Manlik</label>' +
-          '<label class="pill"><input type="radio" name="g" value="female"> Vroulik</label>' +
-          '<label class="pill"><input type="radio" name="g" value="other"> Ander</label>' +
-        '</div>';
-    }
-
-    var html =
-      '<div class="big">'+ (ev.name || '') +'</div>' +
-      '<div class="muted">'+ (tt.name || '') +'</div>' +
-      '<div class="row" style="margin:6px 0">' +
-        '<span>Houer:</span><strong>'+ who +'</strong>' +
-        '<span class="pill">Huidig: '+ st +'</span>' +
-        '<span class="pill">Poort: '+ S.gate +'</span>' +
-      '</div>' +
-      genderCtl +
-      '<div class="row" style="margin-top:8px">' +
-        '<button class="primary" id="actIn">Scan IN</button>' +
-        '<button id="actOut">Scan OUT</button>' +
-        '<input id="codeEcho" readonly class="pill" value="'+ code +'" style="flex:1 1 180px"/>' +
-      '</div>';
-
-    renderResult(html);
-
-    if (def === 'in') document.getElementById('actIn').classList.add('big'); else document.getElementById('actOut').classList.add('big');
-
-    document.getElementById('actIn').onclick = async function(){
-      var gender = undefined;
-      if (genderAsk){
-        var r = Array.from(document.querySelectorAll('input[name="g"]')).find(function(x){ return x.checked; });
-        if (!r) return alert('Kies geslag');
-        gender = r.value;
-      }
-      const m = await mark(code,'in',gender);
-      if (!m){ feedback(false); return renderResult('<div class="bad big">⚠️ Kon nie IN merk nie</div>'); }
-      feedback(true);
-      renderResult('<div class="ok big">✅ Ingeskandeer</div>');
-    };
-
-    document.getElementById('actOut').onclick = async function(){
-      const m = await mark(code,'out');
-      if (!m){ feedback(false); return renderResult('<div class="bad big">⚠️ Kon nie OUT merk nie</div>'); }
-      feedback(true);
-      renderResult('<div class="ok big">✅ Uitgeskandeer</div>');
-    };
-  }
-
-  document.getElementById('lg_btn').onclick = login;
-  document.getElementById('startBtn').onclick = startCam;
-  document.getElementById('stopBtn').onclick = stopCam;
-  document.getElementById('goBtn').onclick = function(){
-    const v = document.getElementById('manual').value.trim(); if (v) handleCode(v);
-  };
-  document.getElementById('manual').addEventListener('keydown',function(e){
-    if(e.key==='Enter'){ e.preventDefault(); const v=e.target.value.trim(); if(v) handleCode(v); }
+async function mark(direction, qr){
+  // primary endpoints
+  let r = await fetch(\`/api/scan/\${direction}\`, {
+    method:"POST", headers:{ "content-type":"application/json" }, credentials:"include",
+    body: JSON.stringify({ qr })
   });
+  if (r.status === 404) {
+    // fallback mark API
+    r = await fetch("/api/scan/mark", {
+      method:"POST", headers:{ "content-type":"application/json" }, credentials:"include",
+      body: JSON.stringify({ qr, direction })
+    });
+  }
+  const j = await r.json().catch(()=>({}));
+  if (!j.ok) throw new Error(j.error || "Aksie het misluk");
+  return j.ticket || j;
+}
 
-  (async function init(){
-    if (await haveSession()){
-      show('setupCard', true);
-      await loadGates();
+async function handleValue(val){
+  const now = Date.now();
+  if (val === lastValue && (now - lastAt) < 2000) return; // debounce same code
+  lastValue = val; lastAt = now;
+  $("err").textContent = ""; $("actMsg").textContent = ""; setMsg($("scanMsg"), ""); 
+
+  try {
+    setMsg($("scanMsg"), "Soek kaartjie…");
+    const t = await lookupTicket(val);
+    showTicket(t);
+    setMsg($("scanMsg"), "Gevind", "ok");
+    $("btnIn").onclick = async ()=>{
+      $("actMsg").textContent = "Merk IN…";
+      try{
+        const r = await mark("in", t.qr || val);
+        showTicket(r.ticket || r);
+        setMsg($("actMsg"), "IN gemerk", "ok");
+      }catch(e){ $("actMsg").textContent = e.message || "Fout"; }
+    };
+    $("btnOut").onclick = async ()=>{
+      $("actMsg").textContent = "Merk UIT…";
+      try{
+        const r = await mark("out", t.qr || val);
+        showTicket(r.ticket || r);
+        setMsg($("actMsg"), "UIT gemerk", "ok");
+      }catch(e){ $("actMsg").textContent = e.message || "Fout"; }
+    };
+  } catch(e){
+    $("result").style.display = "none";
+    $("resultEmpty").style.display = "block";
+    $("err").textContent = e.message || "Kon nie kaartjie vind nie";
+    setMsg($("scanMsg"), "Nie gevind nie", "bad");
+  }
+}
+
+async function startCam(){
+  $("err").textContent = "";
+  try{
+    // Prefer environment (rear) camera
+    stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" }, audio:false });
+    const v = $("video");
+    v.srcObject = stream;
+    await v.play();
+    track = stream.getVideoTracks()[0];
+
+    // BarcodeDetector if available
+    if ("BarcodeDetector" in window) {
+      detector = new BarcodeDetector({ formats: ["qr_code"] });
+      scanning = true;
+      loopDetect();
     } else {
-      show('loginCard', true);
+      setMsg($("scanMsg"), "Geen BarcodeDetector; gebruik handmatige invoer", "warn");
     }
-  })();
+  }catch(e){
+    $("err").textContent = "Kamera fout: " + (e.message || e);
+  }
+}
 
-})();
+async function loopDetect(){
+  const v = $("video");
+  while (scanning && detector) {
+    try{
+      const codes = await detector.detect(v);
+      if (codes && codes.length) {
+        const val = String(codes[0].rawValue || "").trim();
+        if (val) await handleValue(val);
+      }
+    }catch{}
+    await sleep(120);
+  }
+}
+
+function stopCam(){
+  scanning = false;
+  if (track) { try { track.stop(); } catch{} track = null; }
+  if (stream) { try { stream.getTracks().forEach(t=>t.stop()); } catch{} stream = null; }
+  detector = null;
+}
+
+async function toggleTorch(){
+  try{
+    if (!track) return;
+    const caps = track.getCapabilities?.() || {};
+    if (!("torch" in caps)) return;
+    const st = track.getSettings?.() || {};
+    const want = !st.torch;
+    await track.applyConstraints({ advanced:[{ torch: want }] });
+  }catch{}
+}
+
+$("btnStart").onclick = startCam;
+$("btnStop").onclick = stopCam;
+$("btnTorch").onclick = toggleTorch;
+
+$("btnCheck").onclick = ()=>{
+  const val = ($("manual").value||"").trim();
+  if (val) handleValue(val);
+};
+
+// Auto start if permissions previously allowed
+if (navigator.mediaDevices?.getUserMedia) {
+  // don’t auto start on desktop if you prefer; leave manual
+}
 </script>
-
-</div></body></html>`;
+</body>
+</html>`;
+}
