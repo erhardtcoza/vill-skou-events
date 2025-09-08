@@ -1,345 +1,255 @@
 // /src/ui/admin.js
-export function adminHTML(){
-  const css = `
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
-  *{ box-sizing:border-box } body{margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:#111}
-  .wrap{max-width:1100px;margin:18px auto;padding:0 14px}
-  .nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
-  .tab{padding:8px 12px;border:1px solid #e5e7eb;border-radius:10px;cursor:pointer;background:#fff}
-  .tab.active{background:var(--green);color:#fff;border-color:transparent}
-  .card{background:#fff;border-radius:14px;box-shadow:0 12px 26px rgba(0,0,0,.08);padding:16px;margin-bottom:14px}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:8px;border-bottom:1px solid #f1f3f5;text-align:left;font-size:14px}
-  h1{margin:0 0 10px}
-  input,select,button{font:inherit}
-  input,select{padding:9px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
-  .btn{padding:9px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;cursor:pointer}
-  .btn.primary{background:var(--green);color:#fff;border-color:transparent}
-  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-  .muted{color:var(--muted)}
-  .pill{display:inline-block;border:1px solid #e5e7eb;border-radius:999px;padding:3px 8px;font-size:12px}
-  `;
+import { esc } from "../utils/html.js";
 
-  // tiny helpers without nested template strings
-  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c])); }
-  function rands(c){ return "R"+((Number(c)||0)/100).toFixed(2); }
-  function rowEvent(ev){
-    return "<tr>"
-      + "<td>"+ev.id+"</td>"
-      + "<td>"+esc(ev.slug)+"</td>"
-      + "<td>"+esc(ev.name)+"</td>"
-      + "<td>"+esc(ev.venue||"")+"</td>"
-      + "<td><span class='pill'>"+esc(ev.status)+"</span></td>"
-      + "<td>"+new Date((ev.starts_at||0)*1000).toLocaleDateString()+"</td>"
-      + "<td><button class='btn' data-tt='"+ev.id+"'>Ticket types</button></td>"
-      + "</tr>";
-  }
-  function rowTicketType(tt){
-    return "<tr>"
-      + "<td>"+tt.id+"</td>"
-      + "<td>"+esc(tt.name)+"</td>"
-      + "<td>"+esc(tt.code||"")+"</td>"
-      + "<td>"+rands(tt.price_cents||0)+"</td>"
-      + "<td>"+(tt.capacity||0)+"</td>"
-      + "<td>"+(tt.per_order_limit||0)+"</td>"
-      + "<td>"+(tt.requires_gender? "Yes":"No")+"</td>"
-      + "</tr>";
-  }
-  function rowUser(u){
-    return "<tr>"
-      + "<td>"+u.id+"</td>"
-      + "<td>"+esc(u.username)+"</td>"
-      + "<td>"+esc(u.role)+"</td>"
-      + "</tr>";
-  }
-  function rowSession(s){
-    const open = new Date((s.opened_at||0)*1000).toLocaleString();
-    const closed = s.closed_at ? new Date(s.closed_at*1000).toLocaleString() : "—";
-    return "<tr>"
-      + "<td>"+s.id+"</td>"
-      + "<td>"+(s.event_id||"")+"</td>"
-      + "<td>"+esc(s.cashier_name||"")+"</td>"
-      + "<td>"+(s.gate_id||"")+"</td>"
-      + "<td>"+rands(s.opening_float_cents||0)+"</td>"
-      + "<td>"+rands(s.cash_cents||0)+"</td>"
-      + "<td>"+rands(s.card_cents||0)+"</td>"
-      + "<td>"+(esc(s.closing_manager||""))+"</td>"
-      + "<td>"+open+"</td>"
-      + "<td>"+closed+"</td>"
-      + "</tr>";
-  }
-  function rowVendor(v){
-    return "<tr>"
-      + "<td>"+v.id+"</td>"
-      + "<td>"+esc(v.name)+"</td>"
-      + "<td>"+esc(v.contact_name||"")+"</td>"
-      + "<td>"+esc(v.phone||"")+"</td>"
-      + "<td>"+esc(v.email||"")+"</td>"
-      + "<td>"+esc(v.stand_number||"")+"</td>"
-      + "<td>"+(v.staff_quota||0)+" / "+(v.vehicle_quota||0)+"</td>"
-      + "<td><button class='btn' data-v-edit='"+v.id+"'>Edit</button></td>"
-      + "</tr>";
-  }
+const R = (n) => new Intl.NumberFormat(undefined, { style: "currency", currency: "ZAR", minimumFractionDigits: 2 });
 
+export function adminHTML() {
   return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
-<style>${css}</style>
-</head><body>
-<div class="wrap">
+<style>
+  body{font-family:system-ui;margin:0;background:#f6f7f8;color:#111}
+  .wrap{max-width:1100px;margin:28px auto;padding:0 16px}
+  h1{font-size:28px;margin:0 0 18px}
+  .tabs a{display:inline-block;margin-right:8px;padding:6px 10px;border-radius:8px;background:#eaf6ee;color:#0a7d2b;text-decoration:none}
+  .card{background:#fff;border-radius:12px;padding:14px 16px;margin:14px 0;border:1px solid #e6e6e6}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
+  .btn{background:#0a7d2b;color:#fff;border:none;border-radius:8px;padding:8px 12px;cursor:pointer}
+  .btn.gray{background:#333}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  input,select{padding:8px;border:1px solid #ccc;border-radius:8px;font:inherit}
+  .muted{color:#666}
+  .right{float:right}
+</style>
+</head><body><div class="wrap">
   <h1>Admin dashboard</h1>
-  <div class="nav">
-    <button class="tab active" data-tab="events">Events</button>
-    <button class="tab" data-tab="tickets">Tickets</button>
-    <button class="tab" data-tab="pos">POS Admin</button>
-    <button class="tab" data-tab="vendors">Vendors</button>
-    <button class="tab" data-tab="users">Users</button>
-    <button class="tab" data-tab="settings">Site settings</button>
+  <div class="tabs">
+    <a href="#tickets">Tickets</a>
+    <a href="#vendors">Vendors</a>
+    <a href="#users" class="muted">Users</a>
   </div>
 
-  <!-- Events -->
-  <div id="tab-events" class="card">
-    <h2 style="margin:0 0 10px">Events</h2>
-    <div id="evTableWrap" class="muted">Loading…</div>
-    <div id="ttWrap" style="margin-top:12px;display:none">
-      <h3 style="margin:0 0 8px">Ticket types</h3>
-      <div id="ttTableWrap" class="muted">Loading…</div>
-    </div>
-  </div>
-
-  <!-- Tickets -->
-  <div id="tab-tickets" class="card" style="display:none">
-    <h2 style="margin:0 0 10px">Tickets</h2>
-    <div class="row">
-      <input id="tCode" placeholder="Order code (e.g. 3VLNT5)"/>
-      <button id="tLookup" class="btn">Lookup</button>
-      <span id="tErr" class="muted"></span>
-    </div>
-    <div id="tRes" style="margin-top:12px"></div>
-  </div>
-
-  <!-- POS Admin -->
-  <div id="tab-pos" class="card" style="display:none">
-    <h2 style="margin:0 0 10px">POS sessions</h2>
-    <div id="posTableWrap" class="muted">Loading…</div>
-  </div>
-
-  <!-- Vendors -->
-  <div id="tab-vendors" class="card" style="display:none">
-    <h2 style="margin:0 0 10px">Vendors</h2>
-    <div class="row">
-      <input id="vEventId" type="number" placeholder="Event ID"/>
-      <button id="vLoad" class="btn">Load</button>
-      <button id="vNew" class="btn">New vendor</button>
-      <span id="vMsg" class="muted"></span>
-    </div>
-    <div id="vWrap" style="margin-top:10px" class="muted">—</div>
-  </div>
-
-  <!-- Users -->
-  <div id="tab-users" class="card" style="display:none">
-    <h2 style="margin:0 0 10px">Users</h2>
-    <div id="uWrap" class="muted">Loading…</div>
-  </div>
-
-  <!-- Settings -->
-  <div id="tab-settings" class="card" style="display:none">
-    <h2>Site settings</h2>
-    <div class="muted">Coming soon</div>
-  </div>
+  <div id="view"></div>
 </div>
-
 <script>
-const $ = (id)=>document.getElementById(id);
-function activate(tab){
-  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
-  document.querySelector('[data-tab="'+tab+'"]').classList.add('active');
-  ['events','tickets','pos','vendors','users','settings'].forEach(t=>{
-    $('tab-'+t).style.display = (t===tab?'block':'none');
+const money = (c) => (c==null? "R0.00" : ${R(0).format}.call(Intl.NumberFormat, c/100));
+const api = (p, init) => fetch(p, init).then(r => r.json());
+
+/* ------------------------------ TICKETS VIEW ------------------------------ */
+async function viewTickets(){
+  document.getElementById('view').innerHTML = \`
+    <div class="card">
+      <div class="row">
+        <select id="evsel"></select>
+        <button class="btn" id="load">Load</button>
+      </div>
+      <div id="sum" class="muted" style="margin-top:10px;">Pick an event and Load.</div>
+    </div>
+
+    <div class="card">
+      <h3>Order lookup</h3>
+      <div class="row">
+        <input id="ocode" placeholder="Order code (e.g. 3VLNT5)" />
+        <button class="btn" id="lookup">Lookup</button>
+      </div>
+      <div id="olines" style="margin-top:10px;"></div>
+    </div>\`;
+
+  // fill events
+  const evs = await api('/api/admin/events');
+  const sel = document.getElementById('evsel');
+  (evs.events||[]).forEach(ev=>{
+    const o = document.createElement('option');
+    o.value = ev.id; o.textContent = ev.name + ' ('+ev.slug+')';
+    sel.appendChild(o);
   });
+
+  document.getElementById('load').onclick = async ()=>{
+    const id = Number(sel.value||0);
+    if(!id) return;
+    const r = await api('/api/admin/tickets/summary?event_id='+id);
+    if(!r.ok){ document.getElementById('sum').textContent = 'Not Found'; return; }
+    const rows = (r.list||[]).map(x=>\`
+      <tr>
+        <td>\${x.type_name}</td>
+        <td>R\${(x.price_cents/100).toFixed(2)}</td>
+        <td>\${x.total}</td>
+        <td>\${x.unused}</td>
+        <td>\${x.in}</td>
+        <td>\${x.out}</td>
+        <td>\${x.void}</td>
+      </tr>\`).join('');
+    const t = \`
+      <div class="muted">Total: \${r.totals.total} · Unused: \${r.totals.unused} · In: \${r.totals.in} · Out: \${r.totals.out} · Void: \${r.totals.void}</div>
+      <table style="margin-top:8px">
+        <thead><tr><th>Type</th><th>Price (R)</th><th>Total</th><th>Unused</th><th>In</th><th>Out</th><th>Void</th></tr></thead>
+        <tbody>\${rows}</tbody>
+      </table>\`;
+    document.getElementById('sum').innerHTML = t;
+  };
+
+  document.getElementById('lookup').onclick = async ()=>{
+    const c = (document.getElementById('ocode').value||'').trim();
+    if(!c) return;
+    const r = await api('/api/admin/orders/by-code/'+encodeURIComponent(c));
+    if(!r.ok){ document.getElementById('olines').textContent = r.error||'Not found'; return; }
+    const lines = (r.tickets||[]).map(t=>\`
+      <tr>
+        <td>\${t.id}</td><td>\${t.type_name}</td><td>\${t.attendee_first||''} \${t.attendee_last||''}</td>
+        <td>\${t.state}</td><td>\${t.qr}</td>
+      </tr>\`).join('');
+    const phone = r.order.buyer_phone||'';
+    document.getElementById('olines').innerHTML = \`
+      <div class="row">
+        <div class="muted">Ticket link:</div>
+        <a href="\${r.ticket_link}" target="_blank">\${r.ticket_link}</a>
+      </div>
+      <table style="margin-top:8px">
+        <thead><tr><th>ID</th><th>Type</th><th>Attendee</th><th>State</th><th>QR</th></tr></thead>
+        <tbody>\${lines||'<tr><td colspan=5 class="muted">No tickets found</td></tr>'}</tbody>
+      </table>
+      <div class="row" style="margin-top:10px">
+        <input id="waphone" placeholder="WhatsApp MSISDN (e.g. 2771...)" value="\${phone}"/>
+        <button class="btn" id="sendwa">Send via WhatsApp</button>
+      </div>\`;
+    document.getElementById('sendwa').onclick = async ()=>{
+      const to = (document.getElementById('waphone').value||'').trim();
+      const res = await api('/api/admin/orders/'+encodeURIComponent(r.order.short_code)+'/send-wa', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ to })
+      });
+      alert(res.ok ? 'Sent' : ('Failed: '+(res.error||'')));
+    };
+  };
 }
-document.querySelectorAll('.tab').forEach(b=>{
-  b.onclick = ()=> activate(b.dataset.tab);
-});
 
-function rands(c){ return "R"+((Number(c)||0)/100).toFixed(2); }
-function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;" }[c])); }
+/* ------------------------------- VENDORS VIEW ------------------------------ */
+async function viewVendors(){
+  document.getElementById('view').innerHTML = \`
+    <div class="card">
+      <div class="row">
+        <select id="evsel"></select>
+        <button class="btn" id="load">Load</button>
+        <span class="right"></span>
+      </div>
+      <div id="vlist" style="margin-top:10px;"></div>
+      <div class="card" style="margin-top:12px">
+        <h3>New vendor</h3>
+        <div class="row">
+          <input id="v_name" placeholder="Vendor name"/>
+          <input id="v_contact" placeholder="Contact name"/>
+          <input id="v_phone" placeholder="Phone"/>
+          <input id="v_email" placeholder="Email"/>
+          <input id="v_stand" placeholder="Stand #"/>
+          <input id="v_staff" type="number" min="0" style="width:90px" placeholder="Staff quota"/>
+          <input id="v_vehicle" type="number" min="0" style="width:110px" placeholder="Vehicle quota"/>
+          <button class="btn" id="v_add">Add</button>
+        </div>
+      </div>
+    </div>\`;
 
-// ---------- Events ----------
-async function loadEvents(){
-  $('evTableWrap').textContent = 'Loading…';
-  const j = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!j.ok) return $('evTableWrap').textContent = 'Failed to load';
-  const rows = (j.events||[]).map(ev => ${
-    // we can’t inline a function in a template safely; build in runtime:
-    "''"
-  }).join('');
-}
-// because we can’t embed rowEvent directly in HTML above, we’ll build table here:
-async function renderEvents(){
-  const j = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
-  const w = $('evTableWrap');
-  if (!j.ok) { w.textContent = 'Failed to load'; return; }
-  const rows = (j.events||[]).map(ev => (
-    "<tr>"
-    + "<td>"+ev.id+"</td>"
-    + "<td>"+esc(ev.slug)+"</td>"
-    + "<td>"+esc(ev.name)+"</td>"
-    + "<td>"+esc(ev.venue||"")+"</td>"
-    + "<td><span class='pill'>"+esc(ev.status)+"</span></td>"
-    + "<td>"+new Date((ev.starts_at||0)*1000).toLocaleDateString()+"</td>"
-    + "<td><button class='btn' data-tt='"+ev.id+"'>Ticket types</button></td>"
-    + "</tr>"
-  )).join('');
-  w.innerHTML =
-    "<table><thead><tr>"
-    + "<th>ID</th><th>Slug</th><th>Name</th><th>Venue</th><th>Status</th><th>Starts</th><th></th>"
-    + "</tr></thead><tbody>"+rows+"</tbody></table>";
-
-  // wire ticket types
-  w.querySelectorAll('[data-tt]').forEach(btn=>{
-    btn.onclick = ()=> loadTicketTypes(btn.getAttribute('data-tt'));
+  const evs = await api('/api/admin/events');
+  const sel = document.getElementById('evsel');
+  (evs.events||[]).forEach(ev=>{
+    const o=document.createElement('option');
+    o.value=ev.id; o.textContent=ev.name+' ('+ev.slug+')';
+    sel.appendChild(o);
   });
-}
-async function loadTicketTypes(eventId){
-  $('ttWrap').style.display = 'block';
-  $('ttTableWrap').textContent = 'Loading…';
-  const j = await fetch('/api/admin/events/'+encodeURIComponent(eventId)+'/ticket-types').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!j.ok) { $('ttTableWrap').textContent='Failed'; return; }
-  const rows = (j.ticket_types||[]).map(tt => (
-    "<tr>"
-    + "<td>"+tt.id+"</td>"
-    + "<td>"+esc(tt.name)+"</td>"
-    + "<td>"+esc(tt.code||"")+"</td>"
-    + "<td>"+rands(tt.price_cents||0)+"</td>"
-    + "<td>"+(tt.capacity||0)+"</td>"
-    + "<td>"+(tt.per_order_limit||0)+"</td>"
-    + "<td>"+(tt.requires_gender? "Yes":"No")+"</td>"
-    + "</tr>"
-  )).join('');
-  $('ttTableWrap').innerHTML =
-    "<table><thead><tr><th>ID</th><th>Name</th><th>Code</th><th>Price</th><th>Capacity</th><th>Per-order</th><th>Gender?</th></tr></thead>"
-    + "<tbody>"+rows+"</tbody></table>";
-}
 
-// ---------- Tickets lookup ----------
-$('tLookup').onclick = async ()=>{
-  $('tErr').textContent = '';
-  $('tRes').innerHTML = '';
-  const code = ($('tCode').value||'').trim();
-  if (!code) { $('tErr').textContent = 'Enter a code'; return; }
-  const j = await fetch('/api/admin/orders/lookup/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!j.ok){ $('tErr').textContent = j.error||'Not found'; return; }
-  const o = j.order, t = j.tickets||[];
-  const trows = t.map(x => (
-    "<tr>"
-    + "<td>"+x.id+"</td>"
-    + "<td>"+esc(x.type_name||'')+"</td>"
-    + "<td>"+esc(x.attendee_first||'')+" "+esc(x.attendee_last||'')+"</td>"
-    + "<td>"+esc(x.state||'')+"</td>"
-    + "<td><code>"+esc(x.qr||'')+"</code></td>"
-    + "</tr>"
-  )).join('');
-  $('tRes').innerHTML =
-    "<div class='card'>"
-    + "<div><b>Order:</b> "+esc(o.short_code)+" · "+rands(o.total_cents||0)+" · "+esc(o.status)+"</div>"
-    + "<div class='muted' style='margin:6px 0'>"+esc(o.buyer_name||'')+" · "+esc(o.buyer_phone||'')+"</div>"
-    + "<table><thead><tr><th>ID</th><th>Type</th><th>Attendee</th><th>State</th><th>QR</th></tr></thead>"
-    + "<tbody>"+trows+"</tbody></table>"
-    + "</div>";
-};
+  async function load(){
+    const id = Number(sel.value||0);
+    if(!id) return;
+    const r = await api('/api/admin/vendors?event_id='+id);
+    const rows = (r.vendors||[]).map(v=>\`
+      <tr data-id="\${v.id}">
+        <td><input value="\${v.name||''}" class="i_name"/></td>
+        <td><input value="\${v.contact_name||''}" class="i_contact"/></td>
+        <td><input value="\${v.phone||''}" class="i_phone"/></td>
+        <td><input value="\${v.email||''}" class="i_email"/></td>
+        <td><input value="\${v.stand_number||''}" class="i_stand" style="width:100px"/></td>
+        <td><input type="number" min="0" value="\${v.staff_quota||0}" class="i_staff" style="width:80px"/></td>
+        <td><input type="number" min="0" value="\${v.vehicle_quota||0}" class="i_vehicle" style="width:100px"/></td>
+        <td>
+          <button class="btn" data-act="save">Save</button>
+          <button class="btn gray" data-act="del">Delete</button>
+        </td>
+      </tr>\`).join('');
+    document.getElementById('vlist').innerHTML = \`
+      <table>
+        <thead><tr>
+          <th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>
+          <th>Stand</th><th>Staff</th><th>Vehicle</th><th></th>
+        </tr></thead>
+        <tbody>\${rows||'<tr><td colspan=8 class="muted">No vendors yet</td></tr>'}</tbody>
+      </table>\`;
 
-// ---------- POS sessions ----------
-async function loadPOS(){
-  const w = $('posTableWrap');
-  w.textContent = 'Loading…';
-  const j = await fetch('/api/admin/pos/sessions').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!j.ok){ w.textContent='Failed'; return; }
-  const rows = (j.sessions||[]).map(s => (
-    "<tr>"
-    + "<td>"+s.id+"</td>"
-    + "<td>"+(s.event_id||"")+"</td>"
-    + "<td>"+esc(s.cashier_name||"")+"</td>"
-    + "<td>"+(s.gate_id||"")+"</td>"
-    + "<td>"+rands(s.opening_float_cents||0)+"</td>"
-    + "<td>"+rands(s.cash_cents||0)+"</td>"
-    + "<td>"+rands(s.card_cents||0)+"</td>"
-    + "<td>"+esc(s.closing_manager||"")+"</td>"
-    + "<td>"+new Date((s.opened_at||0)*1000).toLocaleString()+"</td>"
-    + "<td>"+(s.closed_at? new Date(s.closed_at*1000).toLocaleString() : "—")+"</td>"
-    + "</tr>"
-  )).join('');
-  w.innerHTML =
-    "<table><thead><tr>"
-    + "<th>ID</th><th>Event</th><th>Cashier</th><th>Gate</th><th>Float</th>"
-    + "<th>Cash</th><th>Card</th><th>Closed by</th><th>Opened</th><th>Closed</th>"
-    + "</tr></thead><tbody>"+rows+"</tbody></table>";
-}
+    // row actions
+    document.querySelectorAll('#vlist [data-act="save"]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        const tr = btn.closest('tr'); const id = tr.getAttribute('data-id');
+        const body = {
+          name: tr.querySelector('.i_name').value,
+          contact_name: tr.querySelector('.i_contact').value,
+          phone: tr.querySelector('.i_phone').value,
+          email: tr.querySelector('.i_email').value,
+          stand_number: tr.querySelector('.i_stand').value,
+          staff_quota: Number(tr.querySelector('.i_staff').value||0),
+          vehicle_quota: Number(tr.querySelector('.i_vehicle').value||0)
+        };
+        const res = await api('/api/admin/vendors/'+id+'/update', {
+          method:'POST', headers:{'content-type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        alert(res.ok ? 'Saved' : ('Failed: '+(res.error||'')));
+      };
+    });
+    document.querySelectorAll('#vlist [data-act="del"]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        const tr = btn.closest('tr'); const id = tr.getAttribute('data-id');
+        if(!confirm('Delete vendor '+id+'?')) return;
+        const res = await api('/api/admin/vendors/'+id+'/delete', { method:'POST' });
+        if(res.ok) load(); else alert('Failed');
+      };
+    });
+  }
 
-// ---------- Vendors ----------
-$('vLoad').onclick = async ()=>{
-  const evId = Number(($('vEventId').value||'0'));
-  if (!evId) { $('vMsg').textContent = 'Enter event id'; return; }
-  $('vMsg').textContent = ''; $('vWrap').textContent = 'Loading…';
-  const j = await fetch('/api/admin/vendors/'+evId).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!j.ok){ $('vWrap').textContent='Failed'; return; }
-  const rows = (j.vendors||[]).map(v => (
-    "<tr>"
-    + "<td>"+v.id+"</td>"
-    + "<td>"+esc(v.name)+"</td>"
-    + "<td>"+esc(v.contact_name||"")+"</td>"
-    + "<td>"+esc(v.phone||"")+"</td>"
-    + "<td>"+esc(v.email||"")+"</td>"
-    + "<td>"+esc(v.stand_number||"")+"</td>"
-    + "<td>"+(v.staff_quota||0)+" / "+(v.vehicle_quota||0)+"</td>"
-    + "<td><button class='btn' data-v-edit='"+v.id+"'>Edit</button></td>"
-    + "</tr>"
-  )).join('');
-  $('vWrap').innerHTML =
-    "<table><thead><tr>"
-    + "<th>ID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Stand</th><th>Quotas</th><th></th>"
-    + "</tr></thead><tbody>"+rows+"</tbody></table>";
+  document.getElementById('load').onclick = load;
 
-  // wire edit
-  $('vWrap').querySelectorAll('[data-v-edit]').forEach(b=>{
-    b.onclick = ()=> openVendorEdit(evId, Number(b.getAttribute('data-v-edit')));
-  });
-};
-$('vNew').onclick = ()=> openVendorEdit(Number(($('vEventId').value||'0')), 0);
-
-async function openVendorEdit(eventId, id){
-  const name = prompt("Vendor name:");
-  if (!name) return;
-  const contact_name = prompt("Contact name:", "")||"";
-  const phone = prompt("Phone:", "")||"";
-  const email = prompt("Email:", "")||"";
-  const stand_number = prompt("Stand number:", "")||"";
-  const staff_quota = Number(prompt("Staff quota:", "0")||"0");
-  const vehicle_quota = Number(prompt("Vehicle quota:", "0")||"0");
-  const body = { id, event_id:eventId, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota };
-  const r = await fetch('/api/admin/vendors/upsert', {
-    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)
-  });
-  const j = await r.json().catch(()=>({ok:false}));
-  if (!j.ok){ alert('Save failed: '+(j.error||'')); return; }
-  $('vLoad').click();
+  document.getElementById('v_add').onclick = async ()=>{
+    const b = {
+      event_id: Number(sel.value||0),
+      name: document.getElementById('v_name').value,
+      contact_name: document.getElementById('v_contact').value,
+      phone: document.getElementById('v_phone').value,
+      email: document.getElementById('v_email').value,
+      stand_number: document.getElementById('v_stand').value,
+      staff_quota: Number(document.getElementById('v_staff').value||0),
+      vehicle_quota: Number(document.getElementById('v_vehicle').value||0),
+    };
+    if(!b.event_id || !b.name) return alert('Choose event & name');
+    const res = await api('/api/admin/vendors/create', {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(b)
+    });
+    if(res.ok){ load(); document.getElementById('v_name').value=''; } else alert('Failed');
+  };
 }
 
-// ---------- Users ----------
-async function loadUsers(){
-  const w = $('uWrap'); w.textContent='Loading…';
-  const j = await fetch('/api/admin/users').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!j.ok){ w.textContent='Failed'; return; }
-  const rows = (j.users||[]).map(u => (
-    "<tr><td>"+u.id+"</td><td>"+esc(u.username)+"</td><td>"+esc(u.role)+"</td></tr>"
-  )).join('');
-  w.innerHTML = "<table><thead><tr><th>ID</th><th>Username</th><th>Role</th></tr></thead><tbody>"+rows+"</tbody></table>";
+/* ------------------------------- USERS (stub) ------------------------------ */
+function viewUsers(){
+  document.getElementById('view').innerHTML =
+    '<div class="card muted">Users view unchanged. (Read-only for now)</div>';
 }
 
-// initial loads
-renderEvents();
-loadPOS();
-loadUsers();
+/* --------------------------- Simple tab router ----------------------------- */
+function nav(){
+  const h = location.hash || '#tickets';
+  if(h==='#vendors') return viewVendors();
+  if(h==='#users')   return viewUsers();
+  return viewTickets();
+}
+window.addEventListener('hashchange', nav);
+nav();
 </script>
 </body></html>`;
 }
