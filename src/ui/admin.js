@@ -1,5 +1,17 @@
 // /src/ui/admin.js
-import { esc } from "../utils/html.js";
+import { esc } from "../utils/http.js";
+
+
+// Small helpers (keep local to avoid extra imports)
+const esc = (v) =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const centsToRand = (c) => `R${(Number(c || 0) / 100).toFixed(2)}`;
 
 const money = (c) => `R${(Number(c || 0) / 100).toFixed(2)}`;
 const dt = (s) => {
