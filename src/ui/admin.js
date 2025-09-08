@@ -1,365 +1,345 @@
 // /src/ui/admin.js
-export const adminHTML = () => `<!doctype html><html><head>
+export function adminHTML(){
+  const css = `
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  *{ box-sizing:border-box } body{margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:#111}
+  .wrap{max-width:1100px;margin:18px auto;padding:0 14px}
+  .nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .tab{padding:8px 12px;border:1px solid #e5e7eb;border-radius:10px;cursor:pointer;background:#fff}
+  .tab.active{background:var(--green);color:#fff;border-color:transparent}
+  .card{background:#fff;border-radius:14px;box-shadow:0 12px 26px rgba(0,0,0,.08);padding:16px;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px;border-bottom:1px solid #f1f3f5;text-align:left;font-size:14px}
+  h1{margin:0 0 10px}
+  input,select,button{font:inherit}
+  input,select{padding:9px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
+  .btn{padding:9px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;cursor:pointer}
+  .btn.primary{background:var(--green);color:#fff;border-color:transparent}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .muted{color:var(--muted)}
+  .pill{display:inline-block;border:1px solid #e5e7eb;border-radius:999px;padding:3px 8px;font-size:12px}
+  `;
+
+  // tiny helpers without nested template strings
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c])); }
+  function rands(c){ return "R"+((Number(c)||0)/100).toFixed(2); }
+  function rowEvent(ev){
+    return "<tr>"
+      + "<td>"+ev.id+"</td>"
+      + "<td>"+esc(ev.slug)+"</td>"
+      + "<td>"+esc(ev.name)+"</td>"
+      + "<td>"+esc(ev.venue||"")+"</td>"
+      + "<td><span class='pill'>"+esc(ev.status)+"</span></td>"
+      + "<td>"+new Date((ev.starts_at||0)*1000).toLocaleDateString()+"</td>"
+      + "<td><button class='btn' data-tt='"+ev.id+"'>Ticket types</button></td>"
+      + "</tr>";
+  }
+  function rowTicketType(tt){
+    return "<tr>"
+      + "<td>"+tt.id+"</td>"
+      + "<td>"+esc(tt.name)+"</td>"
+      + "<td>"+esc(tt.code||"")+"</td>"
+      + "<td>"+rands(tt.price_cents||0)+"</td>"
+      + "<td>"+(tt.capacity||0)+"</td>"
+      + "<td>"+(tt.per_order_limit||0)+"</td>"
+      + "<td>"+(tt.requires_gender? "Yes":"No")+"</td>"
+      + "</tr>";
+  }
+  function rowUser(u){
+    return "<tr>"
+      + "<td>"+u.id+"</td>"
+      + "<td>"+esc(u.username)+"</td>"
+      + "<td>"+esc(u.role)+"</td>"
+      + "</tr>";
+  }
+  function rowSession(s){
+    const open = new Date((s.opened_at||0)*1000).toLocaleString();
+    const closed = s.closed_at ? new Date(s.closed_at*1000).toLocaleString() : "—";
+    return "<tr>"
+      + "<td>"+s.id+"</td>"
+      + "<td>"+(s.event_id||"")+"</td>"
+      + "<td>"+esc(s.cashier_name||"")+"</td>"
+      + "<td>"+(s.gate_id||"")+"</td>"
+      + "<td>"+rands(s.opening_float_cents||0)+"</td>"
+      + "<td>"+rands(s.cash_cents||0)+"</td>"
+      + "<td>"+rands(s.card_cents||0)+"</td>"
+      + "<td>"+(esc(s.closing_manager||""))+"</td>"
+      + "<td>"+open+"</td>"
+      + "<td>"+closed+"</td>"
+      + "</tr>";
+  }
+  function rowVendor(v){
+    return "<tr>"
+      + "<td>"+v.id+"</td>"
+      + "<td>"+esc(v.name)+"</td>"
+      + "<td>"+esc(v.contact_name||"")+"</td>"
+      + "<td>"+esc(v.phone||"")+"</td>"
+      + "<td>"+esc(v.email||"")+"</td>"
+      + "<td>"+esc(v.stand_number||"")+"</td>"
+      + "<td>"+(v.staff_quota||0)+" / "+(v.vehicle_quota||0)+"</td>"
+      + "<td><button class='btn' data-v-edit='"+v.id+"'>Edit</button></td>"
+      + "</tr>";
+  }
+
+  return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
-<style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8 }
-  *{ box-sizing:border-box }
-  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:1200px; margin:18px auto; padding:0 14px }
-  h1{ margin:0 0 12px }
-  .tabs{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px }
-  .tab{ padding:8px 12px; border-radius:10px; background:#fff; border:1px solid #e5e7eb; cursor:pointer }
-  .tab.active{ background:var(--green); color:#fff; border-color:transparent }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px; margin-bottom:12px }
-  table{ width:100%; border-collapse:collapse }
-  th,td{ padding:8px 10px; border-bottom:1px solid #eef1f3; text-align:left; font-size:14px }
-  th{ color:#475569; font-weight:700 }
-  input,select,button,textarea{ font:inherit }
-  input,select,textarea{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#fff }
-  .btn{ padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer }
-  .btn.primary{ background:var(--green); color:#fff; border-color:transparent; font-weight:700 }
-  .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
-  .muted{ color:#64748b }
-  .hr{ height:1px; background:#eef1f3; margin:10px 0 }
-</style>
+<style>${css}</style>
 </head><body>
 <div class="wrap">
-  <h1>Admin</h1>
-  <div class="tabs">
-    <div class="tab active" data-tab="events">Events</div>
-    <div class="tab" data-tab="tickets">Tickets</div>
-    <div class="tab" data-tab="pos">POS Admin</div>
-    <div class="tab" data-tab="vendors">Vendors</div>
-    <div class="tab" data-tab="users">Users</div>
-    <div class="tab" data-tab="settings">Site Settings</div>
+  <h1>Admin dashboard</h1>
+  <div class="nav">
+    <button class="tab active" data-tab="events">Events</button>
+    <button class="tab" data-tab="tickets">Tickets</button>
+    <button class="tab" data-tab="pos">POS Admin</button>
+    <button class="tab" data-tab="vendors">Vendors</button>
+    <button class="tab" data-tab="users">Users</button>
+    <button class="tab" data-tab="settings">Site settings</button>
   </div>
 
-  <div id="pane-events" class="card"></div>
-  <div id="pane-tickets" class="card" style="display:none"></div>
-  <div id="pane-pos" class="card" style="display:none"></div>
-  <div id="pane-vendors" class="card" style="display:none"></div>
-  <div id="pane-users" class="card" style="display:none"></div>
-  <div id="pane-settings" class="card" style="display:none">
-    <div class="muted">Coming soon…</div>
+  <!-- Events -->
+  <div id="tab-events" class="card">
+    <h2 style="margin:0 0 10px">Events</h2>
+    <div id="evTableWrap" class="muted">Loading…</div>
+    <div id="ttWrap" style="margin-top:12px;display:none">
+      <h3 style="margin:0 0 8px">Ticket types</h3>
+      <div id="ttTableWrap" class="muted">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Tickets -->
+  <div id="tab-tickets" class="card" style="display:none">
+    <h2 style="margin:0 0 10px">Tickets</h2>
+    <div class="row">
+      <input id="tCode" placeholder="Order code (e.g. 3VLNT5)"/>
+      <button id="tLookup" class="btn">Lookup</button>
+      <span id="tErr" class="muted"></span>
+    </div>
+    <div id="tRes" style="margin-top:12px"></div>
+  </div>
+
+  <!-- POS Admin -->
+  <div id="tab-pos" class="card" style="display:none">
+    <h2 style="margin:0 0 10px">POS sessions</h2>
+    <div id="posTableWrap" class="muted">Loading…</div>
+  </div>
+
+  <!-- Vendors -->
+  <div id="tab-vendors" class="card" style="display:none">
+    <h2 style="margin:0 0 10px">Vendors</h2>
+    <div class="row">
+      <input id="vEventId" type="number" placeholder="Event ID"/>
+      <button id="vLoad" class="btn">Load</button>
+      <button id="vNew" class="btn">New vendor</button>
+      <span id="vMsg" class="muted"></span>
+    </div>
+    <div id="vWrap" style="margin-top:10px" class="muted">—</div>
+  </div>
+
+  <!-- Users -->
+  <div id="tab-users" class="card" style="display:none">
+    <h2 style="margin:0 0 10px">Users</h2>
+    <div id="uWrap" class="muted">Loading…</div>
+  </div>
+
+  <!-- Settings -->
+  <div id="tab-settings" class="card" style="display:none">
+    <h2>Site settings</h2>
+    <div class="muted">Coming soon</div>
   </div>
 </div>
 
 <script>
-const $ = (s, r=document) => r.querySelector(s);
-const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
-const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-
-/* ---------------- Tabs ---------------- */
-$$('.tab').forEach(t => t.onclick = () => {
-  $$('.tab').forEach(x=>x.classList.remove('active'));
-  t.classList.add('active');
-  const name = t.dataset.tab;
-  ['events','tickets','pos','vendors','users','settings'].forEach(n=>{
-    $('#pane-'+n).style.display = (n===name?'block':'none');
+const $ = (id)=>document.getElementById(id);
+function activate(tab){
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  document.querySelector('[data-tab="'+tab+'"]').classList.add('active');
+  ['events','tickets','pos','vendors','users','settings'].forEach(t=>{
+    $('tab-'+t).style.display = (t===tab?'block':'none');
   });
-  if (name==='events') loadEvents();
-  if (name==='tickets') renderTicketsPane();
-  if (name==='pos') loadPOS();
-  if (name==='vendors') renderVendorsPane();
-  if (name==='users') loadUsers();
+}
+document.querySelectorAll('.tab').forEach(b=>{
+  b.onclick = ()=> activate(b.dataset.tab);
 });
 
-/* ---------------- Events pane ---------------- */
+function rands(c){ return "R"+((Number(c)||0)/100).toFixed(2); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;" }[c])); }
+
+// ---------- Events ----------
 async function loadEvents(){
-  const pane = $('#pane-events');
-  pane.innerHTML = '<div class="muted">Loading…</div>';
-  const r = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok) { pane.innerHTML = '<div class="muted">Failed</div>'; return; }
-  const rows = (r.events||[]).map(ev => `
-    <tr>
-      <td>${ev.id}</td>
-      <td>${esc(ev.name)}</td>
-      <td>${esc(ev.slug)}</td>
-      <td>${new Date(ev.starts_at*1000).toLocaleDateString()}</td>
-      <td>${new Date(ev.ends_at*1000).toLocaleDateString()}</td>
-      <td>${esc(ev.status)}</td>
-      <td><button class="btn" data-view-ev="${ev.id}">View</button></td>
-    </tr>`).join('') || '<tr><td colspan="7" class="muted">No events</td></tr>';
-  pane.innerHTML = `
-    <h2>Events</h2>
-    <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Slug</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div id="evDetail"></div>
-  `;
-  $$('#pane-events [data-view-ev]').forEach(b=>{
-    b.onclick = ()=> viewEvent(Number(b.dataset.viewEv||0));
+  $('evTableWrap').textContent = 'Loading…';
+  const j = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok) return $('evTableWrap').textContent = 'Failed to load';
+  const rows = (j.events||[]).map(ev => ${
+    // we can’t inline a function in a template safely; build in runtime:
+    "''"
+  }).join('');
+}
+// because we can’t embed rowEvent directly in HTML above, we’ll build table here:
+async function renderEvents(){
+  const j = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
+  const w = $('evTableWrap');
+  if (!j.ok) { w.textContent = 'Failed to load'; return; }
+  const rows = (j.events||[]).map(ev => (
+    "<tr>"
+    + "<td>"+ev.id+"</td>"
+    + "<td>"+esc(ev.slug)+"</td>"
+    + "<td>"+esc(ev.name)+"</td>"
+    + "<td>"+esc(ev.venue||"")+"</td>"
+    + "<td><span class='pill'>"+esc(ev.status)+"</span></td>"
+    + "<td>"+new Date((ev.starts_at||0)*1000).toLocaleDateString()+"</td>"
+    + "<td><button class='btn' data-tt='"+ev.id+"'>Ticket types</button></td>"
+    + "</tr>"
+  )).join('');
+  w.innerHTML =
+    "<table><thead><tr>"
+    + "<th>ID</th><th>Slug</th><th>Name</th><th>Venue</th><th>Status</th><th>Starts</th><th></th>"
+    + "</tr></thead><tbody>"+rows+"</tbody></table>";
+
+  // wire ticket types
+  w.querySelectorAll('[data-tt]').forEach(btn=>{
+    btn.onclick = ()=> loadTicketTypes(btn.getAttribute('data-tt'));
   });
 }
-
-async function viewEvent(id){
-  const box = $('#evDetail');
-  box.innerHTML = '<div class="hr"></div><div class="muted">Loading…</div>';
-  const r = await fetch('/api/admin/events/'+id).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ box.innerHTML = '<div class="hr"></div><div class="muted">Not found</div>'; return; }
-  const ev = r.event||{}, tt = r.ticket_types||[];
-  const ttRows = tt.map(t=>`
-    <tr>
-      <td>${t.id}</td><td>${esc(t.name)}</td>
-      <td>${(t.price_cents||0)/100}</td>
-      <td>${t.capacity}</td>
-      <td>${t.per_order_limit}</td>
-      <td>${t.requires_gender? 'Yes':'No'}</td>
-    </tr>`).join('') || '<tr><td colspan="6" class="muted">No ticket types</td></tr>';
-  box.innerHTML = `
-    <div class="hr"></div>
-    <div class="row" style="justify-content:space-between;align-items:center">
-      <div>
-        <div style="font-weight:700">${esc(ev.name)}</div>
-        <div class="muted">${esc(ev.slug)} · ${ev.venue||''}</div>
-      </div>
-      <button class="btn" data-open-tickets-summary="${ev.id}">Load ticket summary</button>
-    </div>
-    <div id="evSummary" class="muted" style="margin:8px 0 12px"></div>
-    <h3>Ticket types</h3>
-    <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Price (R)</th><th>Cap</th><th>Per Order</th><th>Gender</th></tr></thead>
-      <tbody>${ttRows}</tbody>
-    </table>
-  `;
-  $('[data-open-tickets-summary]').onclick = async () => {
-    const s = await fetch('/api/admin/tickets/summary/'+id).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!s.ok) { $('#evSummary').textContent = 'Failed to load summary'; return; }
-    const a = s.summary||{};
-    $('#evSummary').innerHTML = \`Total: \${a.total} · Unused: \${a.unused} · In: \${a.in} · Out: \${a.out} · Void: \${a.void}\`;
-  };
+async function loadTicketTypes(eventId){
+  $('ttWrap').style.display = 'block';
+  $('ttTableWrap').textContent = 'Loading…';
+  const j = await fetch('/api/admin/events/'+encodeURIComponent(eventId)+'/ticket-types').then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok) { $('ttTableWrap').textContent='Failed'; return; }
+  const rows = (j.ticket_types||[]).map(tt => (
+    "<tr>"
+    + "<td>"+tt.id+"</td>"
+    + "<td>"+esc(tt.name)+"</td>"
+    + "<td>"+esc(tt.code||"")+"</td>"
+    + "<td>"+rands(tt.price_cents||0)+"</td>"
+    + "<td>"+(tt.capacity||0)+"</td>"
+    + "<td>"+(tt.per_order_limit||0)+"</td>"
+    + "<td>"+(tt.requires_gender? "Yes":"No")+"</td>"
+    + "</tr>"
+  )).join('');
+  $('ttTableWrap').innerHTML =
+    "<table><thead><tr><th>ID</th><th>Name</th><th>Code</th><th>Price</th><th>Capacity</th><th>Per-order</th><th>Gender?</th></tr></thead>"
+    + "<tbody>"+rows+"</tbody></table>";
 }
 
-/* ---------------- Tickets pane ---------------- */
-function renderTicketsPane(){
-  const pane = $('#pane-tickets');
-  pane.innerHTML = `
-    <h2>Tickets</h2>
-    <div class="row" style="margin-bottom:10px">
-      <input id="tkCode" placeholder="Order code e.g. C056B6" style="min-width:220px"/>
-      <button id="tkLookup" class="btn">Lookup</button>
-    </div>
-    <div id="tkResult" class="muted">Enter an order code to view tickets.</div>
-  `;
-  $('#tkLookup').onclick = doTicketLookup;
-}
+// ---------- Tickets lookup ----------
+$('tLookup').onclick = async ()=>{
+  $('tErr').textContent = '';
+  $('tRes').innerHTML = '';
+  const code = ($('tCode').value||'').trim();
+  if (!code) { $('tErr').textContent = 'Enter a code'; return; }
+  const j = await fetch('/api/admin/orders/lookup/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ $('tErr').textContent = j.error||'Not found'; return; }
+  const o = j.order, t = j.tickets||[];
+  const trows = t.map(x => (
+    "<tr>"
+    + "<td>"+x.id+"</td>"
+    + "<td>"+esc(x.type_name||'')+"</td>"
+    + "<td>"+esc(x.attendee_first||'')+" "+esc(x.attendee_last||'')+"</td>"
+    + "<td>"+esc(x.state||'')+"</td>"
+    + "<td><code>"+esc(x.qr||'')+"</code></td>"
+    + "</tr>"
+  )).join('');
+  $('tRes').innerHTML =
+    "<div class='card'>"
+    + "<div><b>Order:</b> "+esc(o.short_code)+" · "+rands(o.total_cents||0)+" · "+esc(o.status)+"</div>"
+    + "<div class='muted' style='margin:6px 0'>"+esc(o.buyer_name||'')+" · "+esc(o.buyer_phone||'')+"</div>"
+    + "<table><thead><tr><th>ID</th><th>Type</th><th>Attendee</th><th>State</th><th>QR</th></tr></thead>"
+    + "<tbody>"+trows+"</tbody></table>"
+    + "</div>";
+};
 
-async function doTicketLookup(){
-  const code = ($('#tkCode').value||'').trim();
-  if (!code) return;
-  const pane = $('#tkResult');
-  pane.innerHTML = 'Loading…';
-  const r = await fetch('/api/admin/orders/by-code/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ pane.innerHTML = 'Not found'; return; }
-  const o = r.order||{}, list = r.tickets||[];
-  const rows = list.map(t=>`
-    <tr>
-      <td>${t.id}</td>
-      <td>${esc(t.type_name||'')}</td>
-      <td>${esc([t.attendee_first,t.attendee_last].filter(Boolean).join(' ') || '')}</td>
-      <td>${esc(t.state||'')}</td>
-      <td>${(t.price_cents||0)/100}</td>
-      <td><a class="btn" href="/t/${encodeURIComponent(o.short_code)}" target="_blank">Open</a></td>
-    </tr>`).join('') || '<tr><td colspan="6" class="muted">No tickets on this order</td></tr>';
-
-  const phonePrefill = (o.buyer_phone||'').trim();
-  pane.innerHTML = `
-    <div class="row" style="justify-content:space-between;align-items:center">
-      <div>
-        <div style="font-weight:700">Order ${esc(o.short_code||'')}</div>
-        <div class="muted">Total R${((o.total_cents||0)/100).toFixed(2)}</div>
-      </div>
-      <div class="row">
-        <input id="waTo" placeholder="E.164 phone e.g. 2771…" value="${esc(phonePrefill)}" style="min-width:200px"/>
-        <button id="waSend" class="btn primary">Send via WhatsApp</button>
-      </div>
-    </div>
-    <div class="hr"></div>
-    <table>
-      <thead><tr><th>ID</th><th>Type</th><th>Name</th><th>State</th><th>Price</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div id="waMsg" class="muted" style="margin-top:8px"></div>
-  `;
-  $('#waSend').onclick = async () => {
-    $('#waMsg').textContent = 'Sending…';
-    const to = ($('#waTo').value||'').trim();
-    const res = await fetch('/api/admin/orders/send-wa', {
-      method:'POST',
-      headers:{ 'content-type':'application/json' },
-      body: JSON.stringify({ code: o.short_code, to })
-    }).then(r=>r.json()).catch(()=>({ok:false,error:'network'}));
-    $('#waMsg').textContent = res.ok ? 'Sent ✅' : ('Error: '+(res.error||'failed'));
-  };
-}
-
-/* ---------------- POS Admin pane ---------------- */
+// ---------- POS sessions ----------
 async function loadPOS(){
-  const pane = $('#pane-pos');
-  pane.innerHTML = '<div class="muted">Loading…</div>';
-  const r = await fetch('/api/admin/pos/sessions').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ pane.innerHTML = '<div class="muted">Failed</div>'; return; }
-  const rows = (r.sessions||[]).map(s=>`
-    <tr>
-      <td>${s.id}</td>
-      <td>${esc(s.cashier_name||'')}</td>
-      <td>${s.gate_id||''}</td>
-      <td>${new Date(s.opened_at*1000).toLocaleString()}</td>
-      <td>${s.closed_at ? new Date(s.closed_at*1000).toLocaleString() : '—'}</td>
-      <td>R${((s.opening_float_cents||0)/100).toFixed(2)}</td>
-      <td>R${((s.cash_cents||0)/100).toFixed(2)}</td>
-      <td>R${((s.card_cents||0)/100).toFixed(2)}</td>
-      <td>${esc(s.closing_manager||'')}</td>
-    </tr>`).join('') || '<tr><td colspan="9" class="muted">No sessions</td></tr>';
-  pane.innerHTML = `
-    <h2>POS Sessions</h2>
-    <table>
-      <thead><tr>
-        <th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th>
-        <th>Float</th><th>Cash</th><th>Card</th><th>Closed by</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+  const w = $('posTableWrap');
+  w.textContent = 'Loading…';
+  const j = await fetch('/api/admin/pos/sessions').then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ w.textContent='Failed'; return; }
+  const rows = (j.sessions||[]).map(s => (
+    "<tr>"
+    + "<td>"+s.id+"</td>"
+    + "<td>"+(s.event_id||"")+"</td>"
+    + "<td>"+esc(s.cashier_name||"")+"</td>"
+    + "<td>"+(s.gate_id||"")+"</td>"
+    + "<td>"+rands(s.opening_float_cents||0)+"</td>"
+    + "<td>"+rands(s.cash_cents||0)+"</td>"
+    + "<td>"+rands(s.card_cents||0)+"</td>"
+    + "<td>"+esc(s.closing_manager||"")+"</td>"
+    + "<td>"+new Date((s.opened_at||0)*1000).toLocaleString()+"</td>"
+    + "<td>"+(s.closed_at? new Date(s.closed_at*1000).toLocaleString() : "—")+"</td>"
+    + "</tr>"
+  )).join('');
+  w.innerHTML =
+    "<table><thead><tr>"
+    + "<th>ID</th><th>Event</th><th>Cashier</th><th>Gate</th><th>Float</th>"
+    + "<th>Cash</th><th>Card</th><th>Closed by</th><th>Opened</th><th>Closed</th>"
+    + "</tr></thead><tbody>"+rows+"</tbody></table>";
 }
 
-/* ---------------- Vendors pane (with edit) ---------------- */
-function renderVendorsPane(){
-  const pane = $('#pane-vendors');
-  pane.innerHTML = `
-    <h2>Vendors</h2>
-    <div class="row" style="margin-bottom:10px">
-      <select id="vEv"></select>
-      <button id="vLoad" class="btn">Load</button>
-      <button id="vNew" class="btn">+ New</button>
-    </div>
-    <div id="vList" class="muted">Select an event and click Load.</div>
-    <div class="hr"></div>
-    <div id="vEdit"></div>
-  `;
+// ---------- Vendors ----------
+$('vLoad').onclick = async ()=>{
+  const evId = Number(($('vEventId').value||'0'));
+  if (!evId) { $('vMsg').textContent = 'Enter event id'; return; }
+  $('vMsg').textContent = ''; $('vWrap').textContent = 'Loading…';
+  const j = await fetch('/api/admin/vendors/'+evId).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ $('vWrap').textContent='Failed'; return; }
+  const rows = (j.vendors||[]).map(v => (
+    "<tr>"
+    + "<td>"+v.id+"</td>"
+    + "<td>"+esc(v.name)+"</td>"
+    + "<td>"+esc(v.contact_name||"")+"</td>"
+    + "<td>"+esc(v.phone||"")+"</td>"
+    + "<td>"+esc(v.email||"")+"</td>"
+    + "<td>"+esc(v.stand_number||"")+"</td>"
+    + "<td>"+(v.staff_quota||0)+" / "+(v.vehicle_quota||0)+"</td>"
+    + "<td><button class='btn' data-v-edit='"+v.id+"'>Edit</button></td>"
+    + "</tr>"
+  )).join('');
+  $('vWrap').innerHTML =
+    "<table><thead><tr>"
+    + "<th>ID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Stand</th><th>Quotas</th><th></th>"
+    + "</tr></thead><tbody>"+rows+"</tbody></table>";
 
-  // fill events for selector
-  (async ()=>{
-    const ev = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
-    const sel = $('#vEv');
-    if (!ev.ok){ sel.innerHTML = '<option value="">(failed)</option>'; return; }
-    sel.innerHTML = (ev.events||[]).map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join('');
-  })();
-
-  $('#vLoad').onclick = loadVendors;
-  $('#vNew').onclick = ()=> showVendorEditor({ id:0, event_id: Number($('#vEv').value||0), name:'', contact_name:'', phone:'', email:'', stand_number:'', staff_quota:0, vehicle_quota:0 });
-}
-
-async function loadVendors(){
-  const eventId = Number(($('#vEv').value)||0);
-  const list = $('#vList');
-  if (!eventId){ list.textContent = 'Pick an event.'; return; }
-  list.textContent = 'Loading…';
-  const r = await fetch('/api/admin/vendors/'+eventId).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ list.textContent = 'Failed'; return; }
-  const rows = (r.vendors||[]).map(v=>`
-    <tr>
-      <td>${v.id}</td>
-      <td>${esc(v.name)}</td>
-      <td>${esc(v.contact_name||'')}</td>
-      <td>${esc(v.phone||'')}</td>
-      <td>${esc(v.email||'')}</td>
-      <td>${esc(v.stand_number||'')}</td>
-      <td>${v.staff_quota||0}</td>
-      <td>${v.vehicle_quota||0}</td>
-      <td>
-        <button class="btn" data-edit="${v.id}">Edit</button>
-        <button class="btn" data-del="${v.id}">Delete</button>
-      </td>
-    </tr>`).join('') || '<tr><td colspan="9" class="muted">No vendors</td></tr>';
-  list.innerHTML = `
-    <table>
-      <thead><tr>
-        <th>ID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>
-        <th>Stand</th><th>Staff quota</th><th>Vehicle quota</th><th></th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-  $$('#vList [data-edit]').forEach(b=>{
-    b.onclick = ()=>{
-      const id = Number(b.dataset.edit);
-      const v = (r.vendors||[]).find(x=>x.id===id);
-      showVendorEditor(v);
-    };
+  // wire edit
+  $('vWrap').querySelectorAll('[data-v-edit]').forEach(b=>{
+    b.onclick = ()=> openVendorEdit(evId, Number(b.getAttribute('data-v-edit')));
   });
-  $$('#vList [data-del]').forEach(b=>{
-    b.onclick = async ()=>{
-      if (!confirm('Delete this vendor?')) return;
-      await fetch('/api/admin/vendors/delete',{ method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ id:Number(b.dataset.del) }) });
-      loadVendors();
-    };
+};
+$('vNew').onclick = ()=> openVendorEdit(Number(($('vEventId').value||'0')), 0);
+
+async function openVendorEdit(eventId, id){
+  const name = prompt("Vendor name:");
+  if (!name) return;
+  const contact_name = prompt("Contact name:", "")||"";
+  const phone = prompt("Phone:", "")||"";
+  const email = prompt("Email:", "")||"";
+  const stand_number = prompt("Stand number:", "")||"";
+  const staff_quota = Number(prompt("Staff quota:", "0")||"0");
+  const vehicle_quota = Number(prompt("Vehicle quota:", "0")||"0");
+  const body = { id, event_id:eventId, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota };
+  const r = await fetch('/api/admin/vendors/upsert', {
+    method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)
   });
+  const j = await r.json().catch(()=>({ok:false}));
+  if (!j.ok){ alert('Save failed: '+(j.error||'')); return; }
+  $('vLoad').click();
 }
 
-function showVendorEditor(v){
-  const el = $('#vEdit');
-  el.innerHTML = `
-    <h3>${v.id? 'Edit Vendor':'New Vendor'}</h3>
-    <div class="row" style="margin-bottom:8px">
-      <input id="vnName" placeholder="Name" value="${esc(v.name||'')}" style="min-width:260px"/>
-      <input id="vnContact" placeholder="Contact person" value="${esc(v.contact_name||'')}"/>
-      <input id="vnPhone" placeholder="Phone (WhatsApp)" value="${esc(v.phone||'')}"/>
-      <input id="vnEmail" placeholder="Email" value="${esc(v.email||'')}"/>
-      <input id="vnStand" placeholder="Stand #" value="${esc(v.stand_number||'')}"/>
-    </div>
-    <div class="row" style="margin-bottom:8px">
-      <input id="vnStaff" type="number" min="0" step="1" value="${Number(v.staff_quota||0)}" style="width:120px"/>
-      <input id="vnVeh" type="number" min="0" step="1" value="${Number(v.vehicle_quota||0)}" style="width:140px"/>
-      <button id="vnSave" class="btn primary">Save</button>
-      <span id="vnMsg" class="muted"></span>
-    </div>
-  `;
-  $('#vnSave').onclick = async ()=>{
-    $('#vnMsg').textContent = 'Saving…';
-    const payload = {
-      id: v.id||0,
-      event_id: v.event_id || Number(($('#vEv').value)||0),
-      name: ($('#vnName').value||'').trim(),
-      contact_name: ($('#vnContact').value||'').trim(),
-      phone: ($('#vnPhone').value||'').trim(),
-      email: ($('#vnEmail').value||'').trim(),
-      stand_number: ($('#vnStand').value||'').trim(),
-      staff_quota: Number($('#vnStaff').value||0),
-      vehicle_quota: Number($('#vnVeh').value||0)
-    };
-    const r = await fetch('/api/admin/vendors/save', {
-      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload)
-    }).then(r=>r.json()).catch(()=>({ok:false,error:'network'}));
-    $('#vnMsg').textContent = r.ok ? 'Saved ✅' : ('Error: '+(r.error||''));
-    loadVendors();
-  };
-}
-
-/* ---------------- Users pane (read-only list) ---------------- */
+// ---------- Users ----------
 async function loadUsers(){
-  const pane = $('#pane-users');
-  pane.innerHTML = '<div class="muted">Loading…</div>';
-  const r = await fetch('/api/admin/users').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!r.ok){ pane.innerHTML = '<div class="muted">Failed</div>'; return; }
-  const rows = (r.users||[]).map(u=>`
-    <tr>
-      <td>${u.id}</td>
-      <td>${esc(u.username)}</td>
-      <td>${esc(u.role)}</td>
-    </tr>`).join('') || '<tr><td colspan="3" class="muted">No users</td></tr>';
-  pane.innerHTML = `
-    <h2>Users</h2>
-    <table>
-      <thead><tr><th>ID</th><th>Username</th><th>Role</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
+  const w = $('uWrap'); w.textContent='Loading…';
+  const j = await fetch('/api/admin/users').then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ w.textContent='Failed'; return; }
+  const rows = (j.users||[]).map(u => (
+    "<tr><td>"+u.id+"</td><td>"+esc(u.username)+"</td><td>"+esc(u.role)+"</td></tr>"
+  )).join('');
+  w.innerHTML = "<table><thead><tr><th>ID</th><th>Username</th><th>Role</th></tr></thead><tbody>"+rows+"</tbody></table>";
 }
 
-/* boot */
-loadEvents();
+// initial loads
+renderEvents();
+loadPOS();
+loadUsers();
 </script>
 </body></html>`;
+}
