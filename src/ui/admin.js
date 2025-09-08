@@ -48,6 +48,10 @@ export const adminHTML = () => `<!doctype html><html><head>
 <script>
 const $ = (id)=>document.getElementById(id);
 const esc = (s)=>String(s??"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const rands = (c)=>'R'+((Number(c||0))/100).toFixed(2);
+const fmt = (s)=> new Date((Number(s||0))*1000).toLocaleString();
+const val = (id)=>{ const el=$(id); return el? el.value: '' };
+const setVal = (id,v)=>{ const el=$(id); if (el) el.value=v };
 
 document.querySelectorAll('.tab').forEach(b=>{
   b.onclick = ()=>{
@@ -64,7 +68,7 @@ document.querySelectorAll('.tab').forEach(b=>{
   };
 });
 
-/* ===================== EVENTS UI ===================== */
+/* =============== EVENTS =============== */
 
 async function loadEvents(){
   const r = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
@@ -103,7 +107,7 @@ async function loadEvents(){
   document.querySelectorAll('[data-edit]').forEach(b=>{
     b.onclick = ()=> showEventForm(Number(b.dataset.edit));
   });
-  document.getElementById('btnNewEvent').onclick = ()=> showEventForm(0);
+  $('btnNewEvent').onclick = ()=> showEventForm(0);
   document.querySelectorAll('[data-tt]').forEach(b=>{
     b.onclick = ()=> loadTicketTypes(Number(b.dataset.tt));
   });
@@ -138,9 +142,7 @@ function showEventForm(id){
     </div>
   `;
 
-  // If editing, fetch the current row to prefill from the main table DOM (simple)
   if (id){
-    // We could fetch single event; to keep simple, reload list then pick
     fetch('/api/admin/events').then(r=>r.json()).then(j=>{
       const found = (j.events||[]).find(x=>x.id===id);
       if (found){
@@ -215,7 +217,7 @@ async function loadTicketTypes(eventId){
     <div id="ttForm" class="card" style="margin-top:12px; display:none"></div>
   `;
 
-  document.getElementById('btnNewTT').onclick = (e)=> showTTForm(Number(e.target.dataset.ev), 0);
+  $('btnNewTT').onclick = (e)=> showTTForm(Number(e.target.dataset.ev), 0);
   document.querySelectorAll('[data-edit-tt]').forEach(b=>{
     b.onclick = ()=> showTTForm(Number(b.dataset.ev), Number(b.dataset.editTt));
   });
@@ -280,7 +282,7 @@ function showTTForm(eventId, id){
   };
 }
 
-/* ===================== TICKETS TAB ===================== */
+/* =============== TICKETS =============== */
 
 async function renderTicketsPanel(){
   const evs = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
@@ -348,8 +350,8 @@ async function renderTicketsPanel(){
     if (!code) return;
     const j = await fetch('/api/admin/orders/by-code/'+encodeURIComponent(code)).then(r=>r.json()).catch(()=>({ok:false}));
     const m = $('ordModal'); m.style.display='block';
-    if (!j.ok){ m.innerHTML = `<p class="muted">Kon nie kaartjies vind met kode ${esc(code)} nie.</p>`; return; }
-    const t = (j.tickets||[]).map(x=>`<li>${esc(x.type_name)} — QR: ${esc(x.qr)} — ${esc(x.state)}</li>`).join('') || '<li class="muted">No tickets</li>';
+    if (!j.ok){ m.innerHTML = \`<p class="muted">Kon nie kaartjies vind met kode \${esc(code)} nie.</p>\`; return; }
+    const t = (j.tickets||[]).map(x=>\`<li>\${esc(x.type_name)} — QR: \${esc(x.qr)} — \${esc(x.state)}</li>\`).join('') || '<li class="muted">No tickets</li>';
     m.innerHTML = `
       <h3 style="margin:0 0 6px">Order ${esc(j.order.short_code)} (${esc(j.event?.name||'')})</h3>
       <div>Buyer: ${esc(j.order.buyer_name||'')} · ${esc(j.order.buyer_email||'')} · ${esc(j.order.buyer_phone||'')}</div>
@@ -358,7 +360,7 @@ async function renderTicketsPanel(){
   };
 }
 
-/* ===================== POS ADMIN ===================== */
+/* =============== POS ADMIN =============== */
 
 async function loadPOS(){
   const j = await fetch('/api/admin/pos/sessions').then(r=>r.json()).catch(()=>({ok:false}));
@@ -390,7 +392,7 @@ async function loadPOS(){
   `;
 }
 
-/* ===================== VENDORS ===================== */
+/* =============== VENDORS =============== */
 
 async function renderVendorsPanel(){
   const evs = await fetch('/api/admin/events').then(r=>r.json()).catch(()=>({ok:false}));
@@ -421,7 +423,10 @@ async function renderVendorsPanel(){
         <td>${esc(v.email||'')}</td>
         <td>${esc(v.stand_number||'')}</td>
         <td>${Number(v.staff_quota||0)} / ${Number(v.vehicle_quota||0)}</td>
-        <td><button class="btn outline" data-edit-v="${v.id}" data-ev="${v.event_id}">Edit</button></td>
+        <td class="row" style="gap:6px">
+          <button class="btn outline" data-edit-v="${v.id}" data-ev="${v.event_id}">Edit</button>
+          <button class="btn" data-send-wa="${v.id}">Send WA</button>
+        </td>
       </tr>`).join('');
     $('venList').innerHTML = `
       <div style="overflow:auto">
@@ -432,6 +437,9 @@ async function renderVendorsPanel(){
       </div>`;
     document.querySelectorAll('[data-edit-v]').forEach(b=>{
       b.onclick = ()=> showVendorForm(Number(b.dataset.ev), Number(b.dataset.editV));
+    });
+    document.querySelectorAll('[data-send-wa]').forEach(b=>{
+      b.onclick = ()=> sendVendorWA(Number(b.dataset.sendWa));
     });
     $('btnNewVendor').onclick = ()=> showVendorForm(evId, 0);
   };
@@ -458,7 +466,6 @@ function showVendorForm(eventId, id){
   `;
 
   if (id){
-    // reload list to find record
     fetch('/api/admin/vendors?event_id='+eventId).then(r=>r.json()).then(j=>{
       const v = (j.vendors||[]).find(x=>x.id===id);
       if (v){
@@ -490,13 +497,28 @@ function showVendorForm(eventId, id){
       const j = await r.json();
       if (!j.ok) throw new Error(j.error||'failed');
       $('vMsg').textContent = 'Saved';
-      // reload list
       document.getElementById('btnLoadV').click();
     }catch(e){ $('vMsg').textContent = 'Error: '+(e.message||'unknown'); }
   };
 }
 
-/* ===================== USERS ===================== */
+async function sendVendorWA(id){
+  const btn = document.querySelector(\`[data-send-wa="\${id}"]\`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try{
+    const r = await fetch('/api/admin/vendors/'+id+'/send-wa', { method: 'POST' });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error||'failed');
+    if (btn) btn.textContent = 'Sent ('+(j.mode||'ok')+')';
+  }catch(e){
+    alert('WhatsApp send failed: '+(e.message||'unknown'));
+    if (btn) btn.textContent = 'Send WA';
+  }finally{
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* =============== USERS =============== */
 
 async function loadUsers(){
   const j = await fetch('/api/admin/users').then(r=>r.json()).catch(()=>({ok:false}));
@@ -513,14 +535,7 @@ async function loadUsers(){
   `;
 }
 
-/* ===================== HELPERS ===================== */
-
-function val(id){ const el=document.getElementById(id); return el?el.value:''; }
-function setVal(id,v){ const el=document.getElementById(id); if(el) el.value=v; }
-function rands(c){ return 'R'+((Number(c||0))/100).toFixed(2); }
-function fmt(s){ const d=new Date((Number(s||0))*1000); return d.toLocaleString(); }
-
-// boot
+/* boot */
 loadEvents();
 </script>
 </body></html>`;
