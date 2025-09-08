@@ -222,8 +222,9 @@ export function mountAdmin(router) {
     return json({ ok:true });
   }));
 
-  /* ---------------- Public ticket page helper --------------------- */
-  router.add("GET", "/api/public/tickets/by-code/:code", 
+/* ---------------- Public ticket page helper --------------------- */
+router.add("GET", "/api/public/tickets/by-code/:code", 
+  async (_req, env, _ctx, p) => {
     const code = String(p.code || "").trim();
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
@@ -236,7 +237,8 @@ export function mountAdmin(router) {
         ORDER BY t.id ASC`
     ).bind(code).all();
 
-    const rows = q.results || [];
-    return json({ ok: !!rows.length, tickets: rows });
-  }));
-}
+    return new Response(JSON.stringify({ ok: true, tickets: q.results }), {
+      headers: { "content-type": "application/json" }
+    });
+  }
+);
