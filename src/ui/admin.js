@@ -1,8 +1,4 @@
 // /src/ui/admin.js
-import { esc } from "../utils/html.js";
-
-const R = (n) => new Intl.NumberFormat(undefined, { style: "currency", currency: "ZAR", minimumFractionDigits: 2 });
-
 export function adminHTML() {
   return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -33,8 +29,10 @@ export function adminHTML() {
   <div id="view"></div>
 </div>
 <script>
-const money = (c) => (c==null? "R0.00" : ${R(0).format}.call(Intl.NumberFormat, c/100));
-const api = (p, init) => fetch(p, init).then(r => r.json());
+// tiny helpers in-page (no external imports)
+const esc = (s)=>String(s ?? '').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;' }[m]));
+const money = (c)=>'R'+((Number(c||0)/100).toFixed(2));
+const api = (p, init)=>fetch(p, init).then(r=>r.json());
 
 /* ------------------------------ TICKETS VIEW ------------------------------ */
 async function viewTickets(){
@@ -72,8 +70,8 @@ async function viewTickets(){
     if(!r.ok){ document.getElementById('sum').textContent = 'Not Found'; return; }
     const rows = (r.list||[]).map(x=>\`
       <tr>
-        <td>\${x.type_name}</td>
-        <td>R\${(x.price_cents/100).toFixed(2)}</td>
+        <td>\${esc(x.type_name)}</td>
+        <td>\${money(x.price_cents)}</td>
         <td>\${x.total}</td>
         <td>\${x.unused}</td>
         <td>\${x.in}</td>
@@ -81,7 +79,7 @@ async function viewTickets(){
         <td>\${x.void}</td>
       </tr>\`).join('');
     const t = \`
-      <div class="muted">Total: \${r.totals.total} · Unused: \${r.totals.unused} · In: \${r.totals.in} · Out: \${r.totals.out} · Void: \${r.totals.void}</div>
+      <div class="muted">Total: \${r.totals.total} · Unused: \${r.totals.unused} · In: \${r.totals.in} · Out: \${r.totals.out} · Void: \${r.totals.void} · Value: \${money(r.totals.value_cents)}</div>
       <table style="margin-top:8px">
         <thead><tr><th>Type</th><th>Price (R)</th><th>Total</th><th>Unused</th><th>In</th><th>Out</th><th>Void</th></tr></thead>
         <tbody>\${rows}</tbody>
@@ -96,7 +94,7 @@ async function viewTickets(){
     if(!r.ok){ document.getElementById('olines').textContent = r.error||'Not found'; return; }
     const lines = (r.tickets||[]).map(t=>\`
       <tr>
-        <td>\${t.id}</td><td>\${t.type_name}</td><td>\${t.attendee_first||''} \${t.attendee_last||''}</td>
+        <td>\${t.id}</td><td>\${esc(t.type_name)}</td><td>\${esc((t.attendee_first||'')+' '+(t.attendee_last||''))}</td>
         <td>\${t.state}</td><td>\${t.qr}</td>
       </tr>\`).join('');
     const phone = r.order.buyer_phone||'';
@@ -110,7 +108,7 @@ async function viewTickets(){
         <tbody>\${lines||'<tr><td colspan=5 class="muted">No tickets found</td></tr>'}</tbody>
       </table>
       <div class="row" style="margin-top:10px">
-        <input id="waphone" placeholder="WhatsApp MSISDN (e.g. 2771...)" value="\${phone}"/>
+        <input id="waphone" placeholder="WhatsApp MSISDN (e.g. 2771...)" value="\${esc(phone)}"/>
         <button class="btn" id="sendwa">Send via WhatsApp</button>
       </div>\`;
     document.getElementById('sendwa').onclick = async ()=>{
@@ -131,7 +129,6 @@ async function viewVendors(){
       <div class="row">
         <select id="evsel"></select>
         <button class="btn" id="load">Load</button>
-        <span class="right"></span>
       </div>
       <div id="vlist" style="margin-top:10px;"></div>
       <div class="card" style="margin-top:12px">
@@ -163,11 +160,11 @@ async function viewVendors(){
     const r = await api('/api/admin/vendors?event_id='+id);
     const rows = (r.vendors||[]).map(v=>\`
       <tr data-id="\${v.id}">
-        <td><input value="\${v.name||''}" class="i_name"/></td>
-        <td><input value="\${v.contact_name||''}" class="i_contact"/></td>
-        <td><input value="\${v.phone||''}" class="i_phone"/></td>
-        <td><input value="\${v.email||''}" class="i_email"/></td>
-        <td><input value="\${v.stand_number||''}" class="i_stand" style="width:100px"/></td>
+        <td><input value="\${esc(v.name||'')}" class="i_name"/></td>
+        <td><input value="\${esc(v.contact_name||'')}" class="i_contact"/></td>
+        <td><input value="\${esc(v.phone||'')}" class="i_phone"/></td>
+        <td><input value="\${esc(v.email||'')}" class="i_email"/></td>
+        <td><input value="\${esc(v.stand_number||'')}" class="i_stand" style="width:100px"/></td>
         <td><input type="number" min="0" value="\${v.staff_quota||0}" class="i_staff" style="width:80px"/></td>
         <td><input type="number" min="0" value="\${v.vehicle_quota||0}" class="i_vehicle" style="width:100px"/></td>
         <td>
@@ -184,7 +181,7 @@ async function viewVendors(){
         <tbody>\${rows||'<tr><td colspan=8 class="muted">No vendors yet</td></tr>'}</tbody>
       </table>\`;
 
-    // row actions
+    // actions
     document.querySelectorAll('#vlist [data-act="save"]').forEach(btn=>{
       btn.onclick = async ()=>{
         const tr = btn.closest('tr'); const id = tr.getAttribute('data-id');
