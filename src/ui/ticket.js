@@ -1,8 +1,6 @@
 // /src/ui/ticket.js
-import { esc } from "../utils/html.js";
-
 export function ticketHTML(code) {
-  const safe = esc(code || "");
+  const safe = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
 
   return /*html*/`
 <!doctype html>
@@ -10,7 +8,7 @@ export function ticketHTML(code) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jou kaartjies · ${safe}</title>
+  <title>Jou kaartjies · ${safe(code)}</title>
   <link rel="icon" href="/favicon.ico" />
   <style>
     :root {
@@ -43,11 +41,10 @@ export function ticketHTML(code) {
     .toolbar { display:flex; gap:8px; flex-wrap:wrap; }
     .btn { display:inline-flex; align-items:center; justify-content:center; padding:8px 12px;
       border-radius:10px; background:var(--brand); color:var(--brand-ink); font-weight:600; border:0; cursor:pointer }
-    .btn.secondary { background:#111; color:#fff }
     .btn.ghost { background:#e5e7eb; color:#111 }
     .empty { max-width:960px; margin:24px auto; padding:0 16px; color:var(--muted) }
 
-    /* Print-friendly: one ticket per page, big QR */
+    /* Print-friendly */
     @media print {
       header, .toolbar-page { display:none !important; }
       body { background:#fff; }
@@ -60,7 +57,7 @@ export function ticketHTML(code) {
 </head>
 <body>
   <header>
-    <h1>Jou kaartjies · ${safe}</h1>
+    <h1>Jou kaartjies · ${safe(code)}</h1>
     <p class="lead">Wys die QR by die hek sodat dit gescan kan word.</p>
   </header>
 
@@ -69,11 +66,11 @@ export function ticketHTML(code) {
   </div>
 
   <div id="root" class="grid" aria-live="polite"></div>
-  <p id="empty" class="empty" hidden>Kon nie kaartjies vind met kode <strong>${safe}</strong> nie.</p>
+  <p id="empty" class="empty" hidden>Kon nie kaartjies vind met kode <strong>${safe(code)}</strong> nie.</p>
 
   <script type="module">
-    const code = ${JSON.stringify(String(code || ""))};
-    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+    const orderCode = ${JSON.stringify(String(code || ""))};
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
     const money = (c) => "R" + (Number(c||0)/100).toFixed(2);
     const qrURL = (data, size=220, fmt='png') =>
       \`https://api.qrserver.com/v1/create-qr-code/?format=\${fmt}&size=\${size}x\${size}&data=\${encodeURIComponent(data)}\`;
@@ -87,8 +84,7 @@ export function ticketHTML(code) {
     }
 
     async function downloadPNG(data, filename) {
-      // Larger QR for download
-      const url = qrURL(data, 600, "png");
+      const url = qrURL(data, 600, "png"); // big for download
       const res = await fetch(url, { mode: "cors" });
       const blob = await res.blob();
       const a = document.createElement("a");
@@ -140,13 +136,14 @@ export function ticketHTML(code) {
 
     async function load() {
       try {
-        const r = await fetch(\`/api/public/tickets/by-code/\${encodeURIComponent(code)}\`, { credentials:"include" });
+        const r = await fetch(\`/api/public/tickets/by-code/\${encodeURIComponent(orderCode)}\`, { credentials:"include" });
         const j = await r.json().catch(() => ({}));
         if (!j.ok) throw new Error(j.error || "kon nie laai nie");
         render(j.tickets || []);
       } catch (e) {
-        document.getElementById("empty").textContent = "Kon nie kaartjies laai nie: " + (e.message || "fout");
-        document.getElementById("empty").hidden = false;
+        const empty = document.getElementById("empty");
+        empty.textContent = "Kon nie kaartjies laai nie: " + (e.message || "fout");
+        empty.hidden = false;
       }
     }
 
