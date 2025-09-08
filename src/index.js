@@ -3,6 +3,7 @@ import { Router } from "./router.js";
 import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
 import { mountWATest } from "./routes/wa_test.js";
+import { badgeHTML } from "./ui/badge.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -69,6 +70,43 @@ router.add("GET", "/pos/sell", requireRole("pos", async (req) => {
   const session_id = Number(u.searchParams.get("session_id") || 0);
   return renderHTML(posSellHTML, session_id);
 }));
+
+// Printable badge by QR (public; uses vendor_passes + vendor + event)
+router.add("GET", "/badge/:qr", async (_req, env, _ctx, { qr }) => {
+  const p = await env.DB.prepare(
+    `SELECT vp.id, vp.type, vp.label, vp.vehicle_reg, vp.qr,
+            v.name AS vendor_name, v.event_id,
+            e.name AS event_name, e.venue, e.starts_at, e.ends_at
+       FROM vendor_passes vp
+       JOIN vendors v ON v.id = vp.vendor_id
+       JOIN events  e ON e.id = v.event_id
+      WHERE vp.qr = ?1
+      LIMIT 1`
+  ).bind(qr).first();
+
+  if (!p) return new Response("Badge not found", { status: 404 });
+
+  // Map type → badge title
+  const title = (p.type === "vehicle") ? "VEHICLE"
+              : (p.type === "staff")   ? "VENDOR STAFF"
+              :                          "VENDOR";
+
+  const html = badgeHTML({
+    title,
+    name: p.label || p.vendor_name,
+    org: p.vendor_name || "",
+    plate: p.type === "vehicle" ? (p.vehicle_reg || "") : "",
+    code: p.qr,
+    event: {
+      name: p.event_name,
+      venue: p.venue,
+      starts_at: p.starts_at,
+      ends_at: p.ends_at
+    }
+  });
+
+  return new Response(html, { headers: { "content-type": "text/html" } });
+});
 
 // Scanner UI (guarded)
 router.add("GET", "/scan", requireRole("scan", async () => renderHTML(scannerHTML)));
