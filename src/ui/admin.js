@@ -1,351 +1,414 @@
 // /src/ui/admin.js
 export const adminHTML = () => `<!doctype html><html><head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f6f7f8 }
   *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:1100px; margin:20px auto; padding:0 16px }
-  h1{ margin:0 0 14px }
-  .tabs{ display:flex; gap:8px; margin:6px 0 16px }
-  .tab{ padding:8px 12px; border-radius:999px; background:#e9f5ee; color:#0a7d2b; cursor:pointer; border:1px solid #cfe7da; font-weight:600 }
-  .tab.active{ background:#0a7d2b; color:#fff; border-color:transparent }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px; margin-bottom:14px }
-  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  .wrap{ max-width:1100px; margin:22px auto; padding:0 16px }
+  .tabs{ display:flex; gap:10px; margin:0 0 14px }
+  .tab{ padding:8px 12px; border-radius:999px; background:#e7f3eb; color:#0a7d2b; cursor:pointer; user-select:none }
+  .tab.active{ background:#0a7d2b; color:#fff }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px; margin-bottom:16px }
+  h1{ margin:0 0 14px } h2{ margin:0 0 12px }
   input, select, button{ font:inherit }
   input, select{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; background:#fff }
   .btn{ padding:10px 14px; border-radius:10px; border:0; background:#0a7d2b; color:#fff; cursor:pointer; font-weight:600 }
-  .btn.ghost{ background:#eef2f6; color:#111; border:1px solid #e5e7eb }
+  .btn.gray{ background:#111; opacity:.8 }
   .muted{ color:var(--muted) }
-  .error{ color:#b42318; font-weight:600; margin-top:6px }
-  table{ width:100%; border-collapse:collapse; }
-  th,td{ padding:10px 8px; border-bottom:1px solid #f0f2f4; text-align:left; vertical-align:top }
-  th{ font-weight:700; color:#334155; background:#fafbfc }
-  .right{ text-align:right }
-  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
-  .copy{ cursor:pointer; font-size:12px; padding:2px 6px; border-radius:6px; border:1px solid #e5e7eb; background:#fff; }
-  .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:14px }
-  @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
+  table{ width:100%; border-collapse:collapse } th,td{ padding:8px 10px; border-bottom:1px solid #f0f2f4; text-align:left; }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+  .pill{ display:inline-block; padding:4px 8px; border-radius:999px; background:#eef2f7; color:#333; font-size:12px }
+  a{ color:#0a7d2b; text-decoration:underline }
+  .error{ color:#b42318; font-weight:600 }
 </style>
 </head><body>
 <div class="wrap">
   <h1>Admin</h1>
-
   <div class="tabs">
-    <div class="tab active" data-tab="events">Events</div>
-    <div class="tab" data-tab="tickets">Tickets</div>
-    <div class="tab" data-tab="pos">POS Admin</div>
-    <div class="tab" data-tab="vendors">Vendors</div>
-    <div class="tab" data-tab="users">Users</div>
-    <div class="tab" data-tab="site">Site settings</div>
+    <div class="tab active" data-t="events">Events</div>
+    <div class="tab" data-t="tickets">Tickets</div>
+    <div class="tab" data-t="pos">POS Admin</div>
+    <div class="tab" data-t="vendors">Vendors</div>
+    <div class="tab" data-t="users">Users</div>
+    <div class="tab" data-t="site">Site settings</div>
   </div>
 
-  <!-- EVENTS -->
-  <section id="tab-events">
-    <div class="card">
-      <h2 style="margin:0 0 10px">Events</h2>
-      <div class="muted" id="evErr" style="margin-bottom:8px"></div>
-      <div class="table-wrap">
-        <table id="eventsTbl"><thead>
-          <tr><th style="width:60px">ID</th><th>Slug</th><th>Name<br><span class="muted">Venue</span></th><th>Start</th><th>End</th><th>Status</th><th style="width:120px"></th></tr>
-        </thead><tbody></tbody></table>
-      </div>
-    </div>
-
-    <div class="card" id="ttCard" style="display:none">
-      <h3 style="margin:0 0 8px">Ticket types for <span id="ttEventName"></span> (<span id="ttEventSlug" class="muted"></span>)</h3>
-      <div class="row" style="margin:6px 0 12px">
-        <input id="ttName" placeholder="Name" style="min-width:220px"/>
-        <input id="ttPrice" type="number" min="0" step="1" placeholder="Price (R)" style="width:120px"/>
-        <select id="ttGender" style="width:130px">
-          <option value="0">Gender req: No</option>
-          <option value="1">Gender req: Yes</option>
-        </select>
-        <input id="ttCap" type="number" min="0" step="1" placeholder="Capacity" style="width:120px"/>
-        <input id="ttCode" placeholder="Code (optional)" style="width:160px"/>
-        <button id="ttAdd" class="btn">Add ticket type</button>
-        <span id="ttMsg" class="muted"></span>
-      </div>
-      <table id="ttTbl"><thead>
-        <tr><th style="width:60px">ID</th><th>Name</th><th class="right">Price (R)</th><th class="right">Capacity</th><th class="right">Per-order</th><th>Code</th><th>Gender req</th></tr>
-      </thead><tbody></tbody></table>
-    </div>
-  </section>
-
-  <!-- TICKETS -->
-  <section id="tab-tickets" style="display:none">
-    <div class="card">
-      <h2 style="margin:0 0 10px">Tickets</h2>
-      <div class="row" style="margin-bottom:10px">
-        <select id="tEvSelect" style="min-width:280px"></select>
-        <button id="tLoad" class="btn">Load</button>
-        <span id="tErr" class="error"></span>
-      </div>
-
-      <div id="tSummary" class="muted" style="margin:0 0 8px; display:none"></div>
-      <div class="table-wrap">
-        <table id="tTbl"><thead>
-          <tr><th>Type</th><th class="right">Price (R)</th><th class="right">Total</th><th class="right">Unused</th><th class="right">In</th><th class="right">Out</th><th class="right">Void</th></tr>
-        </thead><tbody></tbody></table>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3 style="margin:0 0 8px">Order lookup</h3>
-      <div class="row">
-        <input id="olCode" placeholder="Short code e.g. 3VLNT5" style="width:180px"/>
-        <button id="olBtn" class="btn">Find</button>
-        <span id="olMsg" class="muted"></span>
-      </div>
-      <div id="olResult" style="margin-top:10px"></div>
-    </div>
-  </section>
-
-  <!-- POS ADMIN -->
-  <section id="tab-pos" style="display:none">
-    <div class="card">
-      <h2 style="margin:0 0 10px">POS Sessions</h2>
-      <div class="row" style="margin-bottom:10px">
-        <button id="posReload" class="btn">Reload</button>
-        <span id="posErr" class="error"></span>
-      </div>
-      <table id="posTbl"><thead>
-        <tr><th style="width:60px">ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th class="right">Cash (R)</th><th class="right">Card (R)</th></tr>
-      </thead><tbody></tbody></table>
-    </div>
-  </section>
-
-  <!-- STUBS -->
-  <section id="tab-vendors" style="display:none">
-    <div class="card"><h2 style="margin:0 0 8px">Vendors</h2>
-      <div class="muted">UI coming next. DB tables (vendors, vendor_passes, passes) are already present.</div>
-    </div>
-  </section>
-
-  <section id="tab-users" style="display:none">
-    <div class="card"><h2 style="margin:0 0 8px">Users</h2>
-      <div class="muted">Basic user management UI to be added.</div>
-    </div>
-  </section>
-
-  <section id="tab-site" style="display:none">
-    <div class="card"><h2 style="margin:0 0 8px">Site settings</h2>
-      <div class="muted">Settings UI is a placeholder for now.</div>
-    </div>
-  </section>
+  <div id="out"></div>
 </div>
 
 <script>
-const $ = (id)=>document.getElementById(id);
+const $ = (s,root=document)=>root.querySelector(s);
+const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
 const esc = (s)=>String(s??'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-const rands = (c)=>'R'+((c||0)/100).toFixed(2);
-async function jget(url){
-  const r = await fetch(url);
-  const ct = r.headers.get('content-type')||'';
-  if (!ct.includes('application/json')) {
-    const t = await r.text().catch(()=> '');
-    throw new Error('Non-JSON response: '+String(t).slice(0,200));
-  }
-  const j = await r.json();
-  if (!r.ok || j.ok===false) throw new Error(j.error || ('HTTP '+r.status));
-  return j;
+const rands = c => 'R' + ((c||0)/100).toFixed(2);
+
+let state = { events:[], currentEventId:null };
+
+async function getJSON(u,opts){ const r = await fetch(u,opts); const t=await r.text(); try{return JSON.parse(t);}catch{return {ok:false,error:t||'bad json'};} }
+function setTab(name){ $$(".tab").forEach(t=>t.classList.toggle("active", t.dataset.t===name)); route(name); }
+
+async function bootstrap(){
+  const evs = await getJSON('/api/admin/events');
+  state.events = evs.events||[];
+  state.currentEventId = state.events[0]?.id || null;
+  setTab('events');
 }
-async function jpost(url, body){
-  const r = await fetch(url,{method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body||{})});
-  const ct = r.headers.get('content-type')||'';
-  if (!ct.includes('application/json')) {
-    const t = await r.text().catch(()=> '');
-    throw new Error('Non-JSON response: '+String(t).slice(0,200));
-  }
-  const j = await r.json();
-  if (!r.ok || j.ok===false) throw new Error(j.error || ('HTTP '+r.status));
-  return j;
+function eventOptions(){
+  return state.events.map(e=>\`<option value="\${e.id}">\${esc(e.name)} (\${esc(e.slug)})</option>\`).join('');
 }
 
-/* ---------- Tabs ---------- */
-document.querySelectorAll('.tab').forEach(t=>{
-  t.onclick = ()=>{
-    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-    t.classList.add('active');
-    const name = t.dataset.tab;
-    document.querySelectorAll('section[id^="tab-"]').forEach(s=>s.style.display = (s.id === 'tab-'+name) ? 'block' : 'none');
+/* ---------------- Views ---------------- */
+
+async function viewEvents(){
+  const el = document.getElementById('out');
+  const cur = state.events[0] || {};
+  el.innerHTML = \`
+    <div class="card">
+      <h2>Events</h2>
+      <div class="row muted" style="margin-bottom:8px">ID · Slug · Name · Start · End · Status</div>
+      <table><tbody>
+        \${state.events.map(ev => \`
+          <tr>
+            <td>\${ev.id}</td>
+            <td>\${esc(ev.slug)}</td>
+            <td>\${esc(ev.name)}<div class="muted" style="font-size:12px">\${esc(ev.venue||'')}</div></td>
+            <td>\${fmt(ev.starts_at)}</td>
+            <td>\${fmt(ev.ends_at)}</td>
+            <td><span class="pill">\${esc(ev.status)}</span></td>
+            <td><button class="btn gray" data-tt="\${ev.id}">Ticket Types</button></td>
+          </tr>\`).join('')}
+      </tbody></table>
+    </div>
+    <div id="types" class="card" style="display:none"></div>
+  \`;
+
+  $$('#out [data-tt]').forEach(b=>{
+    b.onclick = async ()=>{
+      const id = Number(b.dataset.tt);
+      state.currentEventId = id;
+      const j = await getJSON(\`/api/admin/events/\${id}/ticket-types\`);
+      const rows = j.types||[];
+      const box = document.getElementById('types');
+      box.style.display = 'block';
+      box.innerHTML = \`
+        <h2>Ticket types for \${esc(state.events.find(e=>e.id===id)?.name||'')} </h2>
+        <div class="row">
+          <input id="ttName" placeholder="Name" style="min-width:220px"/>
+          <input id="ttPrice" type="number" min="0" step="1" placeholder="Price (R)"/>
+          <input id="ttCap" type="number" min="0" step="1" placeholder="Capacity"/>
+          <select id="ttGender"><option value="0">Gender req: No</option><option value="1">Gender req: Yes</option></select>
+          <button id="addTT" class="btn">Add ticket type</button>
+          <span id="ttErr" class="error"></span>
+        </div>
+        <table style="margin-top:10px">
+          <thead><tr><th>ID</th><th>Name</th><th>Price (R)</th><th>Capacity</th><th>Per-order</th><th>Gender req</th></tr></thead>
+          <tbody>\${rows.map(r=>\`
+            <tr>
+              <td>\${r.id}</td>
+              <td>\${esc(r.name)}</td>
+              <td>\${rands(r.price_cents)}</td>
+              <td>\${r.capacity}</td>
+              <td>\${r.per_order_limit}</td>
+              <td>\${r.requires_gender? 'Yes':'No'}</td>
+            </tr>\`).join('')}</tbody>
+        </table>\`;
+
+      $('#addTT').onclick = async ()=>{
+        $('#ttErr').textContent = '';
+        const b = {
+          name: $('#ttName').value.trim(),
+          price_cents: Math.round(Number($('#ttPrice').value||0)*100),
+          capacity: Number($('#ttCap').value||0),
+          per_order_limit: 10,
+          requires_gender: Number($('#ttGender').value||0)
+        };
+        const r = await getJSON(\`/api/admin/events/\${id}/ticket-types\`, {
+          method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(b)
+        });
+        if (!r.ok) { $('#ttErr').textContent = r.error||'error'; return; }
+        viewEvents(); // refresh
+      };
+    };
+  });
+}
+
+async function viewPOS(){
+  const el = document.getElementById('out');
+  const j = await getJSON('/api/admin/pos/sessions');
+  const rows = j.sessions||[];
+
+  el.innerHTML = \`
+    <div class="card">
+      <h2>POS Sessions</h2>
+      <button id="reloadPOS" class="btn">Reload</button>
+      <table style="margin-top:10px">
+        <thead><tr>
+          <th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th><th>Closed by</th><th>Cash (R)</th><th>Card (R)</th>
+        </tr></thead>
+        <tbody>
+          \${rows.map(r=>\`
+            <tr>
+              <td>\${r.id}</td>
+              <td>\${esc(r.cashier_name)}</td>
+              <td>\${esc(r.gate_name)}</td>
+              <td>\${fmt(r.opened_at)}</td>
+              <td>\${r.closed_at? fmt(r.closed_at): '-'}</td>
+              <td>\${r.closing_manager? esc(r.closing_manager): '-'}</td>
+              <td>\${rands(r.cash_cents)}</td>
+              <td>\${rands(r.card_cents)}</td>
+            </tr>\`).join('')}
+        </tbody>
+      </table>
+    </div>\`;
+  $('#reloadPOS').onclick = ()=>viewPOS();
+}
+
+async function viewTickets(){
+  const el = document.getElementById('out');
+  const evSel = \`<select id="tEvent">\${eventOptions()}</select>\`;
+  el.innerHTML = \`
+    <div class="card">
+      <h2>Tickets</h2>
+      <div class="row">
+        \${evSel}
+        <button id="tLoad" class="btn">Load</button>
+        <span id="tErr" class="error"></span>
+      </div>
+      <div id="tSummary" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h3>Order lookup</h3>
+      <div class="row">
+        <input id="olCode" placeholder="e.g. C056B6" style="min-width:160px"/>
+        <button id="olBtn" class="btn">Find</button>
+        <span id="olOut" class="muted"></span>
+      </div>
+    </div>\`;
+
+  $('#tEvent').value = String(state.currentEventId||'');
+  $('#tLoad').onclick = async ()=>{
+    $('#tErr').textContent = '';
+    const id = Number($('#tEvent').value||0);
+    state.currentEventId = id;
+    const r = await getJSON(\`/api/admin/tickets/summary/\${id}\`);
+    if (!r.ok) { $('#tErr').textContent = r.error||'error'; return; }
+    const g = r.grand||{total:0,unused:0,in:0,out:0,void:0};
+    $('#tSummary').innerHTML = \`
+      <div class="muted" style="margin-bottom:6px">Total: \${g.total} · In: \${g.in} · Out: \${g.out} · Unused: \${g.unused} · Void: \${g.void}</div>
+      <table>
+        <thead><tr><th>Type</th><th>Price (R)</th><th>Total</th><th>Unused</th><th>In</th><th>Out</th><th>Void</th></tr></thead>
+        <tbody>
+          \${(r.rows||[]).map(x=>\`
+            <tr>
+              <td>\${esc(x.name)}</td>
+              <td>\${rands(x.price_cents)}</td>
+              <td>\${x.total||0}</td>
+              <td>\${x.unused||0}</td>
+              <td>\${x.in||0}</td>
+              <td>\${x.out||0}</td>
+              <td>\${x.void||0}</td>
+            </tr>\`).join('')}
+        </tbody>
+      </table>\`;
   };
-});
 
-/* ---------- Events + Ticket types ---------- */
-let EVENTS = [];
-let TT_EVENT = null;
+  $('#olBtn').onclick = async ()=>{
+    $('#olOut').textContent = '';
+    const c = ($('#olCode').value||'').trim();
+    if (!c) return;
+    const r = await getJSON(\`/api/admin/order/lookup/\${encodeURIComponent(c)}\`);
+    if (!r.ok) { $('#olOut').textContent = 'Not found'; return; }
+    $('#olOut').innerHTML = \`Found · Ticket link: <a href="\${r.link}" target="_blank">\${r.link}</a>\`;
+  };
+}
 
-async function loadEvents(){
-  $('evErr').textContent='';
-  try{
-    const j = await jget('/api/admin/events');
-    EVENTS = j.events||[];
-    const tb = $('eventsTbl').querySelector('tbody');
-    tb.innerHTML = (EVENTS.map(ev => \`
-      <tr>
-        <td>\${ev.id}</td>
-        <td>\${esc(ev.slug)}</td>
-        <td><div style="font-weight:600">\${esc(ev.name)}</div><div class="muted">\${esc(ev.venue||'')}</div></td>
-        <td>\${fmtDate(ev.starts_at)}</td>
-        <td>\${fmtDate(ev.ends_at)}</td>
-        <td>\${esc(ev.status)}</td>
-        <td><button class="btn ghost" data-tt="\${ev.id}">Ticket Types</button></td>
-      </tr>
-    \`).join('')) || '<tr><td colspan="7" class="muted">No events</td></tr>';
+async function viewVendors(){
+  const el = document.getElementById('out');
+  const evSel = \`<select id="vEvent">\${eventOptions()}</select>\`;
+  el.innerHTML = \`
+    <div class="card">
+      <h2>Vendors</h2>
+      <div class="row" style="margin-bottom:8px">
+        \${evSel}
+        <button id="vLoad" class="btn">Load</button>
+        <input id="vName" placeholder="Vendor name" style="min-width:220px"/>
+        <input id="vContact" placeholder="Contact name"/>
+        <input id="vPhone" placeholder="Phone"/>
+        <input id="vEmail" placeholder="Email"/>
+        <input id="vStand" placeholder="Stand #"/>
+        <input id="vStaff" type="number" min="0" step="1" placeholder="Staff quota"/>
+        <input id="vVeh" type="number" min="0" step="1" placeholder="Vehicle quota"/>
+        <button id="vAdd" class="btn">Add vendor</button>
+        <span id="vErr" class="error"></span>
+      </div>
+      <div id="vTable"></div>
+    </div>\`;
 
-    tb.querySelectorAll('[data-tt]').forEach(b=>{
-      b.onclick = ()=> openTicketTypes(Number(b.dataset.tt));
+  $('#vEvent').value = String(state.currentEventId||'');
+  $('#vLoad').onclick = load;
+  $('#vAdd').onclick = add;
+  await load();
+
+  async function load(){
+    $('#vErr').textContent = '';
+    const id = Number($('#vEvent').value||0);
+    state.currentEventId = id;
+    const r = await getJSON(\`/api/admin/vendors/\${id}\`);
+    if (!r.ok) { $('#vErr').textContent = r.error||'error'; return; }
+    $('#vTable').innerHTML = \`
+      <table>
+        <thead><tr><th>ID</th><th>Name</th><th>Contact</th><th>Stand</th><th>Staff</th><th>Vehicle</th><th>Passes</th></tr></thead>
+        <tbody>\${(r.vendors||[]).map(v=>\`
+          <tr>
+            <td>\${v.id}</td>
+            <td>\${esc(v.name)}</td>
+            <td>\${esc(v.contact_name||'')}<div class="muted" style="font-size:12px">\${esc(v.phone||'')} · \${esc(v.email||'')}</div></td>
+            <td>\${esc(v.stand_number||'-')}</td>
+            <td>\${v.staff_quota}</td>
+            <td>\${v.vehicle_quota}</td>
+            <td><button class="btn gray" data-pass="\${v.id}">Manage</button></td>
+          </tr>\`).join('')}</tbody>
+      </table>\`;
+
+    $$('#vTable [data-pass]').forEach(b=>{
+      b.onclick = ()=> managePasses(Number(b.dataset.pass));
     });
-
-    const sel = $('tEvSelect');
-    sel.innerHTML = EVENTS.map(e=>\`<option value="\${e.id}">\${esc(e.name)} (\${esc(e.slug)})</option>\`).join('');
-  }catch(e){
-    $('evErr').textContent = 'Error: '+(e.message||'load failed');
   }
-}
 
-async function openTicketTypes(event_id){
-  const ev = EVENTS.find(x=>x.id===event_id);
-  if (!ev) return;
-  TT_EVENT = ev;
-  $('ttEventName').textContent = ev.name;
-  $('ttEventSlug').textContent = ev.slug;
-  $('ttCard').style.display = 'block';
-  $('ttMsg').textContent = '';
-  await loadTicketTypes(event_id);
-}
-
-async function loadTicketTypes(event_id){
-  const j = await jget('/api/admin/events/'+event_id+'/ticket-types');
-  const rows = j.ticket_types || [];
-  $('ttTbl').querySelector('tbody').innerHTML = rows.map(r=>\`
-    <tr>
-      <td>\${r.id}</td>
-      <td>\${esc(r.name)}</td>
-      <td class="right">\${rands(r.price_cents||0)}</td>
-      <td class="right">\${r.capacity||0}</td>
-      <td class="right">\${r.per_order_limit||0}</td>
-      <td>\${esc(r.code||'')}</td>
-      <td>\${(r.requires_gender? 'Yes':'No')}</td>
-    </tr>
-  \`).join('') || '<tr><td colspan="7" class="muted">No ticket types yet</td></tr>';
-}
-
-$('ttAdd').onclick = async ()=>{
-  if (!TT_EVENT) return;
-  const name = $('ttName').value.trim();
-  const priceR = Number($('ttPrice').value||0);
-  const capacity = Number($('ttCap').value||0);
-  const requires_gender = Number($('ttGender').value||0);
-  const code = $('ttCode').value.trim() || null;
-  if (!name) return $('ttMsg').textContent='Name required';
-  $('ttMsg').textContent = 'Saving…';
-  try{
-    await jpost('/api/admin/events/'+TT_EVENT.id+'/ticket-types', {
-      name, price_cents: Math.round(priceR*100), capacity, per_order_limit:10, requires_gender, code
+  async function add(){
+    const id = Number($('#vEvent').value||0);
+    const b = {
+      name: $('#vName').value.trim(),
+      contact_name: $('#vContact').value.trim(),
+      phone: $('#vPhone').value.trim(),
+      email: $('#vEmail').value.trim(),
+      stand_number: $('#vStand').value.trim(),
+      staff_quota: Number($('#vStaff').value||0),
+      vehicle_quota: Number($('#vVeh').value||0),
+    };
+    const r = await getJSON(\`/api/admin/vendors/\${id}\`, {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(b)
     });
-    $('ttName').value=''; $('ttPrice').value=''; $('ttCap').value=''; $('ttCode').value='';
-    $('ttGender').value='0';
-    await loadTicketTypes(TT_EVENT.id);
-    $('ttMsg').textContent = 'Added ✔︎';
-    setTimeout(()=>$('ttMsg').textContent='',1200);
-  }catch(e){
-    $('ttMsg').textContent = 'Error: '+(e.message||'save failed');
+    if (!r.ok){ $('#vErr').textContent = r.error||'error'; return; }
+    await load();
   }
-};
 
-/* ---------- Tickets summary + order lookup ---------- */
-$('tLoad').onclick = loadTicketsSummary;
-async function loadTicketsSummary(){
-  $('tErr').textContent='';
-  $('tSummary').style.display='none';
-  const event_id = Number(($('tEvSelect').value||0));
-  if (!event_id) return;
-  try{
-    const j = await jget('/api/admin/tickets?event_id='+event_id);
-    const tb = $('tTbl').querySelector('tbody');
-    tb.innerHTML = (j.types||[]).map(r=>\`
-      <tr>
-        <td>\${esc(r.name)}</td>
-        <td class="right">\${rands(r.price_cents||0)}</td>
-        <td class="right">\${r.total||0}</td>
-        <td class="right">\${r.unused||0}</td>
-        <td class="right">\${r.in||0}</td>
-        <td class="right">\${r.out||0}</td>
-        <td class="right">\${r.void||0}</td>
-      </tr>
-    \`).join('') || '<tr><td colspan="7" class="muted">No tickets yet</td></tr>';
-
-    $('tSummary').textContent =
-      \`Total: \${(j.summary?.total||0)} • In: \${(j.summary?.in||0)} • Out: \${(j.summary?.out||0)} • Unused: \${(j.summary?.unused||0)} • Void: \${(j.summary?.void||0)}\`;
-    $('tSummary').style.display='block';
-  }catch(e){
-    $('tErr').textContent = 'Error: '+(e.message||'load failed');
-  }
-}
-
-// order lookup
-$('olBtn')?.addEventListener('click', doOrderLookup); // guard if id typo
-$('olBtn') || (document.getElementById('olBtn').onclick = doOrderLookup);
-async function doOrderLookup(){
-  const code = ($('olCode').value||'').trim();
-  $('olMsg').textContent=''; $('olResult').innerHTML='';
-  if (!code) return;
-  $('olMsg').textContent = 'Searching…';
-  try{
-    const j = await jget('/api/admin/orders/lookup?code='+encodeURIComponent(code));
-    if (!j.ok) throw new Error(j.error || 'not found');
-    $('olMsg').textContent = 'Found';
-    const link = j.event_slug ? ('/t/'+encodeURIComponent(code)) : null;
-    $('olResult').innerHTML = link
-      ? \`<div>Ticket link: <a href="\${link}" target="_blank">\${location.origin}\${link}</a>
-           <button class="copy" id="copyL">Copy</button></div>\`
-      : '<div class="muted">Order found but no event slug.</div>';
-    const cp = $('copyL'); if (cp) cp.onclick = ()=> navigator.clipboard.writeText(location.origin+link);
-  }catch(e){
-    $('olMsg').textContent = 'Error: '+(e.message||'not found');
+  async function managePasses(vendorId){
+    const r = await getJSON(\`/api/admin/vendor-passes/\${vendorId}\`);
+    if (!r.ok){ alert(r.error||'error'); return; }
+    const passes = r.passes||[];
+    const dlg = document.createElement('div');
+    dlg.className = 'card';
+    dlg.style.position='fixed'; dlg.style.top='10%'; dlg.style.left='50%'; dlg.style.transform='translateX(-50%)'; dlg.style.width='min(900px, 96vw)';
+    dlg.innerHTML = \`
+      <div class="row" style="justify-content:space-between">
+        <h3 style="margin:0">Vendor passes (#\${vendorId})</h3>
+        <button id="vpClose" class="btn gray">Close</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <select id="vpType"><option value="staff">Staff</option><option value="vehicle">Vehicle</option></select>
+        <input id="vpLabel" placeholder="Label / Name"/>
+        <input id="vpReg" placeholder="Vehicle reg (optional)"/>
+        <input id="vpQR" placeholder="QR / code"/>
+        <button id="vpAdd" class="btn">Add pass</button>
+        <span id="vpErr" class="error"></span>
+      </div>
+      <table style="margin-top:10px">
+        <thead><tr><th>ID</th><th>Type</th><th>Label</th><th>Reg</th><th>QR</th><th>State</th><th>Link</th></tr></thead>
+        <tbody>\${passes.map(p=>\`
+          <tr>
+            <td>\${p.id}</td>
+            <td>\${p.type}</td>
+            <td>\${esc(p.label||'')}</td>
+            <td>\${esc(p.vehicle_reg||'')}</td>
+            <td>\${esc(p.qr)}</td>
+            <td>\${p.state}</td>
+            <td><a href="/scan" target="_blank">Show</a></td>
+          </tr>\`).join('')}</tbody>
+      </table>\`;
+    document.body.appendChild(dlg);
+    $('#vpClose',dlg).onclick = ()=> dlg.remove();
+    $('#vpAdd',dlg).onclick = async ()=>{
+      $('#vpErr',dlg).textContent='';
+      const b = {
+        type: $('#vpType',dlg).value,
+        label: $('#vpLabel',dlg).value.trim(),
+        vehicle_reg: $('#vpReg',dlg).value.trim(),
+        qr: $('#vpQR',dlg).value.trim(),
+      };
+      const rr = await getJSON(\`/api/admin/vendor-passes/\${vendorId}\`, {
+        method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(b)
+      });
+      if (!rr.ok){ $('#vpErr',dlg).textContent = rr.error||'error'; return; }
+      dlg.remove();
+      managePasses(vendorId);
+    };
   }
 }
 
-/* ---------- POS sessions ---------- */
-$('posReload').onclick = loadPOS;
-async function loadPOS(){
-  $('posErr').textContent='';
-  try{
-    const j = await jget('/api/admin/pos/sessions');
-    const tb = $('posTbl').querySelector('tbody');
-    tb.innerHTML = (j.sessions||[]).map(s=>\`
-      <tr>
-        <td>\${s.id}</td>
-        <td>\${esc(s.cashier_name||'')}</td>
-        <td>\${esc(s.gate_name||'')}</td>
-        <td>\${fmtDT(s.opened_at)}</td>
-        <td>\${s.closed_at ? fmtDT(s.closed_at) : '-'}</td>
-        <td class="right">\${rands(s.cash_cents||0)}</td>
-        <td class="right">\${rands(s.card_cents||0)}</td>
-      </tr>
-    \`).join('') || '<tr><td colspan="7" class="muted">No sessions</td></tr>';
-  }catch(e){
-    $('posErr').textContent = 'Error: '+(e.message||'load failed');
-  }
+async function viewUsers(){
+  const el = document.getElementById('out');
+  const r = await getJSON('/api/admin/users');
+  const rows = r.users||[];
+  el.innerHTML = \`
+    <div class="card">
+      <h2>Users</h2>
+      <div class="row" style="margin-bottom:8px">
+        <input id="uName" placeholder="username"/>
+        <select id="uRole"><option>admin</option><option>pos</option><option>scan</option></select>
+        <button id="uAdd" class="btn">Add</button>
+        <span id="uErr" class="error"></span>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>Username</th><th>Role</th><th></th></tr></thead>
+        <tbody>\${rows.map(u=>\`
+          <tr>
+            <td>\${u.id}</td>
+            <td>\${esc(u.username)}</td>
+            <td>\${u.role}</td>
+            <td><button class="btn gray" data-del="\${u.id}">Delete</button></td>
+          </tr>\`).join('')}</tbody>
+      </table>
+    </div>\`;
+
+  $('#uAdd').onclick = async ()=>{
+    $('#uErr').textContent='';
+    const b = { username: $('#uName').value.trim(), role: $('#uRole').value };
+    const rr = await getJSON('/api/admin/users', {
+      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(b)
+    });
+    if (!rr.ok){ $('#uErr').textContent = rr.error||'error'; return; }
+    viewUsers();
+  };
+  $$('#out [data-del]').forEach(btn=>{
+    btn.onclick = async ()=>{
+      const rr = await getJSON('/api/admin/users/delete', {
+        method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ id:Number(btn.dataset.del) })
+      });
+      if (!rr.ok){ alert(rr.error||'error'); return; }
+      viewUsers();
+    };
+  });
 }
 
-/* ---------- Helpers ---------- */
-function fmtDate(secs){
-  if (!secs) return '-';
-  const d = new Date(secs*1000);
-  return d.toLocaleDateString('af-ZA',{year:'numeric',month:'2-digit',day:'2-digit'});
-}
-function fmtDT(secs){
-  if (!secs) return '-';
-  const d = new Date(secs*1000);
-  return d.toLocaleString('af-ZA',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+/* ---------------- Router ---------------- */
+function route(name){
+  if (name==='events') return viewEvents();
+  if (name==='pos') return viewPOS();
+  if (name==='tickets') return viewTickets();
+  if (name==='vendors') return viewVendors();
+  if (name==='users') return viewUsers();
+  document.getElementById('out').innerHTML = '<div class="card"><h2>Site settings</h2><div class="muted">Coming soon.</div></div>';
 }
 
-/* init */
-loadEvents();
-loadPOS();
+function fmt(sec){
+  if (!sec) return '-';
+  const d = new Date(sec*1000);
+  return d.toLocaleString('af-ZA', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+}
+
+$$('.tab').forEach(t => t.onclick = ()=> setTab(t.dataset.t));
+bootstrap();
 </script>
 </body></html>`;
