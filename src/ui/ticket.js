@@ -1,158 +1,136 @@
 // /src/ui/ticket.js
-export const ticketHTML = (code) => `<!doctype html><html lang="af">
+import { esc } from "../utils/html.js";
+
+export function ticketHTML(code) {
+  const safe = esc(code || "");
+
+  return /*html*/`
+<!doctype html>
+<html lang="af">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Kaartjies • ${escapeHtml(code || "")} • Villiersdorp Skou</title>
-<style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
-  *{ box-sizing:border-box }
-  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:1000px; margin:20px auto; padding:0 16px }
-  header{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px }
-  .brand{ display:flex; align-items:center; gap:10px }
-  .brand .logo{ width:36px; height:36px; border-radius:8px; background:var(--green) }
-  .brand h1{ font-size:18px; margin:0 }
-  .muted{ color:var(--muted) }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
-  .row{ display:flex; gap:12px; flex-wrap:wrap; }
-  .btn{ padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
-  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
-  .grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:14px; margin-top:12px }
-  .ticket{ border:1px solid #e5e7eb; border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:10px }
-  .ticket .top{ display:flex; align-items:center; justify-content:space-between; gap:10px }
-  .pill{ font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444; background:#f9fafb }
-  .qr-wrap{ display:flex; align-items:center; justify-content:center; background:#fff; border:1px dashed #e5e7eb; border-radius:10px; padding:8px }
-  .qr-wrap img{ width:100%; max-width:260px; height:auto; display:block }
-  .meta{ font-size:14px; line-height:1.3 }
-  .actions{ display:flex; gap:8px; flex-wrap:wrap }
-  .center{ text-align:center }
-  .err{ color:#b42318; font-weight:600; margin-top:8px }
-  @media print{
-    body{ background:#fff }
-    .no-print{ display:none !important }
-    .grid{ grid-template-columns: repeat(2, 1fr) } /* 2 per row on print */
-    .ticket{ break-inside: avoid; page-break-inside: avoid }
-  }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jou kaartjies · ${safe}</title>
+  <link rel="icon" href="/favicon.ico" />
+  <style>
+    :root {
+      --bg:#f7f7f7; --panel:#fff; --ink:#111; --muted:#6b7280;
+      --brand:#166534; --brand-ink:#fff; --chip:#e5e7eb;
+      --ok:#065f46; --warn:#92400e; --void:#991b1b;
+    }
+    * { box-sizing:border-box }
+    html,body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji"; }
+    a { color:var(--brand); text-decoration:none }
+    header { max-width:960px; margin:20px auto 0; padding:0 16px; }
+    h1 { margin:0 0 8px; font-size:28px }
+    .lead { color:var(--muted); margin:0 0 20px }
+    .grid { max-width:960px; margin:0 auto 40px; padding:0 16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:16px; }
+    .card { background:var(--panel); border-radius:14px; box-shadow:0 1px 2px rgba(0,0,0,.05); padding:14px; display:flex; flex-direction:column; gap:10px; }
+    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; }
+    .tt { font-weight:600; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:var(--chip); color:#111; font-size:12px }
+    .state-unused { color:var(--ok) }
+    .state-in { color:var(--ok) }
+    .state-out { color:var(--warn) }
+    .state-void { color:var(--void) }
+    .qr { align-self:center; background:#fff; padding:8px; border-radius:8px; }
+    .qr img { display:block; width:200px; height:200px; image-rendering: pixelated; }
+    .muted { color:var(--muted); font-size:13px }
+    .toolbar { display:flex; gap:8px; flex-wrap:wrap; }
+    .btn { display:inline-flex; align-items:center; justify-content:center; padding:8px 12px; border-radius:10px; background:var(--brand); color:var(--brand-ink); font-weight:600; border:0; cursor:pointer }
+    .btn.secondary { background:#111; color:#fff }
+    .empty { max-width:960px; margin:24px auto; padding:0 16px; color:var(--muted) }
+  </style>
 </head>
 <body>
-<div class="wrap" id="app">
-  <header class="no-print">
-    <div class="brand">
-      <div class="logo"></div>
-      <div>
-        <h1>Villiersdorp Skou</h1>
-        <div class="muted">Toegangkaartjies • Bestel nommer: <b id="hdrCode">${escapeHtml(code || "")}</b></div>
-      </div>
-    </div>
-    <div class="row">
-      <button class="btn" id="btnBack" onclick="history.back()">← Terug</button>
-      <button class="btn" id="btnRefresh">Herlaai</button>
-      <button class="btn primary" id="btnPrint">Druk</button>
-    </div>
+  <header>
+    <h1>Jou kaartjies · ${safe}</h1>
+    <p class="lead">Wys die QR by die hek sodat dit gescan kan word.</p>
   </header>
 
-  <div class="card" id="statusCard">
-    <div id="loading">Laai kaartjies vir kode <b>${escapeHtml(code || "")}</b>…</div>
-    <div id="error" class="err" style="display:none"></div>
-    <div id="none" class="muted" style="display:none">Kon nie kaartjies vind met kode <b>${escapeHtml(code || "")}</b> nie.</div>
-  </div>
+  <div id="root" class="grid" aria-live="polite"></div>
+  <p id="empty" class="empty" hidden>Kon nie kaartjies vind met kode <strong>${safe}</strong> nie.</p>
 
-  <div class="grid" id="grid" style="display:none"></div>
+  <script type="module">
+    const code = ${JSON.stringify(String(code || ""))};
 
-  <div class="center muted" style="margin-top:12px">
-    Het jy ’n probleem? Vra by die hek met jou bestel nommer <b>${escapeHtml(code || "")}</b>.
-  </div>
-</div>
+    // Simple helper to escape text when building small bits
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 
-<script>
-const shortCode = ${JSON.stringify(code || "")};
+    // External QR service (no client libs). Swap later if you prefer in-worker SVG.
+    const qrURL = (data, size=220) =>
+      \`https://api.qrserver.com/v1/create-qr-code/?size=\${size}x\${size}&data=\${encodeURIComponent(data)}\`;
 
-const CDN_QR = "https://api.qrserver.com/v1/create-qr-code/"; // stable CDN
-
-function esc(s){ return String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])) }
-
-function rands(c){ return "R" + ((c||0)/100).toFixed(2) }
-
-function qrUrl(text, size=280){
-  // Encode the *scanner payload* exactly as stored in tickets.qr
-  const data = encodeURIComponent(String(text||""));
-  return CDN_QR + "?size=" + size + "x" + size + "&data=" + data;
-}
-
-function templateTicket(t){
-  const label = (t.attendee_first||t.attendee_last) ? esc((t.attendee_first||"") + " " + (t.attendee_last||"")) : "Besoeker";
-  const type = esc(t.type_name || "Kaartjie");
-  const price = (typeof t.price_cents === "number") ? rands(t.price_cents) : "—";
-  const codeTail = esc(String(t.qr||"").slice(-6));
-
-  const img = qrUrl(t.qr, 280);
-  const dl = qrUrl(t.qr, 600); // nicer resolution download
-
-  return \`
-  <div class="ticket">
-    <div class="top">
-      <div style="font-weight:700">\${type}</div>
-      <div class="pill">\${esc(t.state || 'unused')}</div>
-    </div>
-    <div class="qr-wrap"><img src="\${img}" alt="QR vir kaartjie"/></div>
-    <div class="meta">
-      <div><b>Naam:</b> \${label}</div>
-      <div><b>Reeks:</b> \${codeTail}</div>
-      <div><b>Prijs:</b> \${price}</div>
-    </div>
-    <div class="actions no-print">
-      <a class="btn" href="\${dl}" download="ticket-\${codeTail}.png">Laai QR af</a>
-    </div>
-  </div>\`;
-}
-
-async function load(){
-  const status = document.getElementById('statusCard');
-  const loading = document.getElementById('loading');
-  const err = document.getElementById('error');
-  const none = document.getElementById('none');
-  const grid = document.getElementById('grid');
-
-  loading.style.display = 'block';
-  err.style.display = 'none';
-  none.style.display = 'none';
-  grid.style.display = 'none';
-  grid.innerHTML = '';
-
-  try{
-    // Uses the public helper that returns all tickets for the order short_code
-    const r = await fetch('/api/public/tickets/by-code/' + encodeURIComponent(shortCode));
-    const j = await r.json().catch(()=>({ok:false,error:'Bad JSON'}));
-    if(!j.ok) throw new Error(j.error || 'Kon nie kaartjies kry nie');
-
-    const tickets = j.tickets || [];
-    if(!tickets.length){
-      loading.style.display = 'none';
-      none.style.display = 'block';
-      return;
+    async function load() {
+      try {
+        const r = await fetch(\`/api/public/tickets/by-code/\${encodeURIComponent(code)}\`, { credentials: "include" });
+        const j = await r.json().catch(() => ({}));
+        if (!j.ok) throw new Error(j.error || "Load failed");
+        const list = Array.isArray(j.tickets) ? j.tickets : [];
+        render(list);
+      } catch (e) {
+        console.error(e);
+        document.getElementById("empty").hidden = false;
+      }
     }
 
-    // Render all tickets
-    grid.innerHTML = tickets.map(templateTicket).join('');
-    loading.style.display = 'none';
-    grid.style.display = 'grid';
-  }catch(e){
-    loading.style.display = 'none';
-    err.textContent = (e && e.message) ? e.message : 'Netwerkfout';
-    err.style.display = 'block';
-  }
+    function stateClass(st) {
+      switch ((st||'').toLowerCase()) {
+        case 'unused': return 'state-unused';
+        case 'in': return 'state-in';
+        case 'out': return 'state-out';
+        case 'void': return 'state-void';
+        default: return '';
+      }
+    }
+
+    function render(tickets) {
+      const root = document.getElementById("root");
+      root.innerHTML = "";
+      if (!tickets.length) {
+        document.getElementById("empty").hidden = false;
+        return;
+      }
+      document.getElementById("empty").hidden = true;
+
+      for (const t of tickets) {
+        const who = [t.attendee_first, t.attendee_last].filter(Boolean).join(" ").trim();
+        const stateCls = stateClass(t.state);
+        const priceR = (Number(t.price_cents||0)/100).toFixed(2);
+
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = \`
+          <div class="row">
+            <div class="tt">\${esc(t.type_name || "Kaartjie")}</div>
+            <div class="pill">R\${priceR}</div>
+          </div>
+          <div class="row">
+            <div class="muted">\${who ? esc(who) : ""}</div>
+            <div class="\${stateCls} muted">\${esc(t.state || "")}</div>
+          </div>
+          <div class="qr">
+            <img alt="QR code" width="200" height="200" loading="lazy"
+                 src="\${qrURL(t.qr, 220)}" />
+          </div>
+          <div class="toolbar">
+            <a class="btn" target="_blank" rel="noopener" href="\${qrURL(t.qr, 500)}">Open groter QR</a>
+            <button class="btn secondary" data-copy="\${esc(t.qr)}">Kopieer kode</button>
+          </div>
+          <div class="muted">Kode: \${esc(t.qr)}</div>
+        \`;
+        // wire copy
+        card.querySelector('button[data-copy]').addEventListener('click', async (ev) => {
+          const val = ev.currentTarget.getAttribute('data-copy');
+          try { await navigator.clipboard.writeText(val); ev.currentTarget.textContent = "Gekopieer"; setTimeout(()=>ev.currentTarget.textContent="Kopieer kode", 1400); } catch {}
+        });
+        root.appendChild(card);
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>
+`;
 }
-
-document.getElementById('btnPrint').onclick = () => window.print();
-document.getElementById('btnRefresh').onclick = load;
-
-load();
-
-/* ------------ small helper so this module can inline-escape title ------------- */
-function escapeHtml(s){
-  return String(s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-}
-</script>
-</body></html>`;
