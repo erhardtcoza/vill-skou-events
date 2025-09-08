@@ -230,6 +230,20 @@ export function mountAdmin(router) {
     return json({ ok:true, vendors: q.results || [] });
   }));
 
+  // List vendor passes
+router.add("GET", "/api/admin/vendor-passes", requireRole("admin", async (req, env) => {
+  const url = new URL(req.url);
+  const vendorId = Number(url.searchParams.get("vendor_id") || 0);
+  if (!vendorId) return bad("vendor_id required");
+  const q = await env.DB.prepare(
+    `SELECT id, vendor_id, type, label, vehicle_reg, qr, state, issued_at, first_in_at, last_out_at
+       FROM vendor_passes
+      WHERE vendor_id = ?1
+      ORDER BY id ASC`
+  ).bind(vendorId).all();
+  return json({ ok:true, passes: q.results || [] });
+}));
+
   router.add("POST", "/api/admin/vendors", requireRole("admin", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const { event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota } = b || {};
