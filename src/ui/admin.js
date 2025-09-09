@@ -1,393 +1,258 @@
-// /src/ui/admin.js
-// Pure DOM + fetch; mobile-friendly tabs. No external utils.
-
-const esc = (s) => String(s ?? "")
-  .replace(/&/g,"&amp;").replace(/</g,"&lt;")
-  .replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
-
-const R = (cents) => "R" + (Number(cents||0)/100).toFixed(2);
-
-function card(inner) {
-  return `<div class="card">${inner}</div>`;
+// src/ui/admin.js
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-function tabsHTML(active="tickets") {
-  const btn = (id,label) =>
-    `<button class="tab ${active===id?"on":""}" data-tab="${id}">${label}</button>`;
-  return `
-    <div class="tabs">
-      ${btn("tickets","Tickets")}
-      ${btn("vendors","Vendors")}
-      ${btn("users","Users")}
-      ${btn("settings","Site settings")}
-    </div>
-    <div id="tab-body"></div>
-  `;
-}
-
-async function fetchJSON(url, opt) {
-  const res = await fetch(url, opt);
-  const t = await res.text();
-  try { return JSON.parse(t); } catch { throw new Error(t || res.statusText); }
-}
-
-async function loadEvents() {
-  const r = await fetchJSON("/api/admin/events");
-  return r.events || [];
-}
-
-/* ---------------- Tickets tab ---------------- */
-function ticketsPanelHTML(state) {
-  const evOpts = state.events.map(e =>
-    `<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join("");
-  const summary = state.summary ? ticketsSummaryTable(state.summary) : `<div class="muted">Pick an event and Load.</div>`;
-  const lookup = `
-    <div class="row">
-      <input id="order-code" placeholder="Order code (e.g. 3VLNT5)" />
-      <button id="btn-lookup" class="btn">Lookup</button>
-    </div>
-    <div id="order-result"></div>
-  `;
-  return card(`
-    <div class="row">
-      <select id="tickets-event">${evOpts}</select>
-      <button id="btn-load-summary" class="btn">Load</button>
-    </div>
-    <div id="tickets-summary">${summary}</div>
-    ${lookup}
-  `);
-}
-
-function ticketsSummaryTable(summary) {
-  const head = `
-    <div class="totals">
-      Total: ${summary.totals.total ?? 0} ·
-      In: ${summary.totals.in_count ?? 0} ·
-      Out: ${summary.totals.out_count ?? 0} ·
-      Unused: ${summary.totals.unused ?? 0} ·
-      Void: ${summary.totals.void_count ?? 0}
-    </div>`;
-  const rows = (summary.per_type || []).map(r => `
-    <tr>
-      <td>${esc(r.name)}</td>
-      <td>${R(r.price_cents)}</td>
-      <td>${r.total||0}</td>
-      <td>${r.unused||0}</td>
-      <td>${r.in_count||0}</td>
-      <td>${r.out_count||0}</td>
-      <td>${r.void_count||0}</td>
-    </tr>`).join("");
-  return `
-    ${head}
-    <div class="table-wrap">
-      <table class="tbl">
-        <thead><tr>
-          <th>Type</th><th>Price (R)</th><th>Total</th><th>Unused</th><th>In</th><th>Out</th><th>Void</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
-}
-
-function orderResultHTML(data) {
-  if (!data?.ok) return `<div class="error">Not found</div>`;
-  const link = `/t/${esc(data.order.short_code)}`;
-  const tickets = (data.tickets||[]).map(t => `
-    <tr>
-      <td>${t.id}</td>
-      <td>${esc(t.type_name)}</td>
-      <td class="mono">${esc(t.qr)}</td>
-      <td>${esc(t.state)}</td>
-    </tr>`).join("");
-  return `
-    <div class="row smallgap">
-      <div class="muted">Ticket link: <a href="${link}" target="_blank">${link}</a></div>
-    </div>
-    <div class="table-wrap">
-      <table class="tbl">
-        <thead><tr><th>ID</th><th>Type</th><th>QR</th><th>State</th></tr></thead>
-        <tbody>${tickets}</tbody>
-      </table>
-    </div>
-    <div class="row">
-      <input id="wa-to" placeholder="WhatsApp MSISDN (e.g. 27718878933)" value="${esc(data.order.buyer_phone||"")}" />
-      <button id="btn-wa" class="btn">Send via WhatsApp</button>
-    </div>
-  `;
-}
-
-/* ---------------- Vendors tab ---------------- */
-function vendorsPanelHTML(state) {
-  const evOpts = state.events.map(e =>
-    `<option value="${e.id}">${esc(e.name)} (${esc(e.slug)})</option>`).join("");
-  const list = vendorsListHTML(state.vendors || []);
-  return card(`
-    <div class="row">
-      <select id="vendors-event">${evOpts}</select>
-      <button id="btn-load-vendors" class="btn">Load</button>
-    </div>
-    ${list}
-    <h3>New vendor</h3>
-    <div class="grid2">
-      <input id="v-name" placeholder="Vendor name" />
-      <input id="v-contact" placeholder="Contact name" />
-      <input id="v-phone" placeholder="Phone" />
-      <input id="v-email" placeholder="Email" />
-      <input id="v-stand" placeholder="Stand #" />
-      <input id="v-staff" placeholder="Staff quota" inputmode="numeric" />
-      <input id="v-veh" placeholder="Vehicle quota" inputmode="numeric" />
-      <button id="btn-add-vendor" class="btn">Add</button>
-    </div>
-  `);
-}
-
-function vendorsListHTML(items) {
-  if (!items.length) return `<div class="muted">No vendors loaded.</div>`;
-  const rows = items.map(v => `
-    <tr data-id="${v.id}">
-      <td><input class="e-name" value="${esc(v.name||"")}" /></td>
-      <td><input class="e-contact" value="${esc(v.contact_name||"")}" /></td>
-      <td><input class="e-phone" value="${esc(v.phone||"")}" /></td>
-      <td><input class="e-email" value="${esc(v.email||"")}" /></td>
-      <td><input class="e-stand" value="${esc(v.stand_number||"")}" /></td>
-      <td><input class="e-staff" value="${esc(v.staff_quota||0)}" inputmode="numeric"/></td>
-      <td><input class="e-veh" value="${esc(v.vehicle_quota||0)}" inputmode="numeric"/></td>
-      <td><button class="btn btn-dark btn-save">Save</button></td>
-    </tr>
-  `).join("");
-  return `
-    <div class="table-wrap">
-      <table class="tbl">
-        <thead><tr>
-          <th>Name</th><th>Contact</th><th>Phone</th><th>Email</th>
-          <th>Stand</th><th>Staff</th><th>Vehicle</th><th>Actions</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
-}
-
-/* ---------------- Users tab ---------------- */
-function usersPanelHTML(state) {
-  const rows = (state.users||[]).map(u => `
-    <tr>
-      <td>${u.id}</td><td>${esc(u.username)}</td><td>${esc(u.role)}</td>
-      <td><button data-id="${u.id}" class="btn btn-dark btn-del">Delete</button></td>
-    </tr>`).join("");
-  return card(`
-    <div class="grid3">
-      <input id="u-name" placeholder="username" />
-      <select id="u-role">
-        <option value="admin">admin</option>
-        <option value="pos">pos</option>
-        <option value="scan">scan</option>
-      </select>
-      <button id="btn-add-user" class="btn">Add</button>
-    </div>
-    <div class="table-wrap">
-      <table class="tbl">
-        <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Actions</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `);
-}
-
-/* ---------------- Site settings (WhatsApp) ---------------- */
-function settingsPanelHTML(s) {
-  const cfg = s.settings || {};
-  return card(`
-    <h3>WhatsApp (Meta)</h3>
-    <div class="grid2">
-      <input id="set-public" placeholder="Public base URL" value="${esc(cfg.public_base_url||"")}" />
-      <input id="set-pnid" placeholder="Phone Number ID" value="${esc(cfg.whatsapp_phone_number_id||"")}" />
-      <input id="set-bid" placeholder="Business ID" value="${esc(cfg.whatsapp_business_id||"")}" />
-      <input id="set-token" placeholder="Access token" value="${esc(cfg.whatsapp_access_token||"")}" />
-      <input id="set-tpl" placeholder="Template name" value="${esc(cfg.whatsapp_template_name||"ticket_delivery")}" />
-      <input id="set-lang" placeholder="Template lang (e.g. en_US)" value="${esc(cfg.whatsapp_template_lang||"en_US")}" />
-      <button id="btn-save-settings" class="btn">Save</button>
-    </div>
-    <div class="muted small">Values in environment override DB (Phone Number ID, token, etc.).</div>
-  `);
-}
-
-/* ---------------- Mount ---------------- */
 export function adminHTML() {
-  return `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
 <style>
-  :root{--green:#0a7d2b;--bg:#f6faf7}
-  body{font-family:system-ui;margin:0;background:var(--bg);color:#111}
-  .wrap{max-width:1000px;margin:20px auto;padding:0 12px}
-  h1{font-size:28px;margin:10px 0 16px}
-  .tabs{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
-  .tab{border-radius:20px;padding:8px 14px;border:1px solid #cfe6d6;background:#eef8f0}
-  .tab.on{background:#cfeedd;border-color:#a6d7b5}
-  .card{background:#fff;border:1px solid #e2e8e4;border-radius:14px;padding:12px;margin-bottom:14px}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .grid3{display:grid;grid-template-columns:2fr 1fr auto;gap:8px}
-  input,select{border:1px solid #d4ddd8;border-radius:10px;padding:10px 12px;background:#fff;min-width:0}
-  input::placeholder{color:#9aa5a0}
-  .btn{background:var(--green);color:#fff;border:none;border-radius:10px;padding:10px 14px;cursor:pointer}
-  .btn-dark{background:#111;color:#fff}
-  .muted{color:#566}
-  .small{font-size:12px}
-  .table-wrap{overflow:auto;border:1px solid #e7eee9;border-radius:10px}
-  table.tbl{width:100%;border-collapse:collapse}
-  .tbl th,.tbl td{padding:8px 10px;border-bottom:1px solid #eef3ef;white-space:nowrap}
-  .tbl thead th{position:sticky;top:0;background:#f8fbf9}
-  .mono{font-family:ui-monospace, SFMono-Regular, Menlo, monospace}
-  @media (max-width:700px){
-    .grid2{grid-template-columns:1fr}
-    .grid3{grid-template-columns:1fr}
-  }
+  :root{--green:#0a7d2b;--bg:#f6f7f7;--muted:#667085}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#101113}
+  .wrap{max-width:1100px;margin:18px auto;padding:0 14px}
+  h1{margin:0 0 10px}
+  nav.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}
+  .tab{padding:8px 12px;border-radius:999px;background:#e9f2ea;color:#0c3f1a;text-decoration:none;font-weight:600}
+  .tab.active{background:#cfe9d7}
+  .card{background:#fff;border-radius:12px;box-shadow:0 1px 2px rgba(0,0,0,.06);padding:14px;margin:10px 0}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
+  .muted{color:var(--muted)}
+  input,select,button,textarea{font:inherit}
+  input,select,textarea{padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px}
+  button{padding:8px 12px;border-radius:10px;border:0;background:var(--green);color:#fff;cursor:pointer}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 </style>
-</head><body><div class="wrap">
+</head>
+<body>
+<div class="wrap">
   <h1>Admin dashboard</h1>
-  ${tabsHTML("tickets")}
+  <nav class="tabs" id="tabs"></nav>
+  <div id="view" class="card">Loading…</div>
 </div>
-<script type="module">
-  const $ = (s, p=document) => p.querySelector(s);
-  const $$ = (s, p=document) => [...p.querySelectorAll(s)];
-  const state = { tab: "tickets", events: [], summary: null, vendors: [], users: [], settings: null, currentEventId: null, lastOrderCode: null };
 
-  function render() {
-    $("#tab-body").innerHTML =
-      state.tab==="tickets" ? \`${ticketsPanelHTML(state)}\` :
-      state.tab==="vendors" ? \`${vendorsPanelHTML(state)}\` :
-      state.tab==="users"   ? \`${usersPanelHTML(state)}\` :
-                              \`${settingsPanelHTML(state)}\`;
+<script>
+const $, $$ = (sel,root=document)=>root.querySelector(sel), (sel,root=document)=>Array.from(root.querySelectorAll(sel));
 
-    // wire tab-specific actions
-    if (state.tab === "tickets") {
-      $("#tickets-event").value = state.currentEventId ?? (state.events[0]?.id || "");
-      $("#btn-load-summary").onclick = async () => {
-        state.currentEventId = Number($("#tickets-event").value||0);
-        if (!state.currentEventId) return;
-        const r = await (await fetch(\`/api/admin/tickets/summary?event_id=\${state.currentEventId}\`)).json();
-        state.summary = r;
-        $("#tickets-summary").innerHTML = \`${ticketsSummaryTable(r)}\`;
-      };
-      $("#btn-lookup").onclick = async () => {
-        const code = ($("#order-code").value||"").trim();
-        if (!code) return;
-        state.lastOrderCode = code;
-        const r = await (await fetch(\`/api/admin/order/by-code/\${encodeURIComponent(code)}\`)).json();
-        $("#order-result").innerHTML = \`${orderResultHTML(r)}\`;
-        const btn = $("#btn-wa"); if (btn) btn.onclick = sendWA;
-      };
-    } else if (state.tab === "vendors") {
-      $("#vendors-event").value = state.currentEventId ?? (state.events[0]?.id || "");
-      $("#btn-load-vendors").onclick = async () => {
-        state.currentEventId = Number($("#vendors-event").value||0);
-        if (!state.currentEventId) return;
-        const r = await (await fetch(\`/api/admin/vendors?event_id=\${state.currentEventId}\`)).json();
-        state.vendors = r.vendors || [];
-        // re-render panel to refresh list
-        render();
-      };
-      $("#btn-add-vendor").onclick = async () => {
-        const body = {
-          event_id: Number($("#vendors-event").value||0),
-          name: $("#v-name").value, contact_name: $("#v-contact").value,
-          phone: $("#v-phone").value, email: $("#v-email").value,
-          stand_number: $("#v-stand").value,
-          staff_quota: Number($("#v-staff").value||0),
-          vehicle_quota: Number($("#v-veh").value||0)
-        };
-        const r = await fetch("/api/admin/vendors",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-        if (!r.ok) return alert("Failed to add");
-        $("#btn-load-vendors").click();
-      };
-      $$(".btn-save").forEach(btn => btn.onclick = async (ev) => {
-        const tr = ev.target.closest("tr");
-        const id = Number(tr.dataset.id);
-        const body = {
-          id,
-          name: tr.querySelector(".e-name").value,
-          contact_name: tr.querySelector(".e-contact").value,
-          phone: tr.querySelector(".e-phone").value,
-          email: tr.querySelector(".e-email").value,
-          stand_number: tr.querySelector(".e-stand").value,
-          staff_quota: Number(tr.querySelector(".e-staff").value||0),
-          vehicle_quota: Number(tr.querySelector(".e-veh").value||0),
-        };
-        const r = await fetch("/api/admin/vendor/update",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-        if (!r.ok) return alert("Save failed");
-        alert("Saved");
-      });
-    } else if (state.tab === "users") {
-      $("#btn-add-user").onclick = async () => {
-        const body = { username: $("#u-name").value, role: $("#u-role").value };
-        const r = await fetch("/api/admin/users",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-        if (!r.ok) return alert("Failed");
-        await loadUsers();
-        render();
-      };
-      $$(".btn-del").forEach(b => b.onclick = async () => {
-        const id = b.getAttribute("data-id");
-        const r = await fetch(\`/api/admin/users/\${id}\`,{method:"DELETE"});
-        if (!r.ok) return alert("Delete failed");
-        await loadUsers(); render();
-      });
-    } else if (state.tab === "settings") {
-      $("#btn-save-settings").onclick = async () => {
-        const body = {
-          public_base_url: $("#set-public").value,
-          whatsapp_phone_number_id: $("#set-pnid").value,
-          whatsapp_business_id: $("#set-bid").value,
-          whatsapp_access_token: $("#set-token").value,
-          whatsapp_template_name: $("#set-tpl").value,
-          whatsapp_template_lang: $("#set-lang").value
-        };
-        const r = await fetch("/api/admin/site-settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-        if (!r.ok) return alert("Save failed");
-        alert("Saved");
-      };
-    }
-  }
+const TABS = [
+  { id:"events",  label:"Events" },
+  { id:"tickets", label:"Tickets" },
+  { id:"pos",     label:"POS Admin" },
+  { id:"vendors", label:"Vendors" },
+  { id:"users",   label:"Users" },
+  { id:"site",    label:"Site settings" }
+];
 
-  async function sendWA() {
-    const to = ($("#wa-to").value||"").trim();
-    const code = state.lastOrderCode;
-    if (!to || !code) return alert("Missing number or code");
-    const r = await fetch("/api/admin/whatsapp/send-order", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ to, code })
-    });
-    if (!r.ok) {
-      const t = await r.text();
-      return alert("Failed: " + t);
-    }
-    alert("Sent");
-  }
-
-  async function loadUsers(){ const r = await (await fetch("/api/admin/users")).json(); state.users = r.users||[]; }
-  async function loadSettings(){ const r = await (await fetch("/api/admin/site-settings")).json(); state.settings = r; }
-  async function init() {
-    const evs = await (await fetch("/api/admin/events")).json();
-    state.events = evs.events || [];
-    await loadUsers();
-    await loadSettings();
+function nav() {
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = TABS.map(t => '<a class="tab" data-id="'+t.id+'" href="#'+t.id+'">'+t.label+'</a>').join('');
+  tabs.addEventListener('click', (e)=>{
+    const a = e.target.closest('a.tab'); if(!a) return;
+    e.preventDefault();
+    location.hash = a.dataset.id;
     render();
-  }
-
-  // Tab switching
-  document.addEventListener("click", (e) => {
-    const t = e.target.closest(".tab");
-    if (t) {
-      state.tab = t.getAttribute("data-tab");
-      $$(".tab").forEach(b => b.classList.remove("on"));
-      t.classList.add("on");
-      render();
-    }
   });
+  render();
+}
 
-  init();
+async function api(url, opt){ const r = await fetch(url, opt||{}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+
+async function render() {
+  const id = (location.hash||"#events").slice(1);
+  $$('.tab', document.getElementById('tabs')).forEach(x=>x.classList.toggle('active', x.dataset.id===id));
+  const v = document.getElementById('view');
+  if (id==="events") return renderEvents(v);
+  if (id==="tickets") return renderTickets(v);
+  if (id==="pos") return renderPOS(v);
+  if (id==="vendors") return renderVendors(v);
+  if (id==="users") return renderUsers(v);
+  if (id==="site") return renderSite(v);
+  v.textContent = "Unknown section.";
+}
+
+/* ---------------- Events ---------------- */
+async function renderEvents(v){
+  v.innerHTML = '<div class="muted">Loading events…</div>';
+  const data = await api('/api/admin/events').catch(()=>({ok:false,events:[]}));
+  const rows = (data.events||[]).map(ev =>
+    '<tr>'+
+      '<td>'+esc(ev.id)+'</td>'+
+      '<td>'+esc(ev.slug)+'</td>'+
+      '<td>'+esc(ev.name)+'</td>'+
+      '<td>'+esc(ev.venue||"")+'</td>'+
+      '<td>'+fmtDate(ev.starts_at)+' – '+fmtDate(ev.ends_at)+'</td>'+
+      '<td>'+esc(ev.status)+'</td>'+
+    '</tr>'
+  ).join('');
+  v.innerHTML =
+    '<div class="row"><button id="newEv">New event</button></div>'+
+    '<div class="card" style="margin:10px 0 0">'+
+      '<table><thead><tr><th>ID</th><th>Slug</th><th>Name</th><th>Venue</th><th>When</th><th>Status</th></tr></thead>'+
+      '<tbody>'+rows+'</tbody></table>'+
+    '</div>';
+  document.getElementById('newEv').onclick = ()=> promptCreateEvent();
+}
+
+function promptCreateEvent(){
+  const slug = prompt('Slug (e.g. skou-2025)');
+  if(!slug) return;
+  const name = prompt('Name'); if(!name) return;
+  const venue = prompt('Venue')||'';
+  const starts = Number(prompt('Starts (unix seconds)')||0);
+  const ends   = Number(prompt('Ends (unix seconds)')||0);
+  fetch('/api/admin/events',{method:'POST',headers:{'content-type':'application/json'},
+    body: JSON.stringify({slug,name,venue,starts_at:starts,ends_at:ends})}).then(()=>location.reload());
+}
+
+/* ---------------- Tickets ---------------- */
+async function renderTickets(v){
+  // Choose event → show totals & by type
+  const evs = await api('/api/admin/events').catch(()=>({events:[]}));
+  const opts = (evs.events||[]).map(e=>'<option value="'+e.id+'">'+esc(e.name)+' ('+esc(e.slug)+')</option>').join('');
+  v.innerHTML =
+    '<div class="row"><select id="evSel"><option value="">Select event…</option>'+opts+'</select>'+
+    '<button id="loadTk">Load</button></div>'+
+    '<div id="tkOut" class="card" style="margin-top:8px"></div>'+
+    '<div class="card" style="margin-top:8px">'+
+      '<div class="row"><input id="ordCode" placeholder="Order code (e.g. ABC123)" />'+
+      '<input id="waTo" placeholder="WhatsApp MSISDN (e.g. 27718878933)"/>'+
+      '<button id="sendWA">Send via WhatsApp</button></div>'+
+      '<div id="waMsg" class="muted" style="margin-top:6px"></div>'+
+    '</div>';
+  document.getElementById('loadTk').onclick = async ()=>{
+    const id = Number(document.getElementById('evSel').value||0);
+    if (!id) return;
+    const d = await api('/api/admin/tickets/summary/'+id).catch(()=>({ok:false}));
+    const out = document.getElementById('tkOut');
+    if (!d.ok){ out.textContent = 'Failed to load.'; return; }
+    const totals = (d.totals||[]).map(t=>'<div>'+esc(t.state)+': <b>'+Number(t.n||0)+'</b></div>').join('');
+    const by = (d.by_type||[]).map(r=>'<tr><td>'+esc(r.ticket_type_id)+'</td><td>'+esc(r.name)+'</td><td>'+Number(r.sold||0)+'</td></tr>').join('');
+    out.innerHTML =
+      '<div class="row">'+totals+'</div>'+
+      '<table style="margin-top:8px"><thead><tr><th>Type ID</th><th>Name</th><th>Sold</th></tr></thead><tbody>'+by+'</tbody></table>';
+  };
+  document.getElementById('sendWA').onclick = async ()=>{
+    const code = (document.getElementById('ordCode').value||'').trim();
+    const to   = (document.getElementById('waTo').value||'').trim();
+    if (!code || !to){ return document.getElementById('waMsg').textContent = 'Enter code and MSISDN.'; }
+    document.getElementById('waMsg').textContent = 'Sending…';
+    const r = await fetch('/api/admin/whatsapp/send',{method:'POST',headers:{'content-type':'application/json'},body: JSON.stringify({ code, to })});
+    const j = await r.json().catch(()=>({ok:false}));
+    document.getElementById('waMsg').textContent = j.ok ? 'Sent.' : ('Failed: '+(j.error||''));
+  };
+}
+
+/* ---------------- POS Admin ---------------- */
+async function renderPOS(v){
+  v.innerHTML = '<div class="muted">Loading sessions…</div>';
+  const d = await api('/api/admin/pos/sessions').catch(()=>({ok:false,sessions:[]}));
+  if (!d.ok){ v.textContent='Failed to load.'; return; }
+  const rows = (d.sessions||[]).map(s=>
+    '<tr>'+
+      '<td>'+esc(s.id)+'</td>'+
+      '<td>'+esc(s.cashier_name)+'</td>'+
+      '<td>'+(s.cashier_msisdn?esc(s.cashier_msisdn):'')+'</td>'+
+      '<td>'+esc(s.gate_id)+'</td>'+
+      '<td>'+fmtDT(s.opened_at)+'</td>'+
+      '<td>'+(s.closed_at?fmtDT(s.closed_at):'-')+'</td>'+
+      '<td>'+rands(s.opening_float_cents||0)+'</td>'+
+      '<td>'+rands(s.cash_cents||0)+'</td>'+
+      '<td>'+rands(s.card_cents||0)+'</td>'+
+      '<td>'+(s.closing_manager?esc(s.closing_manager):'-')+'</td>'+
+    '</tr>'
+  ).join('');
+  v.innerHTML =
+    '<div class="card">'+
+      '<table><thead><tr>'+
+      '<th>ID</th><th>Cashier</th><th>MSISDN</th><th>Gate</th><th>Opened</th><th>Closed</th>'+
+      '<th>Float</th><th>Cash</th><th>Card</th><th>Closed by</th></tr></thead>'+
+      '<tbody>'+rows+'</tbody></table>'+
+    '</div>';
+}
+
+/* ---------------- Vendors ---------------- */
+async function renderVendors(v){
+  const evs = await api('/api/admin/events').catch(()=>({events:[]}));
+  const opts = (evs.events||[]).map(e=>'<option value="'+e.id+'">'+esc(e.name)+' ('+esc(e.slug)+')</option>').join('');
+  v.innerHTML =
+    '<div class="row"><select id="vEv"><option value="">Select event…</option>'+opts+'</select>'+
+    '<button id="vLoad">Load</button><button id="vNew">New vendor</button></div>'+
+    '<div id="vOut" class="card" style="margin-top:8px"></div>';
+  document.getElementById('vLoad').onclick = async ()=>{
+    const id = Number(document.getElementById('vEv').value||0);
+    if (!id) return;
+    const d = await api('/api/admin/vendors/'+id).catch(()=>({ok:false}));
+    const out = document.getElementById('vOut');
+    if (!d.ok){ out.textContent='Failed to load.'; return; }
+    const rows = (d.vendors||[]).map(vd =>
+      '<tr>'+
+        '<td>'+esc(vd.id)+'</td>'+
+        '<td>'+esc(vd.name)+'</td>'+
+        '<td>'+esc(vd.contact_name||"")+'</td>'+
+        '<td>'+esc(vd.phone||"")+'</td>'+
+        '<td>'+esc(vd.email||"")+'</td>'+
+        '<td>'+esc(vd.stand_number||"")+'</td>'+
+        '<td>'+Number(vd.staff_quota||0)+'</td>'+
+        '<td>'+Number(vd.vehicle_quota||0)+'</td>'+
+        '<td><button data-ed="'+vd.id+'">Edit</button></td>'+
+      '</tr>'
+    ).join('');
+    out.innerHTML =
+      '<table><thead><tr><th>ID</th><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Stand</th><th>Staff</th><th>Vehicle</th><th></th></tr></thead>'+
+      '<tbody>'+rows+'</tbody></table>';
+    out.querySelectorAll('button[data-ed]').forEach(b=>{
+      b.onclick = ()=> editVendor(Number(b.dataset.ed), id);
+    });
+  };
+  document.getElementById('vNew').onclick = async ()=>{
+    const ev = Number(document.getElementById('vEv').value||0);
+    if (!ev) return alert('Select event first.');
+    const name = prompt('Vendor name'); if(!name) return;
+    await fetch('/api/admin/vendors/'+ev,{method:'POST',headers:{'content-type':'application/json'},body: JSON.stringify({name})});
+    document.getElementById('vLoad').click();
+  };
+}
+
+async function editVendor(id, event_id){
+  const name = prompt('Vendor name (leave blank to keep)');
+  const body = {};
+  if (name) body.name = name;
+  await fetch('/api/admin/vendors/'+id,{method:'PUT',headers:{'content-type':'application/json'},body: JSON.stringify(body)});
+  document.getElementById('vLoad').click();
+}
+
+/* ---------------- Users ---------------- */
+async function renderUsers(v){
+  const d = await api('/api/admin/users').catch(()=>({ok:false,users:[]}));
+  if (!d.ok){ v.textContent='Failed to load.'; return; }
+  const rows = (d.users||[]).map(u =>
+    '<tr><td>'+esc(u.id)+'</td><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td></tr>'
+  ).join('');
+  v.innerHTML = '<table><thead><tr><th>ID</th><th>Username</th><th>Role</th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+
+/* ---------------- Site settings (placeholder) ---------------- */
+async function renderSite(v){
+  const d = await api('/api/admin/site-settings').catch(()=>({ok:false}));
+  v.innerHTML = d.ok
+    ? '<div class="muted">Settings loaded. (WhatsApp managed via Worker env for now.)</div>'
+    : '<div class="muted">Settings not available.</div>';
+}
+
+/* ---------------- helpers ---------------- */
+function fmtDate(s){ if(!s) return '-'; const d=new Date(Number(s)*1000); return d.toLocaleDateString(); }
+function fmtDT(s){ if(!s) return '-'; const d=new Date(Number(s)*1000); return d.toLocaleString(); }
+function rands(c){ return 'R'+((Number(c)||0)/100).toFixed(2); }
+
+nav();
 </script>
-</body></html>`;
+</body>
+</html>`;
 }
