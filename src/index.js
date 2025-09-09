@@ -4,6 +4,7 @@ import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
 import { mountWATest } from "./routes/wa_test.js";
 import { badgeHTML } from "./ui/badge.js";
+import { registerAddonRoutes } from "./addons/api.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -28,6 +29,7 @@ import { loginHTML } from "./ui/login.js";
 import { requireRole } from "./utils/auth.js";
 
 const router = Router();
+registerAddonRoutes(app, env);
 
 // Helper: accept either a function (returning HTML) or a string export
 function renderHTML(mod, ...args) {
