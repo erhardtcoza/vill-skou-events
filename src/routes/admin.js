@@ -1,14 +1,44 @@
 // /src/routes/admin.js
 import { json, bad } from "../utils/http.js";
 
-function asInt(x, d = 0) { return Number.isFinite(+x) ? +x : d; }
-function nowSec() { return Math.floor(Date.now() / 1000); }
+const asInt = (x, d = 0) => (Number.isFinite(+x) ? +x : d);
+const nowSec = () => Math.floor(Date.now() / 1000);
+
+/* Small settings helpers (persisted in D1) */
+async function ensureSettingsTable(env) {
+  await env.DB.exec?.(`CREATE TABLE IF NOT EXISTS site_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+}
+async function setSetting(env, key, value) {
+  await ensureSettingsTable(env);
+  await env.DB.prepare(
+    `INSERT INTO site_settings(key,value) VALUES(?1,?2)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+  ).bind(key, value).run();
+}
+async function getSettings(env) {
+  await ensureSettingsTable(env);
+  const q = await env.DB.prepare(`SELECT key, value FROM site_settings`).all();
+  const m = {};
+  for (const r of (q.results || [])) m[r.key] = r.value;
+  return m;
+}
+function pickWA(envSettings, env) {
+  // Prefer DB settings, fall back to env
+  return {
+    PUBLIC_BASE_URL: envSettings.public_base_url || env.PUBLIC_BASE_URL || "",
+    WHATSAPP_TOKEN: envSettings.whatsapp_token || env.WHATSAPP_TOKEN || "",
+    PHONE_NUMBER_ID: envSettings.whatsapp_phone_number_id || env.PHONE_NUMBER_ID || "",
+    WHATSAPP_TEMPLATE_NAME: envSettings.whatsapp_template_name || env.WHATSAPP_TEMPLATE_NAME || "",
+    WHATSAPP_TEMPLATE_LANG: envSettings.whatsapp_template_lang || env.WHATSAPP_TEMPLATE_LANG || "",
+  };
+}
 
 export function mountAdmin(router) {
-
   /* -------------------- Events & Ticket Types -------------------- */
 
-  // List all events (used for dropdowns)
   router.add("GET", "/api/admin/events", async (_req, env) => {
     const q = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status
@@ -17,7 +47,6 @@ export function mountAdmin(router) {
     return json({ ok: true, events: q.results || [] });
   });
 
-  // Ticket types for an event
   router.add("GET", "/api/admin/ticket-types", async (req, env) => {
     const u = new URL(req.url);
     const event_id = asInt(u.searchParams.get("event_id"));
@@ -29,7 +58,6 @@ export function mountAdmin(router) {
     return json({ ok: true, ticket_types: q.results || [] });
   });
 
-  // Create a ticket type
   router.add("POST", "/api/admin/ticket-types/add", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const event_id = asInt(b.event_id);
@@ -49,25 +77,21 @@ export function mountAdmin(router) {
 
   /* ------------------------- Tickets ----------------------------- */
 
-  // Summary per ticket type (totals & states)
   router.add("GET", "/api/admin/tickets/summary", async (req, env) => {
     const u = new URL(req.url);
     const event_id = asInt(u.searchParams.get("event_id"));
     if (!event_id) return bad("event_id required");
 
-    // ticket_types baseline
     const tt = await env.DB.prepare(
       `SELECT id, name, price_cents FROM ticket_types WHERE event_id = ?1 ORDER BY id`
     ).bind(event_id).all();
+
     const rows = (tt.results || []).map(r => ({
-      ticket_type_id: r.id,
-      name: r.name,
-      price_cents: r.price_cents,
+      ticket_type_id: r.id, name: r.name, price_cents: r.price_cents,
       total: 0, unused: 0, in: 0, out: 0, void: 0
     }));
     const map = new Map(rows.map(r => [r.ticket_type_id, r]));
 
-    // counts by state
     const c = await env.DB.prepare(
       `SELECT ticket_type_id, state, COUNT(*) cnt
          FROM tickets
@@ -77,8 +101,7 @@ export function mountAdmin(router) {
 
     for (const r of (c.results || [])) {
       const m = map.get(r.ticket_type_id); if (!m) continue;
-      const st = String(r.state || "unused");
-      const n = asInt(r.cnt);
+      const st = String(r.state || "unused"); const n = asInt(r.cnt);
       if (st === "in") m.in += n;
       else if (st === "out") m.out += n;
       else if (st === "void") m.void += n;
@@ -86,16 +109,13 @@ export function mountAdmin(router) {
       m.total += n;
     }
 
-    // grand totals
-    const totals = rows.reduce((acc, r) => {
-      acc.total += r.total; acc.unused += r.unused; acc.in += r.in; acc.out += r.out; acc.void += r.void;
-      return acc;
+    const totals = rows.reduce((a, r) => {
+      a.total += r.total; a.unused += r.unused; a.in += r.in; a.out += r.out; a.void += r.void; return a;
     }, { total: 0, unused: 0, in: 0, out: 0, void: 0 });
 
     return json({ ok: true, rows, totals });
   });
 
-  // Lookup order by short code, return tickets & items
   router.add("GET", "/api/admin/orders/:code", async (_req, env, _ctx, p) => {
     const code = String(p.code || "").trim();
     if (!code) return bad("code required");
@@ -121,46 +141,42 @@ export function mountAdmin(router) {
     return json({ ok: true, order: o, items: items.results || [], tickets: tickets.results || [] });
   });
 
-  // Send tickets via WhatsApp (single button in UI)
-  // Body: { to: "2771...", code: "ABC123" }
+  // WhatsApp send (reads config from site_settings first)
   router.add("POST", "/api/admin/orders/send-whatsapp", async (req, env) => {
     let body; try { body = await req.json(); } catch { return bad("Bad JSON"); }
     const to = String(body.to || "").trim();
     const code = String(body.code || "").trim();
     if (!to || !code) return bad("to & code required");
 
-    const BASE = env.PUBLIC_BASE_URL || "";
+    const s = await getSettings(env);
+    const cfg = pickWA(s, env);
+
+    const BASE = cfg.PUBLIC_BASE_URL || "";
     const link = `${BASE}/t/${encodeURIComponent(code)}`;
 
-    // If WA not configured, return a clear error for UI
-    if (!env.WHATSAPP_TOKEN || !env.PHONE_NUMBER_ID || !env.WHATSAPP_TEMPLATE_NAME || !env.WHATSAPP_TEMPLATE_LANG) {
+    if (!cfg.WHATSAPP_TOKEN || !cfg.PHONE_NUMBER_ID || !cfg.WHATSAPP_TEMPLATE_NAME || !cfg.WHATSAPP_TEMPLATE_LANG) {
       return json({ ok: false, error: "WhatsApp not configured" }, { status: 400 });
     }
 
-    // Simple text message fallback using "messages" API if template not desired
     const payload = {
       messaging_product: "whatsapp",
       to,
       type: "template",
       template: {
-        name: env.WHATSAPP_TEMPLATE_NAME,
-        language: { code: env.WHATSAPP_TEMPLATE_LANG },
+        name: cfg.WHATSAPP_TEMPLATE_NAME,
+        language: { code: cfg.WHATSAPP_TEMPLATE_LANG },
         components: [
-          // If your template has a button with a variable {{1}}, this fills it:
-          { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: code }] },
-          // If you added a body placeholder for the link, also pass it as text:
-          { type: "body", parameters: [{ type: "text", text: link }] }
+          { type: "body", parameters: [{ type: "text", text: link }] },
+          // If your template has a URL button with {{1}} variable, this sets it:
+          { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: code }] }
         ]
       }
     };
 
-    const url = `https://graph.facebook.com/v20.0/${env.PHONE_NUMBER_ID}/messages`;
+    const url = `https://graph.facebook.com/v20.0/${cfg.PHONE_NUMBER_ID}/messages`;
     const r = await fetch(url, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${env.WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json"
-      },
+      headers: { "Authorization": `Bearer ${cfg.WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
@@ -174,7 +190,6 @@ export function mountAdmin(router) {
   /* ------------------------- POS admin --------------------------- */
 
   router.add("GET", "/api/admin/pos/sessions", async (_req, env) => {
-    // sessions + gate + sums from pos_payments
     const s = await env.DB.prepare(
       `SELECT s.id, s.cashier_name, s.gate_id, s.opened_at, s.closed_at, s.closing_manager,
               g.name AS gate_name
@@ -216,7 +231,6 @@ export function mountAdmin(router) {
 
   /* --------------------------- Vendors --------------------------- */
 
-  // List vendors for event
   router.add("GET", "/api/admin/vendors", async (req, env) => {
     const u = new URL(req.url);
     const event_id = asInt(u.searchParams.get("event_id"));
@@ -229,7 +243,6 @@ export function mountAdmin(router) {
     return json({ ok: true, vendors: v.results || [] });
   });
 
-  // Add vendor
   router.add("POST", "/api/admin/vendors/add", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const event_id = asInt(b.event_id);
@@ -249,7 +262,6 @@ export function mountAdmin(router) {
     return json({ ok: true });
   });
 
-  // Update vendor
   router.add("POST", "/api/admin/vendors/update", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const id = asInt(b.id);
@@ -269,34 +281,6 @@ export function mountAdmin(router) {
       asInt(b.staff_quota), asInt(b.vehicle_quota)
     ).run();
     return json({ ok: true });
-  });
-
-  // Vendor passes (list)
-  router.add("GET", "/api/admin/vendor/passes", async (req, env) => {
-    const u = new URL(req.url);
-    const vendor_id = asInt(u.searchParams.get("vendor_id"));
-    if (!vendor_id) return bad("vendor_id required");
-    const p = await env.DB.prepare(
-      `SELECT id, vendor_id, type, label, vehicle_reg, qr, state, first_in_at, last_out_at, issued_at
-         FROM vendor_passes WHERE vendor_id = ?1 ORDER BY id ASC`
-    ).bind(vendor_id).all();
-    return json({ ok: true, passes: p.results || [] });
-  });
-
-  // Add a vendor pass
-  router.add("POST", "/api/admin/vendor/passes/add", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const vendor_id = asInt(b.vendor_id);
-    const type = String(b.type || "staff");
-    if (!vendor_id || (type !== "staff" && type !== "vehicle")) return bad("vendor_id & valid type required");
-    const label = String(b.label || "").trim();
-    const vehicle_reg = String(b.vehicle_reg || "").trim();
-    const qr = ("VP-" + Math.random().toString(36).slice(2, 10)).toUpperCase();
-    await env.DB.prepare(
-      `INSERT INTO vendor_passes (vendor_id, type, label, vehicle_reg, qr, state, issued_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, 'unused', ?6)`
-    ).bind(vendor_id, type, label, vehicle_reg, qr, nowSec()).run();
-    return json({ ok: true, qr });
   });
 
   /* ---------------------------- Users ---------------------------- */
@@ -329,14 +313,37 @@ export function mountAdmin(router) {
 
   /* ------------------------- Site settings ----------------------- */
 
+  // Read settings (merged view + flag)
   router.add("GET", "/api/admin/settings", async (_req, env) => {
-    // We surface whether WA is configured; can expand later to editable settings
-    const cfg = {
-      public_base: env.PUBLIC_BASE_URL || "",
-      whatsapp_configured: !!(env.WHATSAPP_TOKEN && env.PHONE_NUMBER_ID),
-      whatsapp_template: env.WHATSAPP_TEMPLATE_NAME || "",
-      whatsapp_lang: env.WHATSAPP_TEMPLATE_LANG || ""
-    };
-    return json({ ok: true, settings: cfg });
+    const s = await getSettings(env);
+    const cfg = pickWA(s, env);
+    const configured = !!(cfg.WHATSAPP_TOKEN && cfg.PHONE_NUMBER_ID && cfg.WHATSAPP_TEMPLATE_NAME && cfg.WHATSAPP_TEMPLATE_LANG);
+    return json({
+      ok: true,
+      settings: {
+        public_base_url: cfg.PUBLIC_BASE_URL,
+        whatsapp_token: cfg.WHATSAPP_TOKEN ? "••••" : "",
+        whatsapp_phone_number_id: cfg.PHONE_NUMBER_ID,
+        whatsapp_template_name: cfg.WHATSAPP_TEMPLATE_NAME,
+        whatsapp_template_lang: cfg.WHATSAPP_TEMPLATE_LANG,
+        configured
+      }
+    });
+  });
+
+  // Update settings (stores into site_settings)
+  router.add("POST", "/api/admin/settings/update", async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const keys = [
+      "public_base_url",
+      "whatsapp_token",
+      "whatsapp_phone_number_id",
+      "whatsapp_template_name",
+      "whatsapp_template_lang",
+    ];
+    for (const k of keys) {
+      if (b[k] !== undefined) await setSetting(env, k, String(b[k] || ""));
+    }
+    return json({ ok: true });
   });
 }
