@@ -1,7 +1,8 @@
-// src/ui/admin.js
+// /src/ui/admin.js
 import { LOGO_URL } from "../constants.js";
 
-export function renderAdminReviewHTML() {
+// Must export this name because index.js imports { adminHTML }
+export function adminHTML() {
   return `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Admin dashboard</title>
@@ -61,15 +62,9 @@ function toast(msg, ok=true){
   document.body.appendChild(t); setTimeout(()=>t.remove(), 2600);
 }
 
-async function loadEvents(){
-  const r = await API('/api/events'); return r.ok ? r.json() : [];
-}
-async function loadEventStats(id){
-  const r = await API('/api/events/'+id+'/stats'); return r.ok ? r.json() : [];
-}
-async function loadTemplates(){
-  const r = await API('/api/templates'); return r.ok ? r.json() : [];
-}
+async function loadEvents(){ const r = await API('/api/events'); return r.ok ? r.json() : []; }
+async function loadEventStats(id){ const r = await API('/api/events/'+id+'/stats'); return r.ok ? r.json() : []; }
+async function loadTemplates(){ const r = await API('/api/templates'); return r.ok ? r.json() : []; }
 
 function viewTickets(){
   const el = document.getElementById('view'); el.innerHTML = '';
@@ -120,7 +115,6 @@ function viewTickets(){
     });
   }
 
-  // One-click WhatsApp send on existing order code
   $('#sendwa', card).onclick = async ()=>{
     const code = ($('#ordercode', card).value || '').trim();
     const to = ($('#waphone', card).value || '').trim();
