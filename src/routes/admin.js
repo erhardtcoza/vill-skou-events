@@ -1,239 +1,247 @@
 // /src/routes/admin.js
-import { json, bad } from "../utils/http.js";
-import { requireRole } from "../utils/auth.js";
+import { json, bad, withCORS } from "../utils/http.js";
 
-/** Admin API */
+/** Ensure a tiny key/value settings table exists */
+async function ensureSettingsTable(db) {
+  await db.exec?.(`CREATE TABLE IF NOT EXISTS site_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+}
+
+async function getSetting(db, key) {
+  await ensureSettingsTable(db);
+  const r = await db.prepare(`SELECT value FROM site_settings WHERE key = ?1`).bind(key).all();
+  return (r.results?.[0]?.value) ?? null;
+}
+
+async function setSettings(db, obj) {
+  await ensureSettingsTable(db);
+  const tx = await db.batch?.(
+    Object.entries(obj).map(([k, v]) =>
+      db.prepare(`INSERT INTO site_settings(key,value) VALUES(?1,?2)
+                  ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+        .bind(k, String(v ?? "")))
+  );
+  return tx;
+}
+
+function pickEnvOr(dbVal, envVal) {
+  return (envVal && String(envVal).trim()) ? envVal : dbVal;
+}
+
+/** WhatsApp Graph sender (template with a single URL button param) */
+async function sendWhatsAppTemplate({ token, phoneNumberId, to, template, lang, urlParam }) {
+  const endpoint = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
+  const body = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: template,
+      language: { code: lang },
+      components: urlParam ? [{
+        type: "button",
+        sub_type: "url",
+        index: "0",
+        parameters: [{ type: "text", text: urlParam }]
+      }] : undefined
+    }
+  };
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify(body)
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Graph ${res.status}: ${text}`);
+  return text;
+}
+
 export function mountAdmin(router) {
-  const guard = (h) => requireRole("admin", h);
-
-  /* ---------------- Events: minimal list for dropdowns --------------- */
-  router.add("GET", "/api/admin/events/basic", guard(async (_req, env) => {
+  // ---------------- Events (for dropdowns) ----------------
+  router.add("GET", "/api/admin/events", withCORS(async (_req, env) => {
     const q = await env.DB.prepare(
-      `SELECT id, slug, name, starts_at, ends_at, status
-         FROM events ORDER BY starts_at DESC`
+      `SELECT id, slug, name, starts_at, ends_at, status FROM events ORDER BY starts_at ASC`
     ).all();
-    return json({ ok:true, events: (q.results||[]).map(r => ({
-      id: Number(r.id),
-      slug: r.slug,
-      name: r.name,
-      starts_at: Number(r.starts_at||0),
-      ends_at: Number(r.ends_at||0),
-      status: r.status
-    }))});
+    return json({ ok: true, events: q.results ?? [] });
   }));
 
-  /* ---------------- Tickets: per-type summary ------------------------ */
-  router.add("GET", "/api/admin/tickets/summary", guard(async (req, env) => {
-    const url = new URL(req.url);
-    const event_id = Number(url.searchParams.get("event_id") || 0);
+  // ---------------- Ticket summary by event ----------------
+  router.add("GET", "/api/admin/tickets/summary", withCORS(async (req, env) => {
+    const { searchParams } = new URL(req.url);
+    const event_id = Number(searchParams.get("event_id") || 0);
     if (!event_id) return bad("event_id required");
 
-    const typesQ = await env.DB.prepare(
-      `SELECT id, name, price_cents FROM ticket_types WHERE event_id=? ORDER BY id`
+    // per type
+    const perType = await env.DB.prepare(
+      `SELECT tt.id AS type_id, tt.name, tt.price_cents,
+              COUNT(t.id) AS total,
+              SUM(CASE WHEN t.state='unused' THEN 1 ELSE 0 END) AS unused,
+              SUM(CASE WHEN t.state='in' THEN 1 ELSE 0 END) AS in_count,
+              SUM(CASE WHEN t.state='out' THEN 1 ELSE 0 END) AS out_count,
+              SUM(CASE WHEN t.state='void' THEN 1 ELSE 0 END) AS void_count
+         FROM ticket_types tt
+         LEFT JOIN tickets t ON t.ticket_type_id = tt.id AND t.event_id = ?1
+        WHERE tt.event_id = ?1
+        GROUP BY tt.id
+        ORDER BY tt.id ASC`
     ).bind(event_id).all();
 
-    const statsQ = await env.DB.prepare(
-      `SELECT ticket_type_id AS tid,
-              COUNT(*) AS total,
+    // totals
+    const totals = await env.DB.prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN state='in' THEN 1 ELSE 0 END) AS in_count,
+              SUM(CASE WHEN state='out' THEN 1 ELSE 0 END) AS out_count,
               SUM(CASE WHEN state='unused' THEN 1 ELSE 0 END) AS unused,
-              SUM(CASE WHEN state='in' THEN 1 ELSE 0 END) AS in_cnt,
-              SUM(CASE WHEN state='out' THEN 1 ELSE 0 END) AS out_cnt,
-              SUM(CASE WHEN state='void' THEN 1 ELSE 0 END) AS void_cnt
-         FROM tickets
-        WHERE event_id=?
-        GROUP BY ticket_type_id`
+              SUM(CASE WHEN state='void' THEN 1 ELSE 0 END) AS void_count
+         FROM tickets WHERE event_id = ?1`
     ).bind(event_id).all();
 
-    const statMap = new Map((statsQ.results||[]).map(r => [Number(r.tid), r]));
-    const rows = (typesQ.results||[]).map(t => {
-      const s = statMap.get(Number(t.id)) || {};
-      return {
-        ticket_type_id: Number(t.id),
-        name: t.name,
-        price_cents: Number(t.price_cents||0),
-        total: Number(s.total||0),
-        unused: Number(s.unused||0),
-        in: Number(s.in_cnt||0),
-        out: Number(s.out_cnt||0),
-        void: Number(s.void_cnt||0)
-      };
+    return json({
+      ok: true,
+      per_type: perType.results ?? [],
+      totals: (totals.results?.[0]) ?? { total: 0, in_count: 0, out_count: 0, unused: 0, void_count: 0 }
     });
-
-    const totals = rows.reduce((a,r)=>({
-      total:a.total+r.total, unused:a.unused+r.unused, in:a.in+r.in,
-      out:a.out+r.out, void:a.void+r.void
-    }), {total:0,unused:0,in:0,out:0,void:0});
-
-    return json({ ok:true, rows, totals });
   }));
 
-  /* ---------------- Tickets: order lookup by short code -------------- */
-  router.add("GET", "/api/admin/order/by-code/:code", guard(async (_req, env, _ctx, p) => {
+  // ---------------- Order lookup (by short_code) ----------------
+  router.add("GET", "/api/admin/order/by-code/:code", withCORS(async (_req, env, _ctx, p) => {
     const code = String(p.code || "").trim();
     if (!code) return bad("code required");
 
-    const orderQ = await env.DB.prepare(
-      `SELECT id, short_code, event_id, status, total_cents, buyer_name, buyer_email, buyer_phone
-         FROM orders WHERE UPPER(short_code)=UPPER(?) LIMIT 1`
+    const oQ = await env.DB.prepare(
+      `SELECT id, short_code, event_id, status, buyer_name, buyer_email, buyer_phone, total_cents
+         FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
     ).bind(code).all();
-    const order = (orderQ.results||[])[0];
-    if (!order) return bad("Not found", 404);
+    const order = oQ.results?.[0];
+    if (!order) return json({ ok: false, error: "not_found" }, { status: 404 });
 
-    const itemsQ = await env.DB.prepare(
+    const tQ = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, tt.name AS type_name, tt.price_cents
-         FROM tickets t
-         JOIN ticket_types tt ON tt.id = t.ticket_type_id
-        WHERE t.order_id=? ORDER BY t.id`
+         FROM tickets t JOIN ticket_types tt ON tt.id = t.ticket_type_id
+        WHERE t.order_id = ?1 ORDER BY t.id ASC`
     ).bind(order.id).all();
 
-    return json({ ok:true, order: {
-      id: Number(order.id),
-      short_code: order.short_code,
-      event_id: Number(order.event_id),
-      status: order.status,
-      total_cents: Number(order.total_cents||0),
-      buyer_name: order.buyer_name,
-      buyer_email: order.buyer_email,
-      buyer_phone: order.buyer_phone
-    }, tickets: (itemsQ.results||[]).map(r => ({
-      id: Number(r.id),
-      qr: r.qr,
-      state: r.state,
-      type_name: r.type_name,
-      price_cents: Number(r.price_cents||0)
-    }))});
+    return json({ ok: true, order, tickets: tQ.results ?? [] });
   }));
 
-  /* ---------------- Tickets: WhatsApp send link ---------------------- */
-  // Expects JSON: { phone: "27...", code:"ABC123" }
-  // Sends template with a single URL button param: https://.../t/{code}
-  router.add("POST", "/api/admin/order/send-wa", guard(async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const phone = String(b.phone||"").replace(/\D/g,"");
-    const code  = String(b.code||"").trim();
-    if (!phone || !code) return bad("phone and code required");
-
-    const base = env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za";
-    const link = `${base}/t/${code}`;
-
-    const token = env.WHATSAPP_ACCESS_TOKEN;
-    const phoneId = env.PHONE_NUMBER_ID;
-    const template = env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery";
-    const lang = env.WHATSAPP_TEMPLATE_LANG || "af";
-
-    if (!token || !phoneId) return bad("WhatsApp not configured", 501);
-
-    const payload = {
-      messaging_product: "whatsapp",
-      to: phone,
-      type: "template",
-      template: {
-        name: template,
-        language: { code: lang },
-        components: [
-          { type: "button",
-            sub_type: "url",
-            index: "0",
-            parameters: [{ type: "text", text: link }]
-          }
-        ]
-      }
-    };
-
-    const r = await fetch(`https://graph.facebook.com/v19.0/${phoneId}/messages`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!r.ok) {
-      const body = await r.text().catch(()=>"?");
-      return bad(`WA send failed: ${body}`, 502);
-    }
-    return json({ ok:true });
-  }));
-
-  /* ---------------- Vendors: list / create / update ------------------ */
-  router.add("GET", "/api/admin/vendors/list", guard(async (req, env) => {
-    const url = new URL(req.url);
-    const event_id = Number(url.searchParams.get("event_id")||0);
+  // ---------------- Vendors CRUD ----------------
+  router.add("GET", "/api/admin/vendors", withCORS(async (req, env) => {
+    const { searchParams } = new URL(req.url);
+    const event_id = Number(searchParams.get("event_id") || 0);
     if (!event_id) return bad("event_id required");
     const q = await env.DB.prepare(
-      `SELECT id, name, contact_name, phone, email, stand_number,
-              staff_quota, vehicle_quota
-         FROM vendors WHERE event_id=? ORDER BY id`
+      `SELECT id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota
+         FROM vendors WHERE event_id = ?1 ORDER BY name ASC`
     ).bind(event_id).all();
-    return json({ ok:true, vendors: (q.results||[]).map(v=>({
-      id:Number(v.id), name:v.name, contact_name:v.contact_name,
-      phone:v.phone, email:v.email, stand_number:v.stand_number,
-      staff_quota:Number(v.staff_quota||0), vehicle_quota:Number(v.vehicle_quota||0)
-    }))});
+    return json({ ok: true, vendors: q.results ?? [] });
   }));
 
-  router.add("POST", "/api/admin/vendors/create", guard(async (req, env) => {
+  router.add("POST", "/api/admin/vendors", withCORS(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const event_id = Number(b.event_id||0);
-    const name = String(b.name||"").trim();
+    const {
+      event_id, name, contact_name, phone, email,
+      stand_number, staff_quota = 0, vehicle_quota = 0
+    } = b || {};
     if (!event_id || !name) return bad("event_id and name required");
-
-    await env.DB.prepare(
+    const r = await env.DB.prepare(
       `INSERT INTO vendors (event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota)
        VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`
-    ).bind(
-      event_id, name, b.contact_name||"", b.phone||"", b.email||"",
-      b.stand_number||"", Number(b.staff_quota||0), Number(b.vehicle_quota||0)
-    ).run();
-
-    return json({ ok:true });
+    ).bind(event_id, name, contact_name, phone, email, stand_number, Number(staff_quota||0), Number(vehicle_quota||0)).run();
+    return json({ ok: true, id: r.meta.last_row_id });
   }));
 
-  router.add("POST", "/api/admin/vendors/update", guard(async (req, env) => {
+  router.add("POST", "/api/admin/vendor/update", withCORS(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = Number(b.id||0);
+    const { id, ...patch } = b || {};
     if (!id) return bad("id required");
-
-    await env.DB.prepare(
-      `UPDATE vendors SET
-         name=?2, contact_name=?3, phone=?4, email=?5,
-         stand_number=?6, staff_quota=?7, vehicle_quota=?8
-       WHERE id=?1`
-    ).bind(
-      id, b.name||"", b.contact_name||"", b.phone||"", b.email||"",
-      b.stand_number||"", Number(b.staff_quota||0), Number(b.vehicle_quota||0)
-    ).run();
-
-    return json({ ok:true });
+    const fields = [];
+    const binds = [];
+    for (const [k, v] of Object.entries(patch)) {
+      fields.push(`${k} = ?${fields.length + 1}`);
+      binds.push(v);
+    }
+    if (!fields.length) return bad("No fields");
+    binds.push(id);
+    await env.DB.prepare(`UPDATE vendors SET ${fields.join(", ")} WHERE id = ?${binds.length}`).bind(...binds).run();
+    return json({ ok: true });
   }));
 
-  /* ---------------- Users: list / create / delete -------------------- */
-  router.add("GET", "/api/admin/users/list", guard(async (_req, env) => {
-    const q = await env.DB.prepare(
-      `SELECT id, username, role FROM users ORDER BY id`
-    ).all();
-    return json({ ok:true, users: (q.results||[]).map(u=>({
-      id:Number(u.id), username:u.username, role:u.role
-    }))});
+  // ---------------- Users (simple) ----------------
+  router.add("GET", "/api/admin/users", withCORS(async (_req, env) => {
+    const q = await env.DB.prepare(`SELECT id, username, role FROM users ORDER BY id ASC`).all();
+    return json({ ok: true, users: q.results ?? [] });
   }));
-
-  router.add("POST", "/api/admin/users/create", guard(async (req, env) => {
+  router.add("POST", "/api/admin/users", withCORS(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const username = String(b.username||"").trim();
-    const role = String(b.role||"").trim();
+    const { username, role } = b || {};
     if (!username || !role) return bad("username and role required");
-    await env.DB.prepare(
-      `INSERT INTO users (username, role) VALUES (?1, ?2)`
-    ).bind(username, role).run();
-    return json({ ok:true });
+    const r = await env.DB.prepare(`INSERT INTO users (username, role) VALUES (?1,?2)`).bind(username, role).run();
+    return json({ ok: true, id: r.meta.last_row_id });
+  }));
+  router.add("DELETE", "/api/admin/users/:id", withCORS(async (_req, env, _ctx, p) => {
+    await env.DB.prepare(`DELETE FROM users WHERE id = ?1`).bind(Number(p.id)).run();
+    return json({ ok: true });
   }));
 
-  router.add("POST", "/api/admin/users/delete", guard(async (req, env) => {
+  // ---------------- Site settings (WhatsApp) ----------------
+  router.add("GET", "/api/admin/site-settings", withCORS(async (_req, env) => {
+    const keys = ["whatsapp_phone_number_id","whatsapp_business_id","whatsapp_access_token","whatsapp_template_name","whatsapp_template_lang","public_base_url"];
+    const got = {};
+    for (const k of keys) got[k] = await getSetting(env.DB, k);
+    // env overrides if present
+    got.public_base_url = pickEnvOr(got.public_base_url, env.PUBLIC_BASE_URL);
+    got.whatsapp_phone_number_id = pickEnvOr(got.whatsapp_phone_number_id, env.PHONE_NUMBER_ID);
+    got.whatsapp_business_id = pickEnvOr(got.whatsapp_business_id, env.BUSINESS_ID);
+    got.whatsapp_access_token = pickEnvOr(got.whatsapp_access_token, env.WHATSAPP_ACCESS_TOKEN);
+    got.whatsapp_template_name = pickEnvOr(got.whatsapp_template_name, env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery");
+    got.whatsapp_template_lang = pickEnvOr(got.whatsapp_template_lang, env.WHATSAPP_TEMPLATE_LANG || "en_US");
+    return json({ ok: true, settings: got });
+  }));
+
+  router.add("POST", "/api/admin/site-settings", withCORS(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = Number(b.id||0);
-    if (!id) return bad("id required");
-    await env.DB.prepare(`DELETE FROM users WHERE id=?1`).bind(id).run();
-    return json({ ok:true });
+    await setSettings(env.DB, {
+      whatsapp_phone_number_id: b.whatsapp_phone_number_id ?? "",
+      whatsapp_business_id: b.whatsapp_business_id ?? "",
+      whatsapp_access_token: b.whatsapp_access_token ?? "",
+      whatsapp_template_name: b.whatsapp_template_name ?? "ticket_delivery",
+      whatsapp_template_lang: b.whatsapp_template_lang ?? "en_US",
+      public_base_url: b.public_base_url ?? ""
+    });
+    return json({ ok: true });
+  }));
+
+  // ---------------- WhatsApp: send order’s ticket link ----------------
+  router.add("POST", "/api/admin/whatsapp/send-order", withCORS(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const to = String(b.to || "").trim();          // e.g. 2771...
+    const code = String(b.code || "").trim();      // order short_code (or /t/:code link code)
+    if (!to || !code) return bad("to and code required");
+
+    // Resolve settings (env wins, else DB)
+    const phoneNumberId = pickEnvOr(await getSetting(env.DB,"whatsapp_phone_number_id"), env.PHONE_NUMBER_ID);
+    const token = pickEnvOr(await getSetting(env.DB,"whatsapp_access_token"), env.WHATSAPP_ACCESS_TOKEN);
+    const template = pickEnvOr(await getSetting(env.DB,"whatsapp_template_name"), env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery");
+    const lang = pickEnvOr(await getSetting(env.DB,"whatsapp_template_lang"), env.WHATSAPP_TEMPLATE_LANG || "en_US");
+    const baseUrl = pickEnvOr(await getSetting(env.DB,"public_base_url"), env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za");
+
+    if (!phoneNumberId || !token) return bad("whatsapp_not_configured", 412);
+
+    // Build ticket link (we use /t/:code which renders all tickets for that order)
+    const link = `${baseUrl.replace(/\/$/,"")}/t/${encodeURIComponent(code)}`;
+
+    try {
+      const resp = await sendWhatsAppTemplate({
+        token, phoneNumberId, to, template, lang, urlParam: link
+      });
+      return json({ ok: true, sent: true, resp });
+    } catch (e) {
+      return bad(`send_failed: ${e.message}`, 500);
+    }
   }));
 }
