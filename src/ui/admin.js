@@ -36,7 +36,7 @@ button.ghost{background:#fff}
 </style>
 </head><body><div class="wrap">
 
-<div class="h1"><img src="${LOGO_URL}" alt="logo" height="34"/> Admin dashboard</div>
+<div class="h1"><img src="${LOGO_URL}" alt="logo" height="60"/> Admin dashboard</div>
 
 <nav class="nav">
   <a href="#tickets" class="active">Tickets</a>
