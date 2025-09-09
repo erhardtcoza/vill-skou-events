@@ -29,7 +29,7 @@ import { loginHTML } from "./ui/login.js";
 import { requireRole } from "./utils/auth.js";
 
 const router = Router();
-registerAddonRoutes(app, env);
+registerAddonRoutes(router);   // <— use router, not app/env
 
 // Helper: accept either a function (returning HTML) or a string export
 function renderHTML(mod, ...args) {
