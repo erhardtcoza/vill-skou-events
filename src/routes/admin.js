@@ -1,349 +1,266 @@
 // /src/routes/admin.js
 import { json, bad } from "../utils/http.js";
 
-const asInt = (x, d = 0) => (Number.isFinite(+x) ? +x : d);
-const nowSec = () => Math.floor(Date.now() / 1000);
-
-/* Small settings helpers (persisted in D1) */
-async function ensureSettingsTable(env) {
-  await env.DB.exec?.(`CREATE TABLE IF NOT EXISTS site_settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-  )`);
-}
-async function setSetting(env, key, value) {
-  await ensureSettingsTable(env);
-  await env.DB.prepare(
-    `INSERT INTO site_settings(key,value) VALUES(?1,?2)
-     ON CONFLICT(key) DO UPDATE SET value=excluded.value`
-  ).bind(key, value).run();
-}
-async function getSettings(env) {
-  await ensureSettingsTable(env);
-  const q = await env.DB.prepare(`SELECT key, value FROM site_settings`).all();
-  const m = {};
-  for (const r of (q.results || [])) m[r.key] = r.value;
-  return m;
-}
-function pickWA(envSettings, env) {
-  // Prefer DB settings, fall back to env
-  return {
-    PUBLIC_BASE_URL: envSettings.public_base_url || env.PUBLIC_BASE_URL || "",
-    WHATSAPP_TOKEN: envSettings.whatsapp_token || env.WHATSAPP_TOKEN || "",
-    PHONE_NUMBER_ID: envSettings.whatsapp_phone_number_id || env.PHONE_NUMBER_ID || "",
-    WHATSAPP_TEMPLATE_NAME: envSettings.whatsapp_template_name || env.WHATSAPP_TEMPLATE_NAME || "",
-    WHATSAPP_TEMPLATE_LANG: envSettings.whatsapp_template_lang || env.WHATSAPP_TEMPLATE_LANG || "",
-  };
-}
-
+/** Admin / back-office API */
 export function mountAdmin(router) {
-  /* -------------------- Events & Ticket Types -------------------- */
+
+  /* ----------------- helpers ----------------- */
+  async function ensureSettingsTable(env) {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS site_settings (
+         key   TEXT PRIMARY KEY,
+         value TEXT NOT NULL
+       )`
+    ).run();
+  }
+  async function ensureWATemplateTable(env) {
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS wa_templates (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         name TEXT NOT NULL,
+         language TEXT NOT NULL,
+         status TEXT,
+         category TEXT,
+         components TEXT
+       )`
+    ).run();
+  }
+  async function setSetting(env, key, value) {
+    await ensureSettingsTable(env);
+    await env.DB.prepare(
+      `INSERT INTO site_settings(key, value)
+         VALUES (?1, ?2)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).bind(key, value).run();
+  }
+  async function getSettingsMap(env) {
+    await ensureSettingsTable(env);
+    const q = await env.DB.prepare(`SELECT key, value FROM site_settings`).all();
+    const m = {};
+    for (const r of (q.results || [])) m[r.key] = r.value;
+    return m;
+  }
+
+  /* ----------------- settings ----------------- */
+
+  // Read all settings (used by Site settings UI)
+  router.add("GET", "/api/admin/settings", async (_req, env) => {
+    const s = await getSettingsMap(env);
+    return json({ ok: true, settings: s });
+  });
+
+  // Save settings (expects {settings:{KEY:VALUE}})
+  router.add("POST", "/api/admin/settings/update", async (req, env) => {
+    try {
+      const body = await req.json();
+      const obj = body?.settings && typeof body.settings === "object" ? body.settings : null;
+      if (!obj) return bad("settings object required");
+
+      for (const [k, v] of Object.entries(obj)) {
+        await setSetting(env, String(k), String(v ?? ""));
+      }
+      const s = await getSettingsMap(env);
+      return json({ ok: true, settings: s });
+    } catch (e) {
+      return bad("Failed to save settings: " + (e?.message || e), 500);
+    }
+  });
+
+  /* -------- WhatsApp templates management ------ */
+
+  // List templates from local table
+  router.add("GET", "/api/admin/wa/templates", async (_req, env) => {
+    await ensureWATemplateTable(env);
+    const q = await env.DB.prepare(
+      `SELECT id, name, language, status, category, components FROM wa_templates ORDER BY name, language`
+    ).all();
+    const items = (q.results || []).map(r => ({
+      id: r.id,
+      name: r.name,
+      language: r.language,
+      status: r.status,
+      category: r.category,
+      components: r.components ? JSON.parse(r.components) : []
+    }));
+    return json({ ok: true, templates: items });
+  });
+
+  // Sync from Meta Graph using saved settings (WA_BUSINESS_ID + WA_TOKEN)
+  router.add("POST", "/api/admin/wa/templates/sync", async (_req, env) => {
+    await ensureWATemplateTable(env);
+    const s = await getSettingsMap(env);
+    const biz = s.WA_BUSINESS_ID || s.BUSINESS_ID;   // allow either key
+    const token = s.WA_TOKEN || s.WHATSAPP_TOKEN || s.GRAPH_TOKEN;
+
+    if (!biz || !token) return bad("WA_BUSINESS_ID and WA_TOKEN required");
+
+    const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(biz)}/message_templates?limit=200`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` }});
+    if (!res.ok) {
+      const txt = await res.text();
+      return bad("Failed to fetch from Meta: " + txt, 502);
+    }
+    const data = await res.json(); // {data:[{name,language,status,category,components:[...]}], paging?...}
+
+    // store (truncate + upsert)
+    await env.DB.prepare(`DELETE FROM wa_templates`).run();
+    const items = Array.isArray(data?.data) ? data.data : [];
+    for (const t of items) {
+      await env.DB.prepare(
+        `INSERT INTO wa_templates (name, language, status, category, components)
+         VALUES (?1, ?2, ?3, ?4, ?5)`
+      ).bind(t.name, t.language, t.status || "", t.category || "", JSON.stringify(t.components || [])).run();
+    }
+    return json({ ok: true, count: items.length });
+  });
+
+  /* ----------------- events ----------------- */
 
   router.add("GET", "/api/admin/events", async (_req, env) => {
     const q = await env.DB.prepare(
-      `SELECT id, slug, name, venue, starts_at, ends_at, status
-         FROM events ORDER BY starts_at DESC, id DESC`
+      `SELECT id, slug, name, venue, starts_at, ends_at, status FROM events ORDER BY starts_at ASC`
     ).all();
-    return json({ ok: true, events: q.results || [] });
+    return json({ ok: true, events: (q.results || []) });
   });
 
-  router.add("GET", "/api/admin/ticket-types", async (req, env) => {
-    const u = new URL(req.url);
-    const event_id = asInt(u.searchParams.get("event_id"));
-    if (!event_id) return bad("event_id required");
+  router.add("GET", "/api/admin/events/:event_id/ticket-types", async (_req, env, _c, p) => {
+    const id = Number(p.event_id || 0);
+    if (!id) return bad("event_id required");
     const q = await env.DB.prepare(
-      `SELECT id, event_id, name, code, price_cents, capacity, per_order_limit, requires_gender
-         FROM ticket_types WHERE event_id = ?1 ORDER BY id ASC`
-    ).bind(event_id).all();
-    return json({ ok: true, ticket_types: q.results || [] });
-  });
-
-  router.add("POST", "/api/admin/ticket-types/add", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const event_id = asInt(b.event_id);
-    const name = String(b.name || "").trim();
-    const price_cents = asInt(b.price_cents);
-    const capacity = asInt(b.capacity);
-    const per_order_limit = asInt(b.per_order_limit, 10);
-    const requires_gender = b.requires_gender ? 1 : 0;
-    if (!event_id || !name) return bad("event_id & name required");
-    await env.DB.prepare(
-      `INSERT INTO ticket_types
-       (event_id, name, code, price_cents, capacity, per_order_limit, requires_gender)
-       VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6)`
-    ).bind(event_id, name, price_cents, capacity, per_order_limit, requires_gender).run();
-    return json({ ok: true });
-  });
-
-  /* ------------------------- Tickets ----------------------------- */
-
-  router.add("GET", "/api/admin/tickets/summary", async (req, env) => {
-    const u = new URL(req.url);
-    const event_id = asInt(u.searchParams.get("event_id"));
-    if (!event_id) return bad("event_id required");
-
-    const tt = await env.DB.prepare(
-      `SELECT id, name, price_cents FROM ticket_types WHERE event_id = ?1 ORDER BY id`
-    ).bind(event_id).all();
-
-    const rows = (tt.results || []).map(r => ({
-      ticket_type_id: r.id, name: r.name, price_cents: r.price_cents,
-      total: 0, unused: 0, in: 0, out: 0, void: 0
-    }));
-    const map = new Map(rows.map(r => [r.ticket_type_id, r]));
-
-    const c = await env.DB.prepare(
-      `SELECT ticket_type_id, state, COUNT(*) cnt
-         FROM tickets
+      `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender
+         FROM ticket_types
         WHERE event_id = ?1
-        GROUP BY ticket_type_id, state`
-    ).bind(event_id).all();
-
-    for (const r of (c.results || [])) {
-      const m = map.get(r.ticket_type_id); if (!m) continue;
-      const st = String(r.state || "unused"); const n = asInt(r.cnt);
-      if (st === "in") m.in += n;
-      else if (st === "out") m.out += n;
-      else if (st === "void") m.void += n;
-      else m.unused += n;
-      m.total += n;
-    }
-
-    const totals = rows.reduce((a, r) => {
-      a.total += r.total; a.unused += r.unused; a.in += r.in; a.out += r.out; a.void += r.void; return a;
-    }, { total: 0, unused: 0, in: 0, out: 0, void: 0 });
-
-    return json({ ok: true, rows, totals });
+        ORDER BY id ASC`
+    ).bind(id).all();
+    return json({ ok: true, ticket_types: (q.results || []) });
   });
 
-  router.add("GET", "/api/admin/orders/:code", async (_req, env, _ctx, p) => {
-    const code = String(p.code || "").trim();
-    if (!code) return bad("code required");
-    const o = await env.DB.prepare(
-      `SELECT id, short_code, event_id, status, total_cents,
-              buyer_name, buyer_email, buyer_phone, created_at, paid_at
-         FROM orders WHERE UPPER(short_code) = UPPER(?1) LIMIT 1`
-    ).bind(code).first();
-    if (!o) return json({ ok: false, error: "Not found" }, { status: 404 });
+  /* ----------------- vendors ----------------- */
 
-    const items = await env.DB.prepare(
-      `SELECT oi.ticket_type_id, oi.qty, oi.price_cents, tt.name
-         FROM order_items oi
-         JOIN ticket_types tt ON tt.id = oi.ticket_type_id
-        WHERE oi.order_id = ?1`
-    ).bind(o.id).all();
-
-    const tickets = await env.DB.prepare(
-      `SELECT id, ticket_type_id, qr, state
-         FROM tickets WHERE order_id = ?1 ORDER BY id ASC`
-    ).bind(o.id).all();
-
-    return json({ ok: true, order: o, items: items.results || [], tickets: tickets.results || [] });
-  });
-
-  // WhatsApp send (reads config from site_settings first)
-  router.add("POST", "/api/admin/orders/send-whatsapp", async (req, env) => {
-    let body; try { body = await req.json(); } catch { return bad("Bad JSON"); }
-    const to = String(body.to || "").trim();
-    const code = String(body.code || "").trim();
-    if (!to || !code) return bad("to & code required");
-
-    const s = await getSettings(env);
-    const cfg = pickWA(s, env);
-
-    const BASE = cfg.PUBLIC_BASE_URL || "";
-    const link = `${BASE}/t/${encodeURIComponent(code)}`;
-
-    if (!cfg.WHATSAPP_TOKEN || !cfg.PHONE_NUMBER_ID || !cfg.WHATSAPP_TEMPLATE_NAME || !cfg.WHATSAPP_TEMPLATE_LANG) {
-      return json({ ok: false, error: "WhatsApp not configured" }, { status: 400 });
-    }
-
-    const payload = {
-      messaging_product: "whatsapp",
-      to,
-      type: "template",
-      template: {
-        name: cfg.WHATSAPP_TEMPLATE_NAME,
-        language: { code: cfg.WHATSAPP_TEMPLATE_LANG },
-        components: [
-          { type: "body", parameters: [{ type: "text", text: link }] },
-          // If your template has a URL button with {{1}} variable, this sets it:
-          { type: "button", sub_type: "url", index: "0", parameters: [{ type: "text", text: code }] }
-        ]
-      }
-    };
-
-    const url = `https://graph.facebook.com/v20.0/${cfg.PHONE_NUMBER_ID}/messages`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${cfg.WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!r.ok) {
-      const t = await r.text().catch(() => "");
-      return json({ ok: false, error: `WhatsApp error: ${t || r.status}` }, { status: 400 });
-    }
-    return json({ ok: true });
-  });
-
-  /* ------------------------- POS admin --------------------------- */
-
-  router.add("GET", "/api/admin/pos/sessions", async (_req, env) => {
-    const s = await env.DB.prepare(
-      `SELECT s.id, s.cashier_name, s.gate_id, s.opened_at, s.closed_at, s.closing_manager,
-              g.name AS gate_name
-         FROM pos_sessions s
-         LEFT JOIN gates g ON g.id = s.gate_id
-        ORDER BY s.id DESC LIMIT 200`
-    ).all();
-
-    const ids = (s.results || []).map(r => r.id);
-    let sums = new Map();
-    if (ids.length) {
-      const q = await env.DB.prepare(
-        `SELECT session_id,
-                SUM(CASE WHEN method = 'pos_cash' THEN amount_cents ELSE 0 END) cash_cents,
-                SUM(CASE WHEN method = 'pos_card' THEN amount_cents ELSE 0 END) card_cents
-           FROM pos_payments
-          WHERE session_id IN (${ids.map(() => "?").join(",")})
-          GROUP BY session_id`
-      ).bind(...ids).all();
-      for (const r of (q.results || [])) sums.set(r.session_id, r);
-    }
-
-    const rows = (s.results || []).map(r => {
-      const m = sums.get(r.id) || { cash_cents: 0, card_cents: 0 };
-      return {
-        id: r.id,
-        cashier: r.cashier_name,
-        gate: r.gate_name || r.gate_id,
-        opened_at: r.opened_at,
-        closed_at: r.closed_at,
-        manager: r.closing_manager || "",
-        cash_cents: +m.cash_cents || 0,
-        card_cents: +m.card_cents || 0
-      };
-    });
-
-    return json({ ok: true, sessions: rows });
-  });
-
-  /* --------------------------- Vendors --------------------------- */
-
+  // list by event
   router.add("GET", "/api/admin/vendors", async (req, env) => {
     const u = new URL(req.url);
-    const event_id = asInt(u.searchParams.get("event_id"));
+    const event_id = Number(u.searchParams.get("event_id") || 0);
     if (!event_id) return bad("event_id required");
-    const v = await env.DB.prepare(
-      `SELECT id, event_id, name, contact_name, phone, email, stand_number,
-              staff_quota, vehicle_quota
-         FROM vendors WHERE event_id = ?1 ORDER BY name ASC`
+    const q = await env.DB.prepare(
+      `SELECT id, event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota
+         FROM vendors WHERE event_id = ?1
+         ORDER BY name ASC`
     ).bind(event_id).all();
-    return json({ ok: true, vendors: v.results || [] });
+    return json({ ok: true, vendors: (q.results || []) });
   });
 
   router.add("POST", "/api/admin/vendors/add", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const event_id = asInt(b.event_id);
-    const name = String(b.name || "").trim();
-    if (!event_id || !name) return bad("event_id & name required");
-    await env.DB.prepare(
+    const b = await req.json().catch(() => ({}));
+    const event_id = Number(b?.event_id || 0);
+    const name = (b?.name || "").trim();
+    if (!event_id || !name) return bad("event_id and name required");
+    const { contact_name = "", phone = "", email = "", stand_number = "", staff_quota = 0, vehicle_quota = 0 } = b;
+    const r = await env.DB.prepare(
       `INSERT INTO vendors (event_id, name, contact_name, phone, email, stand_number, staff_quota, vehicle_quota)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`
-    ).bind(
-      event_id, name,
-      String(b.contact_name || "").trim(),
-      String(b.phone || "").trim(),
-      String(b.email || "").trim(),
-      String(b.stand_number || "").trim(),
-      asInt(b.staff_quota), asInt(b.vehicle_quota)
-    ).run();
-    return json({ ok: true });
+    ).bind(event_id, name, contact_name, phone, email, stand_number, Number(staff_quota||0), Number(vehicle_quota||0)).run();
+    return json({ ok: true, id: r.meta.last_row_id });
   });
 
   router.add("POST", "/api/admin/vendors/update", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = asInt(b.id);
+    const b = await req.json().catch(() => ({}));
+    const id = Number(b?.id || 0);
     if (!id) return bad("id required");
-    await env.DB.prepare(
-      `UPDATE vendors
-          SET name=?2, contact_name=?3, phone=?4, email=?5, stand_number=?6,
-              staff_quota=?7, vehicle_quota=?8
-        WHERE id=?1`
-    ).bind(
-      id,
-      String(b.name || "").trim(),
-      String(b.contact_name || "").trim(),
-      String(b.phone || "").trim(),
-      String(b.email || "").trim(),
-      String(b.stand_number || "").trim(),
-      asInt(b.staff_quota), asInt(b.vehicle_quota)
-    ).run();
-    return json({ ok: true });
-  });
-
-  /* ---------------------------- Users ---------------------------- */
-
-  router.add("GET", "/api/admin/users", async (_req, env) => {
-    const q = await env.DB.prepare(
-      `SELECT id, username, role FROM users ORDER BY id ASC`
-    ).all();
-    return json({ ok: true, users: q.results || [] });
-  });
-
-  router.add("POST", "/api/admin/users/add", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const username = String(b.username || "").trim();
-    const role = String(b.role || "pos").trim();
-    if (!username || !/^(admin|pos|scan)$/.test(role)) return bad("username & role(admin|pos|scan) required");
-    await env.DB.prepare(
-      `INSERT INTO users (username, role) VALUES (?1, ?2)`
-    ).bind(username, role).run();
-    return json({ ok: true });
-  });
-
-  router.add("POST", "/api/admin/users/delete", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = asInt(b.id);
-    if (!id) return bad("id required");
-    await env.DB.prepare(`DELETE FROM users WHERE id=?1`).bind(id).run();
-    return json({ ok: true });
-  });
-
-  /* ------------------------- Site settings ----------------------- */
-
-  // Read settings (merged view + flag)
-  router.add("GET", "/api/admin/settings", async (_req, env) => {
-    const s = await getSettings(env);
-    const cfg = pickWA(s, env);
-    const configured = !!(cfg.WHATSAPP_TOKEN && cfg.PHONE_NUMBER_ID && cfg.WHATSAPP_TEMPLATE_NAME && cfg.WHATSAPP_TEMPLATE_LANG);
-    return json({
-      ok: true,
-      settings: {
-        public_base_url: cfg.PUBLIC_BASE_URL,
-        whatsapp_token: cfg.WHATSAPP_TOKEN ? "••••" : "",
-        whatsapp_phone_number_id: cfg.PHONE_NUMBER_ID,
-        whatsapp_template_name: cfg.WHATSAPP_TEMPLATE_NAME,
-        whatsapp_template_lang: cfg.WHATSAPP_TEMPLATE_LANG,
-        configured
-      }
-    });
-  });
-
-  // Update settings (stores into site_settings)
-  router.add("POST", "/api/admin/settings/update", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const keys = [
-      "public_base_url",
-      "whatsapp_token",
-      "whatsapp_phone_number_id",
-      "whatsapp_template_name",
-      "whatsapp_template_lang",
-    ];
-    for (const k of keys) {
-      if (b[k] !== undefined) await setSetting(env, k, String(b[k] || ""));
+    const fields = {
+      name: (b?.name ?? null),
+      contact_name: (b?.contact_name ?? null),
+      phone: (b?.phone ?? null),
+      email: (b?.email ?? null),
+      stand_number: (b?.stand_number ?? null),
+      staff_quota: (b?.staff_quota ?? null),
+      vehicle_quota: (b?.vehicle_quota ?? null)
+    };
+    const sets = [];
+    const binds = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (v !== null && v !== undefined) { sets.push(`${k} = ?`); binds.push(v); }
     }
+    if (!sets.length) return json({ ok: true }); // nothing to change
+    binds.push(id);
+    await env.DB.prepare(
+      `UPDATE vendors SET ${sets.join(", ")} WHERE id = ?`
+    ).bind(...binds).run();
     return json({ ok: true });
   });
+
+  /* -------- order lookup used in Tickets tab -------- */
+
+  router.add("GET", "/api/admin/orders/by-code/:code", async (_req, env, _c, p) => {
+    const code = String(p.code || "").trim();
+    const o = await env.DB.prepare(
+      `SELECT id, short_code, event_id, status, total_cents, buyer_name, buyer_email, buyer_phone
+         FROM orders WHERE UPPER(short_code) = UPPER(?1) LIMIT 1`
+    ).bind(code).first();
+
+    if (!o) return bad("Not found", 404);
+
+    const t = await env.DB.prepare(
+      `SELECT t.id, t.qr, t.state, tt.name AS type_name
+         FROM tickets t
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+        WHERE t.order_id = ?1
+        ORDER BY t.id ASC`
+    ).bind(o.id).all();
+
+    return json({ ok: true, order: o, tickets: (t.results || []) });
+  });
+
+  // WhatsApp send using settings + chosen template
+  router.add("POST", "/api/admin/orders/:code/whatsapp", async (req, env, _c, p) => {
+    const code = String(p.code || "").trim();
+    const b = await req.json().catch(()=> ({}));
+    const to = String(b?.to || "").replace(/\s+/g,"");
+    const template = String(b?.template || "");
+    const lang = String(b?.lang || "");
+    const s = await getSettingsMap(env);
+
+    const phoneId = s.WA_PHONE_NUMBER_ID || s.PHONE_NUMBER_ID;
+    const token   = s.WA_TOKEN || s.WHATSAPP_TOKEN || s.GRAPH_TOKEN;
+    const baseURL = s.PUBLIC_BASE_URL || s.PUBLIC_BASE_URL_LOWER || "";
+    if (!phoneId || !token) return bad("WhatsApp not configured", 400);
+    if (!to) return bad("Recipient missing");
+
+    // simple link body: https://host/t/:code
+    const link = `${baseURL.replace(/\/+$/,"")}/t/${encodeURIComponent(code)}`;
+
+    const payload = template
+      ? {
+          messaging_product: "whatsapp",
+          to,
+          type: "template",
+          template: {
+            name: template,
+            language: { code: lang || "en_US" },
+            components: [
+              { type: "body", parameters: [{ type: "text", text: code }, { type: "text", text: link }] },
+              { type: "button", sub_type: "url", index: "0",
+                parameters: [{ type: "text", text: code }] } // for dynamic URL button if template has it
+            ]
+          }
+        }
+      : {
+          // fallback free-form text
+          messaging_product: "whatsapp",
+          to,
+          type: "text",
+          text: { preview_url: true, body: `Jou kaartjies: ${link} (kode: ${code})` }
+        };
+
+    const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(phoneId)}/messages`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const jr = await res.json().catch(()=> ({}));
+    if (!res.ok) return bad("Graph error: " + JSON.stringify(jr), 502);
+    return json({ ok: true, result: jr });
+  });
+
 }
