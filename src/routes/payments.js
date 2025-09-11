@@ -2,7 +2,8 @@
 import { json, bad } from "../utils/http.js";
 
 export function mountPayments(router) {
-  // --- helpers -------------------------------------------------------------
+  // ---- helpers ------------------------------------------------------------
+
   async function getSetting(env, key) {
     const row = await env.DB.prepare(
       `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
@@ -18,7 +19,24 @@ export function mountPayments(router) {
     return { mode, secret };
   }
 
-  // --- Create checkout intent ---------------------------------------------
+  // ---- Diagnostics --------------------------------------------------------
+
+  router.add("GET", "/api/payments/yoco/diag", async (_req, env) => {
+    const { mode, secret } = await getYocoSecret(env);
+    const base = await getSetting(env, "PUBLIC_BASE_URL");
+    return json({
+      ok: true,
+      mode,
+      hasSecret: !!secret,
+      publicBaseUrl: base || null,
+      redirectExample: (base ? base + "/thanks/EXAMPLE" : null),
+      cancelExample:   (base ? base + "/shop/{event-slug}" : null),
+    });
+  });
+
+  // ---- Create hosted checkout intent -------------------------------------
+
+  // Body: { code: "CABC123" }
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let body; try { body = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(body?.code || "").trim().toUpperCase();
@@ -35,33 +53,32 @@ export function mountPayments(router) {
 
     const PUBLIC_BASE_URL = await getSetting(env, "PUBLIC_BASE_URL");
     if (!PUBLIC_BASE_URL || !/^https:\/\//i.test(PUBLIC_BASE_URL)) {
-      return bad("PUBLIC_BASE_URL missing or not https (required to build redirect_url)");
+      return bad("PUBLIC_BASE_URL missing or not https");
     }
 
     const { mode, secret } = await getYocoSecret(env);
     if (!secret) return bad(`Missing Yoco secret key for mode=${mode}`);
 
-    let cancel_url = PUBLIC_BASE_URL + "/";
+    // cancel -> shop slug if available
+    let cancelUrl = PUBLIC_BASE_URL + "/";
     try {
-      const ev = await env.DB.prepare(`SELECT slug FROM events WHERE id=?1 LIMIT 1`)
-        .bind(o.event_id).first();
-      if (ev?.slug) cancel_url = PUBLIC_BASE_URL + "/shop/" + encodeURIComponent(ev.slug);
+      const ev = await env.DB.prepare(
+        `SELECT slug FROM events WHERE id=?1 LIMIT 1`
+      ).bind(o.event_id).first();
+      if (ev?.slug) cancelUrl = PUBLIC_BASE_URL + "/shop/" + encodeURIComponent(ev.slug);
     } catch {}
 
-    const redirect_url = PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code);
-
+    // IMPORTANT: Yoco expects successUrl/cancelUrl (NOT redirect_url)
+    const successUrl = PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code);
     const payload = {
       amount: Number(o.total_cents || 0),
       currency: "ZAR",
       reference: String(o.short_code),
       description: "Villiersdorp Skou tickets",
-      redirect_url,
-      cancel_url
+      successUrl,                 // ✅ correct field
+      cancelUrl                   // ✅ correct field
+      // failureUrl: successUrl    // (optional) could also route to thanks
     };
-
-    // timeout guard
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort("timeout"), 12000);
 
     let res, y;
     try {
@@ -69,39 +86,33 @@ export function mountPayments(router) {
         method: "POST",
         headers: {
           "authorization": "Bearer " + secret,
-          "content-type": "application/json",
-          "accept": "application/json",
-          "user-agent": "skou-events/1.0 (+tickets.villiersdorpskou.co.za)"
+          "content-type": "application/json"
         },
-        body: JSON.stringify(payload),
-        signal: controller.signal
+        body: JSON.stringify(payload)
       });
       y = await res.json().catch(() => ({}));
     } catch (e) {
-      clearTimeout(t);
-      try {
-        await env.DB.prepare(
-          `UPDATE orders SET payment_note=?2 WHERE id=?1`
-        ).bind(o.id, `yoco_netfail:${mode}:${String(e?.message || e).slice(0,120)}`).run();
-      } catch {}
-      return json({ ok:false, error:"Network to Yoco failed", cause:String(e?.name||"Error"), detail:String(e?.message||e) }, 502);
-    } finally {
-      clearTimeout(t);
+      return bad("Network to Yoco failed: " + (e?.message || e), 502);
     }
 
     if (!res.ok) {
       const msg = y?.message || y?.error || (`Yoco error ${res.status}`);
+      // Non-blocking: store note for later diagnostics
       try {
-        await env.DB.prepare(`UPDATE orders SET payment_note=?2 WHERE id=?1`)
-          .bind(o.id, `yoco_http_${res.status}:${mode}:${String(msg).slice(0,120)}`).run();
+        await env.DB.prepare(
+          `UPDATE orders SET payment_note=?2 WHERE id=?1`
+        ).bind(o.id, `yoco_fail:${mode}:${String(msg).slice(0,180)}`).run();
       } catch {}
-      return json({ ok:false, error:String(msg), status:res.status, body:y || null }, res.status);
+      return bad(`Yoco rejected request: ${msg}`, res.status);
     }
 
-    // ✅ Accept both shapes from Yoco: redirectUrl OR redirect_url
-    const yRedirect = y?.redirectUrl || y?.redirect_url || null;
-    const outUrl = yRedirect || redirect_url;
+    const hostedUrl = y?.redirectUrl || y?.redirect_url; // prefer Yoco's hosted checkout
+    if (!hostedUrl) {
+      // Defensive: if Yoco didn't return a hosted URL, fall back to our thanks page
+      return json({ ok: true, redirect_url: successUrl, yoco: y || null });
+    }
 
+    // Mark order as awaiting payment and stash external id
     try {
       await env.DB.prepare(
         `UPDATE orders
@@ -113,21 +124,38 @@ export function mountPayments(router) {
       ).bind(o.id, (y?.id || null)).run();
     } catch {}
 
-    return json({ ok: true, redirect_url: outUrl, yoco: y || null });
+    return json({ ok: true, redirect_url: hostedUrl, yoco: y || null });
   });
 
-  // --- Webhook (kept minimal & idempotent) --------------------------------
-  router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
-    let evt; try { evt = await req.json(); } catch { return bad("Bad JSON"); }
-    const obj = evt?.data?.object || evt?.object || {};
-    const reference = obj?.reference || evt?.reference || "";
-    const extId = obj?.id || evt?.id || null;
-    const rawStatus = String(obj?.status || evt?.status || "").toLowerCase();
-    const type = String(evt?.type || "").toLowerCase();
+  // ---- Webhook: logs + status updates ------------------------------------
 
-    const paidLike = rawStatus === "paid" || rawStatus === "succeeded" ||
-                     type.includes("checkout.completed") || type.includes("payment.succeeded");
-    const failedLike = rawStatus === "failed" || type.includes("payment.failed");
+  router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
+    // Yoco docs send slightly different shapes for different resources.
+    // We'll be defensive and fish out the essentials.
+    let evt; try { evt = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const obj       = evt?.data?.object || evt?.object || {};
+    const reference = obj?.reference || evt?.reference || "";
+    const extId     = obj?.id || evt?.id || null;
+    const rawStatus = String(obj?.status || evt?.status || "").toLowerCase();
+    const type      = String(evt?.type || "").toLowerCase();
+
+    // Log minimal diagnostics (visible in Worker logs)
+    try {
+      console.log("[YOCO WEBHOOK]", JSON.stringify({
+        type, reference, status: rawStatus, extId
+      }));
+    } catch {}
+
+    const paidLike =
+      rawStatus === "paid" ||
+      rawStatus === "succeeded" ||
+      type.includes("checkout.completed") ||
+      type.includes("payment.succeeded");
+
+    const failedLike =
+      rawStatus === "failed" ||
+      type.includes("payment.failed");
 
     if (reference && (paidLike || failedLike)) {
       try {
@@ -141,7 +169,7 @@ export function mountPayments(router) {
                     updated_at=strftime('%s','now')
               WHERE UPPER(short_code)=UPPER(?1)`
           ).bind(reference, extId).run();
-        } else {
+        } else if (failedLike) {
           await env.DB.prepare(
             `UPDATE orders
                 SET status='payment_failed',
@@ -151,25 +179,12 @@ export function mountPayments(router) {
               WHERE UPPER(short_code)=UPPER(?1)`
           ).bind(reference, extId).run();
         }
-      } catch {}
+      } catch (e) {
+        // keep webhook idempotent & resilient
+        console.log("[YOCO WEBHOOK UPDATE ERR]", e?.message || String(e));
+      }
     }
 
     return json({ ok: true });
-  });
-
-  // --- Optional diagnostics ------------------------------------------------
-  router.add("GET", "/api/payments/yoco/diag", async (_req, env) => {
-    const mode = ((await getSetting(env, "YOCO_MODE")) || "sandbox").toLowerCase();
-    const secret = mode === "live" ? await getSetting(env, "YOCO_LIVE_SECRET_KEY")
-                                   : await getSetting(env, "YOCO_TEST_SECRET_KEY");
-    const base = await getSetting(env, "PUBLIC_BASE_URL");
-    return json({
-      ok:true,
-      mode,
-      hasSecret: !!secret,
-      publicBaseUrl: base || null,
-      redirectExample: (base ? base + "/thanks/EXAMPLE" : null),
-      cancelExample: (base ? base + "/shop/{event-slug}" : null)
-    });
   });
 }
