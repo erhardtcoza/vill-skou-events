@@ -145,7 +145,6 @@ function buildAttendeeForms(){
     }
   });
 
-  // Prefill on first focus if still empty
   wrap.addEventListener('focusin', (e)=>{
     if (e.target && e.target.classList.contains('att_phone')) {
       if (!e.target.value) e.target.value = normPhone($('buyer_phone').value);
@@ -182,7 +181,6 @@ function collectPayload(){
   const attPhones = document.querySelectorAll('.att_phone');
   const attGenders = document.querySelectorAll('.att_gender');
 
-  // Distribute by order of appearance matching the cart sequence
   let pointer = 0;
   (cart.items||[]).forEach(it=>{
     for (let i=0;i<it.qty;i++){
@@ -217,7 +215,7 @@ function validateBuyer(b){
 
 function showMsg(kind, text){
   const el = $('msg');
-  el.className = kind==='err' ? 'err' : (kind==='ok' ? 'ok' : 'muted');
+  el.className = kind==='err' ? 'err' : 'ok';
   el.textContent = text;
 }
 
@@ -229,10 +227,8 @@ async function submit(){
   if (err){ showMsg('err', err); return; }
 
   try{
-    // 1) Create our order on the server
-    $('submitBtn').disabled = true;
-    showMsg('muted','Skep bestelling…');
-
+    // 1) Create order in our system
+    showMsg('','Skep bestelling…');
     const payload = {
       event_id: cart.event_id,
       items: cart.items,
@@ -251,38 +247,38 @@ async function submit(){
 
     const code = j.order?.short_code || 'THANKS';
 
-    // 2) If paying now, open Yoco Checkout
-    if (methodSel === 'pay_now') {
-      showMsg('muted','Stuur na Yoco betaalblad…');
-      const success = location.origin + '/thanks/' + encodeURIComponent(code);
-      const cancel  = location.origin + '/shop/' + encodeURIComponent(slug) + '/checkout';
-
-      const yr = await fetch('/api/payments/yoco/create-checkout', {
-        method:'POST',
-        headers:{'content-type':'application/json'},
-        body: JSON.stringify({ order_code: code, success_url: success, cancel_url: cancel })
-      });
-      const yj = await yr.json().catch(()=>({ok:false}));
-      if (yj.ok && yj.checkout_url) {
-        location.href = yj.checkout_url;  // 🚀 Go to hosted Yoco page
-        return;
-      }
-      // If we couldn't get a Yoco URL, still land on thank-you so they aren’t stuck
-      console.warn('Yoco create-checkout failed:', yj);
-      location.href = success;
+    // 2) If pay at event → straight to thank-you
+    if (methodSel === 'pay_at_event'){
+      location.href = '/thanks/' + encodeURIComponent(code);
       return;
     }
 
-    // 3) Otherwise (pay at event), go directly to thank-you page
-    location.href = '/thanks/' + encodeURIComponent(code);
+    // 3) pay_now → create Yoco checkout then redirect to Yoco
+    showMsg('','Skakel na betaalblad…');
+    const successUrl = location.origin + '/thanks/' + encodeURIComponent(code);
+    const cancelUrl  = location.origin + '/shop/' + encodeURIComponent(slug) + '/checkout';
+    const yc = await fetch('/api/payments/yoco/create-checkout', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({
+        order_id: j.order.id,
+        short_code: code,
+        amount_cents: j.order.total_cents || 0,
+        success_url: successUrl,
+        cancel_url: cancelUrl
+      })
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+    if (!yc.ok || !yc.url) throw new Error(yc.error || 'Kon nie Yoco betaal skep nie');
+
+    // Preserve for potential cancel return
+    sessionStorage.setItem('last_order_code', code);
+
+    location.href = yc.url; // → Yoco hosted checkout
   }catch(e){
-    $('submitBtn').disabled = false;
     showMsg('err', e.message||'Fout');
   }
 }
 
 function attachBuyerPhonePropagation(){
-  // Prefill attendee phones when buyer phone changes
   let lastValue = normPhone($('buyer_phone').value);
   $('buyer_phone').addEventListener('input', ()=>{
     const v = normPhone($('buyer_phone').value);
@@ -295,7 +291,6 @@ function attachBuyerPhonePropagation(){
 }
 
 async function load(){
-  // read cart from session
   try{
     cart = JSON.parse(sessionStorage.getItem('pending_cart') || 'null');
   }catch{ cart = null; }
@@ -304,7 +299,6 @@ async function load(){
     return;
   }
 
-  // fetch event + ticket types to render names/prices
   const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
   if (!res.ok){ $('status').textContent = 'Kon nie event laai nie.'; return; }
   catalog = res;
@@ -314,12 +308,10 @@ async function load(){
 
   $('eventMeta').textContent = (catalog.event?.name||'') + (catalog.event?.venue ? ' · '+catalog.event.venue : '');
 
-  // Build UI
   renderSummary();
   buildAttendeeForms();
   attachBuyerPhonePropagation();
 
-  // Wire submit
   $('submitBtn').onclick = submit;
 }
 
