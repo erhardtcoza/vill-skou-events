@@ -24,19 +24,20 @@ import { scannerHTML } from "./ui/scanner.js";
 import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
 import { loginHTML } from "./ui/login.js";
+import { thankYouHTML } from "./ui/thankyou.js";   // ⬅️ NEW
 
 // Auth guard for UI pages
 import { requireRole } from "./utils/auth.js";
 
 const router = Router();
-registerAddonRoutes(router);   // <— use router, not app/env
+registerAddonRoutes(router);   // <— keep addons
 
 // Helper: accept either a function (returning HTML) or a string export
 function renderHTML(mod, ...args) {
   try {
     const html = (typeof mod === "function") ? mod(...args) : mod;
     return new Response(html, { headers: { "content-type": "text/html" } });
-  } catch (e) {
+  } catch (_e) {
     return new Response("Internal error rendering page", { status: 500 });
   }
 }
@@ -88,10 +89,9 @@ router.add("GET", "/badge/:qr", async (_req, env, _ctx, { qr }) => {
 
   if (!p) return new Response("Badge not found", { status: 404 });
 
-  // Map type → badge title
-  const title = (p.type === "vehicle") ? "VEHICLE"
-              : (p.type === "staff")   ? "VENDOR STAFF"
-              :                          "VENDOR";
+  const title =
+    p.type === "vehicle" ? "VEHICLE" :
+    p.type === "staff"   ? "VENDOR STAFF" : "VENDOR";
 
   const html = badgeHTML({
     title,
@@ -127,6 +127,11 @@ router.add("GET", "/shop/:slug/checkout", async (_req, _env, _ctx, { slug }) =>
 // Ticket display
 router.add("GET", "/t/:code", async (_req, _env, _ctx, { code }) =>
   renderHTML(() => ticketHTML(code))
+);
+
+// Thank-you page after checkout  ⬅️ NEW
+router.add("GET", "/thanks/:code", async (_req, _env, _ctx, { code }) =>
+  renderHTML(() => thankYouHTML(code))
 );
 
 /* ---------------------- WORKER EXPORT ------------------- */
