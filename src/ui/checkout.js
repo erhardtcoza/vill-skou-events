@@ -1,230 +1,217 @@
 // /src/ui/checkout.js
-export const checkoutHTML = (slug) => `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Checkout · Villiersdorp Skou</title>
-<style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
-  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  h1{ margin:0 0 12px }
-  .grid{ display:grid; grid-template-columns: 1.2fr .9fr; gap:16px; }
-  @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
-  .muted{ color:var(--muted) }
-  label{ display:block; font-weight:600; margin:10px 0 6px }
-  input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
-  .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
-  .btn{ padding:12px 14px; border-radius:10px; border:0; background:var(--green); color:#fff; cursor:pointer; font-weight:700; width:100% }
-  .btn.sec{ background:#1f2937 }
-  .btn:disabled{ opacity:.6; cursor:not-allowed }
-  .total{ display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-weight:800; font-size:18px }
-  .line{ display:flex; justify-content:space-between; margin:6px 0 }
-  .err{ color:#b42318; font-weight:600; margin-top:8px }
-  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
-</style>
-</head><body>
+export function checkoutHTML(slug) {
+  return `<!doctype html>
+<html lang="af">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Checkout</title>
+  <style>
+    :root { --bg:#f6f8f7; --card:#fff; --ink:#0b1320; --muted:#6c7a7a; --accent:#0a7d2b; }
+    body{margin:0;background:var(--bg);color:var(--ink);
+         font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif}
+    .wrap{max-width:960px;margin:auto;padding:20px 14px}
+    h1{font-size:clamp(26px,4vw,36px);margin:0 0 16px}
+    .grid{display:grid;grid-template-columns:1fr 360px;gap:18px}
+    @media (max-width:900px){ .grid{grid-template-columns:1fr} }
+    .card{background:var(--card);border-radius:14px;padding:14px;box-shadow:0 8px 18px rgba(0,0,0,.06)}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .row3{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    label{display:block;font-size:13px;color:var(--muted);margin:8px 0 4px}
+    input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #d8dfde;border-radius:10px;background:#fbfdfc}
+    .btn{display:inline-block;background:var(--accent);color:#fff;border:none;border-radius:10px;
+         padding:12px 16px;font-weight:700;cursor:pointer}
+    .btn.gray{background:#141a22}
+    .btn[disabled]{opacity:.6;cursor:not-allowed}
+    .small{font-size:13px;color:var(--muted)}
+    .right{text-align:right}
+    .line{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #e6ecea}
+    .line:last-child{border-bottom:0}
+    .price{font-variant-numeric:tabular-nums}
+    .err{color:#b00020;margin-top:8px}
+    .tag{display:inline-block;background:#eef6f0;color:#155a2d;border-radius:999px;padding:3px 8px;font-size:12px}
+  </style>
+</head>
+<body>
 <div class="wrap">
   <h1>Checkout</h1>
-  <div id="app" class="grid">
-    <div class="card">Loading…</div>
-    <div class="card"></div>
+
+  <div class="grid">
+    <div class="card" id="left">Loading...</div>
+
+    <div class="card" id="right">Loading...</div>
   </div>
 </div>
+
 <script>
 const slug = ${JSON.stringify(slug)};
-const $ = (s, e=document)=>e.querySelector(s);
-const rands = c => 'R' + ((c||0)/100).toFixed(2);
+const fmtR = cents => 'R' + (Math.round(cents)/100).toFixed(2);
 
-let EVENT = null;
-let TYPES = new Map();     // id -> ticket_type
-let CART = [];             // [{ticket_type_id, qty}]
+const sel = s => document.querySelector(s);
+const left  = sel('#left');
+const right = sel('#right');
 
-function setError(msg){
-  const el = document.getElementById('formErr');
-  if (el) el.textContent = msg || '';
+function readCart(sl) {
+  try {
+    const raw = localStorage.getItem('cart:'+sl) || '[]';
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter(x => (x?.qty|0) > 0) : [];
+  } catch { return []; }
 }
 
-function render(event, ticketTypes){
-  EVENT = event || {};
-  TYPES = new Map((ticketTypes||[]).map(t=>[t.id, t]));
-
-  // Pull cart from session
-  try {
-    const saved = JSON.parse(sessionStorage.getItem('pending_cart')||'{}');
-    if (saved && saved.items && Array.isArray(saved.items)) {
-      CART = saved.items.map(x => ({ ticket_type_id:Number(x.ticket_type_id), qty:Number(x.qty||0) }))
-                        .filter(x => x.ticket_type_id && x.qty>0);
-    }
-  } catch {}
-
-  const app = document.getElementById('app');
-
-  // LEFT: buyer details + payment method
-  const left = document.createElement('div');
-  left.className = 'card';
+function renderLeft(ev) {
   left.innerHTML = \`
-    <h2>Jou besonderhede</h2>
-    <div class="muted">Ons gebruik dit vir jou bestelling en om jou kaartjies te stuur.</div>
-    <label>Volle naam</label>
-    <input id="name" placeholder="Jou naam" autocomplete="name"/>
+    <div class="tag">\${ev.name}</div>
     <div class="row">
       <div>
-        <label>Selfoon</label>
-        <input id="phone" placeholder="2771xxxxxxx" inputmode="numeric" autocomplete="tel"/>
+        <label>Naam</label>
+        <input id="first" placeholder="Naam"/>
       </div>
       <div>
-        <label>E-pos</label>
-        <input id="email" placeholder="opsioneel" type="email" autocomplete="email"/>
+        <label>Van</label>
+        <input id="last" placeholder="Van"/>
       </div>
     </div>
-    <label>Betaal</label>
-    <select id="pay">
-      <option value="pay_now">Pay now (card)</option>
-      <option value="pay_at_event">Pay at event</option>
-    </select>
-    <div id="formErr" class="err"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px">
-      <button id="backBtn" class="btn sec">← Terug</button>
-      <button id="submitBtn" class="btn">Plaas bestelling</button>
+    <div class="row3" style="margin-top:8px;">
+      <div>
+        <label>E-pos</label>
+        <input id="email" placeholder="E-pos"/>
+      </div>
+      <div>
+        <label>Selfoon</label>
+        <input id="phone" placeholder="Selfoon (bv. 2771…)" />
+      </div>
     </div>
+    <div style="margin-top:14px;display:flex;gap:10px;">
+      <button id="payNow" class="btn">Pay now</button>
+      <button id="payAt"  class="btn gray">(Pay at event)</button>
+    </div>
+    <div class="small" style="margin-top:10px;">
+      Jou kaartjies sal via WhatsApp/SMS eersdaags gestuur word wanneer betaling vasgestel is.
+    </div>
+    <div id="err" class="err"></div>
   \`;
-
-  // RIGHT: order summary
-  const right = document.createElement('div');
-  right.className = 'card';
-  right.innerHTML = \`
-    <h2>Jou bestelling</h2>
-    <div id="lines"></div>
-    <div class="total">
-      <span>Totaal</span>
-      <span id="total">R0.00</span>
-    </div>
-    <div style="margin-top:10px">
-      <span id="statusPill" class="pill" style="display:none"></span>
-    </div>
-  \`;
-
-  app.innerHTML = '';
-  app.appendChild(left);
-  app.appendChild(right);
-
-  $('#backBtn').onclick = ()=>{ history.back(); };
-
-  // Update summary
-  updateSummary();
-
-  // Submit
-  $('#submitBtn').onclick = submitOrder;
 }
 
-function updateSummary(){
-  const box = document.getElementById('lines');
-  let total = 0;
-  let out = '';
-
-  CART.forEach(it=>{
-    const tt = TYPES.get(it.ticket_type_id) || {};
-    const unit = Number(tt.price_cents||0);
-    const line = unit * it.qty;
-    total += line;
-    const name = (tt.name||'Type #'+it.ticket_type_id);
-    out += '<div class="line"><div>'+escapeHtml(name)+' × '+it.qty+'</div><div>'+ (unit? rands(line) : 'FREE') +'</div></div>';
-  });
-
-  if (!out) out = '<div class="muted">Geen items in mandjie.</div>';
-  box.innerHTML = out;
-  document.getElementById('total').textContent = rands(total);
-
-  // Closed status?
-  const pill = document.getElementById('statusPill');
-  const now = Math.floor(Date.now()/1000);
-  if ((EVENT.ends_at||0) < now || (EVENT.status !== 'active')) {
-    pill.textContent = 'Event Closed';
-    pill.style.display = 'inline-block';
-    $('#submitBtn').disabled = true;
-  } else {
-    pill.style.display = 'none';
-    $('#submitBtn').disabled = total<=0;
-  }
-}
-
-async function submitOrder(){
-  setError('');
-  const name = ($('#name').value||'').trim();
-  const phone = ($('#phone').value||'').trim();
-  const email = ($('#email').value||'').trim();
-  const method = $('#pay').value;
-
-  if (!CART.length){ setError('Geen items in mandjie'); return; }
-  if (!name){ setError('Naam is nodig'); return; }
-
-  const payload = {
-    event_id: EVENT.id,
-    buyer_name: name,
-    email, phone,
-    items: CART.map(x=>({ ticket_type_id:x.ticket_type_id, qty:x.qty })),
-    method: method // "pay_now" | "pay_at_event"
-  };
-
-  $('#submitBtn').disabled = true;
-
-  try {
-    const r = await fetch('/api/public/orders/create', {
-      method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(payload)
-    });
-    const j = await r.json().catch(()=>({ok:false, error:'Invalid JSON'}));
-    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP '+r.status));
-
-    // Success view
-    const order = j.order || {};
-    const container = document.getElementById('app');
-    const link = '/t/' + encodeURIComponent(order.short_code || '');
-    const payURL = j.payment_url || '';
-
-    let next = '';
-    if (payload.method==='pay_now') {
-      if (payURL) {
-        next = '<a class="btn" href="'+payURL+'">Pay now</a>';
-      } else {
-        next = '<div class="muted">Payment provider not configured yet. You can still pay at the event using your code.</div>';
-      }
-    } else {
-      next = '<div class="muted">Wys jou kode by die hek om te betaal en jou kaartjies te ontvang.</div>';
-    }
-
-    container.innerHTML = ''
-      + '<div class="card">'
-      +   '<h2>Order placed ✅</h2>'
-      +   '<div>Your code: <b>'+escapeHtml(order.short_code||'')+'</b></div>'
-      +   '<div style="margin-top:8px">View tickets (once paid/issued): '
-      +     '<a href="'+link+'" target="_blank">'+link+'</a>'
-      +   '</div>'
-      +   '<div style="margin-top:12px">'+ next +'</div>'
-      +   '<div style="margin-top:16px"><button class="btn sec" onclick="location.href=\'/shop/'+encodeURIComponent(EVENT.slug||'')+'\'">Back to event</button></div>'
-      + '</div>';
-
-    // Clear cart after successful order
-    try { sessionStorage.removeItem('pending_cart'); } catch {}
-
-  } catch (e) {
-    setError(e.message || 'Kon nie bestel nie');
-    $('#submitBtn').disabled = false;
-  }
-}
-
-function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
-
-async function load(){
-  // event + ticket_types (server already returns both)
-  const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
-  if (!res.ok) {
-    const app = document.getElementById('app');
-    app.innerHTML = '<div class="card">Kon nie laai nie</div><div class="card"></div>';
+function renderRight(ev, ttMap, items) {
+  if (!items.length) {
+    right.innerHTML = '<div>Geen items in mandjie nie.</div>';
     return;
   }
-  // attach
-  render(res.event, res.ticket_types);
+  let total = 0;
+  const lines = items.map(it => {
+    const tt = ttMap.get(it.ticket_type_id);
+    const price = Number(tt?.price_cents || 0);
+    const qty = Number(it.qty || 0);
+    const line = price * qty;
+    total += line;
+    const name = tt ? tt.name : ('Type #' + it.ticket_type_id);
+    return \`
+      <div class="line">
+        <div>\${name} × \${qty}</div>
+        <div class="price">\${fmtR(line)}</div>
+      </div>\`;
+  }).join('');
+
+  right.innerHTML = \`
+    <div style="font-weight:800;margin-bottom:8px;">Jou keuse</div>
+    \${lines}
+    <div class="line" style="font-weight:900;">
+      <div>Totaal</div>
+      <div class="price">\${fmtR(total)}</div>
+    </div>
+    <div class="small" style="margin-top:6px;">
+      Let wel: pryse word bevestig en herbereken op die volgende stap.
+    </div>
+  \`;
 }
-load();
+
+function showError(msg) {
+  const el = document.getElementById('err');
+  if (el) el.textContent = msg || 'Onbekende fout';
+}
+
+async function boot() {
+  // Load event (for ticket-type pricing, event_id)
+  let evRes = await fetch('/api/public/events/'+encodeURIComponent(slug), { credentials:'include' })
+                    .catch(()=>null);
+  if (!evRes) { left.textContent = 'Kon nie laai nie'; right.textContent = ''; return; }
+  const evData = await evRes.json().catch(()=>({ok:false}));
+  if (!evData.ok) { left.textContent = 'Kon nie laai nie'; right.textContent = ''; return; }
+
+  const ev = evData.event;
+  const ttList = evData.ticket_types || [];
+  const ttMap = new Map(ttList.map(r => [Number(r.id), r]));
+
+  // Read cart
+  const items = readCart(slug);
+  renderLeft(ev);
+  renderRight(ev, ttMap, items);
+
+  // Disable actions if cart empty
+  if (!items.length) {
+    document.getElementById('payNow').disabled = true;
+    document.getElementById('payAt').disabled  = true;
+  }
+
+  // Wire buttons
+  const go = async (kind) => {
+    showError('');
+    // Build buyer fields
+    const first = (document.getElementById('first')?.value || '').trim();
+    const last  = (document.getElementById('last')?.value  || '').trim();
+    const email = (document.getElementById('email')?.value || '').trim();
+    const phone = (document.getElementById('phone')?.value || '').trim();
+
+    if (!first) return showError('Vul asseblief jou naam in.');
+    const buyer_name = (first + ' ' + last).trim();
+
+    const payload = {
+      event_id: Number(ev.id),
+      buyer_name,
+      email,
+      phone,
+      items: items.map(it => ({
+        ticket_type_id: Number(it.ticket_type_id),
+        qty: Number(it.qty)
+      })),
+      method: (kind === 'now') ? 'pay_now' : 'pay_at_event'
+    };
+
+    // Send to server
+    let res;
+    try {
+      res = await fetch('/api/public/orders/create', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      return showError('Netwerkfout: kon nie stuur nie.');
+    }
+
+    const out = await res.json().catch(()=>({ok:false, error:'Bad JSON'}));
+    if (!out.ok) {
+      return showError(out.error || 'Kon nie bestelling skep nie.');
+    }
+
+    // Clear cart and redirect to ticket page for this order
+    try { localStorage.removeItem('cart:'+slug); } catch {}
+    const code = out.order?.short_code;
+    if (code) {
+      location.href = '/t/' + encodeURIComponent(code);
+    } else {
+      showError('Bestelling geskep maar sonder kode.');
+    }
+  };
+
+  document.getElementById('payNow').addEventListener('click', () => go('now'));
+  document.getElementById('payAt').addEventListener('click',  () => go('event'));
+}
+
+boot();
 </script>
-</body></html>`;
+</body>
+</html>`;
+}
