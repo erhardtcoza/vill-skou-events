@@ -119,6 +119,17 @@ export function mountPublic(router) {
 
     const order_id = r.meta.last_row_id;
 
+// Public: minimal order status for thank-you page
+router.add("GET", "/api/public/orders/status/:code", async (_req, env, _ctx, { code }) => {
+  const c = String(code||"").trim().toUpperCase();
+  if (!c) return bad("code required");
+  const o = await env.DB.prepare(
+    `SELECT status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
+  ).bind(c).first();
+  if (!o) return json({ ok:false }, 404);
+  return json({ ok:true, status: o.status });
+});
+    
     // Build queues of attendee info by ticket_type_id (FIFO)
     const attQueues = new Map();
     for (const a of attendees){
