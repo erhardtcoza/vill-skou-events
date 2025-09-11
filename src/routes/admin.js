@@ -41,29 +41,90 @@ export function mountAdmin(router) {
     return json({ ok: true, events: evQ.results || [], ticket_totals: sums });
   }));
 
-  /* ---------------- Site settings (stored in site_settings table) -------------- */
-  // Schema: CREATE TABLE site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)
-  router.add("GET", "/api/admin/settings", guard(async (_req, env) => {
-    const s = await env.DB.prepare(
-      `SELECT value FROM site_settings WHERE key = 'site' LIMIT 1`
-    ).first();
-    let settings = {};
-    try { settings = s?.value ? JSON.parse(s.value) : {}; } catch {}
-    return json({ ok: true, settings });
-  }));
+/* ---------------- Site settings (site_settings table) ------------------- */
+// Table schema assumed:
+// CREATE TABLE site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
-  router.add("POST", "/api/admin/settings/update", guard(async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const settings = JSON.stringify(b?.settings || {});
+function normalizeInKey(k) {
+  // Accept UI keys and map them to canonical DB keys
+  const map = {
+    WHATSAPP_TOKEN:    "WA_TOKEN",
+    PHONE_NUMBER_ID:   "WA_PHONE_NUMBER_ID",
+    BUSINESS_ID:       "WA_BUSINESS_ID",
+  };
+  return map[k] || k;
+}
 
-    await env.DB.prepare(
-      `INSERT INTO site_settings (key, value) VALUES ('site', ?1)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-    ).bind(settings).run();
+function normalizeOutKey(k) {
+  // Return UI-friendly keys for WhatsApp block
+  const map = {
+    WA_TOKEN:             "WHATSAPP_TOKEN",
+    WA_PHONE_NUMBER_ID:   "PHONE_NUMBER_ID",
+    WA_BUSINESS_ID:       "BUSINESS_ID",
+  };
+  return map[k] || k;
+}
 
-    return json({ ok: true });
-  }));
+async function getSetting(env, key) {
+  const row = await env.DB.prepare(
+    `SELECT value FROM site_settings WHERE key = ?1 LIMIT 1`
+  ).bind(key).first();
+  return row ? row.value : null;
+}
 
+async function setSetting(env, key, value) {
+  await env.DB.prepare(
+    `INSERT INTO site_settings (key, value) VALUES (?1, ?2)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+  ).bind(key, value).run();
+}
+
+router.add("GET", "/api/admin/settings", guard(async (_req, env) => {
+  // Pull everything we care about and present UI keys
+  const wanted = [
+    "PUBLIC_BASE_URL",
+    "VERIFY_TOKEN",
+    // WhatsApp (stored with WA_* in DB)
+    "WA_TOKEN",
+    "WA_PHONE_NUMBER_ID",
+    "WA_BUSINESS_ID",
+    // Yoco
+    "YOCO_MODE",
+    "YOCO_PUBLIC_KEY",
+    "YOCO_SECRET_KEY",
+    "YOCO_CLIENT_ID",
+    "YOCO_REDIRECT_URI",
+    "YOCO_REQUIRED_SCOPES",
+    "YOCO_STATE",
+    // Optional site block
+    "SITE_NAME",
+    "SITE_LOGO_URL",
+  ];
+
+  const out = {};
+  for (const dbKey of wanted) {
+    const v = await getSetting(env, dbKey);
+    if (v != null) out[normalizeOutKey(dbKey)] = v;
+  }
+  return json({ ok: true, settings: out });
+}));
+
+router.add("POST", "/api/admin/settings/update", guard(async (req, env) => {
+  // Body: { updates: { KEY: value, ... } }
+  let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+  const updates = b?.updates && typeof b.updates === "object" ? b.updates : null;
+  if (!updates) return bad("updates required");
+
+  for (const [rawKey, rawVal] of Object.entries(updates)) {
+    const dbKey = normalizeInKey(String(rawKey || "").trim());
+    const val = rawVal == null ? "" : String(rawVal);
+    // Also allow someone to send WA_* directly (idempotent)
+    await setSetting(env, dbKey, val);
+  }
+
+  return json({ ok: true });
+}));
+  
   /* ---------------- Events ---------------- */
   router.add("GET", "/api/admin/events", guard(async (_req, env) => {
     const q = await env.DB.prepare(
