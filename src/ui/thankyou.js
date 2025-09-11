@@ -1,5 +1,14 @@
 // /src/ui/thankyou.js
-export const thankYouHTML = (code) => `<!doctype html><html><head>
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]
+  ));
+}
+
+export const thankYouHTML = (code) => {
+  const safe = esc(code);
+  const safeUrl = encodeURIComponent(code || "");
+  return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Bestelling ontvang · Villiersdorp Skou</title>
 <style>
@@ -20,19 +29,17 @@ export const thankYouHTML = (code) => `<!doctype html><html><head>
   <div class="card">
     <h1>Dankie! 🎟️</h1>
     <p>Ons het jou bestelling ontvang. Gebruik hierdie kode as verwysing:</p>
-    <div class="code">${escapeHtml(code||"")}</div>
+    <div class="code">${safe}</div>
 
     <p class="muted" style="margin-top:12px">
       Jou kaartjies sal via <strong>WhatsApp</strong> en <strong>E-pos</strong> eersdaags gestuur word sodra betaling ontvang was.
     </p>
 
     <div class="row" style="margin-top:18px">
-      <a class="btn primary" href="/t/${encodeURIComponent(code||"")}">Wys my kaartjies</a>
+      <a class="btn primary" href="/t/${safeUrl}">Wys my kaartjies</a>
       <a class="btn" href="/">Terug na tuisblad</a>
     </div>
   </div>
 </div>
-<script>
-function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-</script>
 </body></html>`;
+};
