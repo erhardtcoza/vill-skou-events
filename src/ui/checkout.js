@@ -217,7 +217,7 @@ function validateBuyer(b){
 
 function showMsg(kind, text){
   const el = $('msg');
-  el.className = kind==='err' ? 'err' : 'ok';
+  el.className = kind==='err' ? 'err' : (kind==='ok' ? 'ok' : 'muted');
   el.textContent = text;
 }
 
@@ -229,6 +229,10 @@ async function submit(){
   if (err){ showMsg('err', err); return; }
 
   try{
+    // 1) Create our order on the server
+    $('submitBtn').disabled = true;
+    showMsg('muted','Skep bestelling…');
+
     const payload = {
       event_id: cart.event_id,
       items: cart.items,
@@ -245,33 +249,34 @@ async function submit(){
     const j = await r.json().catch(()=>({ok:false,error:'network'}));
     if (!j.ok) throw new Error(j.error||'Kon nie bestelling skep nie');
 
-    const order = j.order || {};
-    const code  = order.short_code || 'THANKS';
-    const total = Number(order.total_cents||0);
+    const code = j.order?.short_code || 'THANKS';
 
+    // 2) If paying now, open Yoco Checkout
     if (methodSel === 'pay_now') {
-      // Start Yoco hosted checkout; backend returns a redirect_url
-      const yo = await fetch('/api/payments/create-intent', {
+      showMsg('muted','Stuur na Yoco betaalblad…');
+      const success = location.origin + '/thanks/' + encodeURIComponent(code);
+      const cancel  = location.origin + '/shop/' + encodeURIComponent(slug) + '/checkout';
+
+      const yr = await fetch('/api/payments/yoco/create-checkout', {
         method:'POST',
         headers:{'content-type':'application/json'},
-        body: JSON.stringify({
-          order_id: order.id,
-          amount_cents: total,
-          currency: 'ZAR',
-          code
-        })
-      }).then(r=>r.json()).catch(()=>({ok:false,error:'Kon nie met Yoco koppel nie'}));
-
-      if (!yo.ok || !yo.redirect_url) {
-        throw new Error(yo.error || 'Kon nie betaling begin nie');
+        body: JSON.stringify({ order_code: code, success_url: success, cancel_url: cancel })
+      });
+      const yj = await yr.json().catch(()=>({ok:false}));
+      if (yj.ok && yj.checkout_url) {
+        location.href = yj.checkout_url;  // 🚀 Go to hosted Yoco page
+        return;
       }
-      location.href = yo.redirect_url;
+      // If we couldn't get a Yoco URL, still land on thank-you so they aren’t stuck
+      console.warn('Yoco create-checkout failed:', yj);
+      location.href = success;
       return;
     }
 
-    // Pay at event -> go to thanks
+    // 3) Otherwise (pay at event), go directly to thank-you page
     location.href = '/thanks/' + encodeURIComponent(code);
   }catch(e){
+    $('submitBtn').disabled = false;
     showMsg('err', e.message||'Fout');
   }
 }
@@ -283,7 +288,6 @@ function attachBuyerPhonePropagation(){
     const v = normPhone($('buyer_phone').value);
     const nodes = document.querySelectorAll('.att_phone');
     nodes.forEach(n=>{
-      // Overwrite only if empty or still matching previous seed
       if (!n.value || normPhone(n.value)===lastValue) n.value = v;
     });
     lastValue = v;
@@ -317,9 +321,6 @@ async function load(){
 
   // Wire submit
   $('submitBtn').onclick = submit;
-
-  // Small UX: focus first name
-  $('buyer_first').focus();
 }
 
 load();
