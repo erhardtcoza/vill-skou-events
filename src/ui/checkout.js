@@ -1,194 +1,236 @@
 // /src/ui/checkout.js
-export function checkoutHTML(slug) {
-  return `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+export const checkoutHTML = (slug) => `<!doctype html><html><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Checkout</title>
 <style>
-  body{font-family:system-ui;margin:0;background:#f5faf6;color:#111}
-  .wrap{max-width:1000px;margin:24px auto;padding:0 16px}
-  h1{font-size:40px;margin:12px 0 16px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media (max-width:820px){.grid{grid-template-columns:1fr}}
-  .card{background:#fff;border-radius:16px;box-shadow:0 2px 10px rgba(0,0,0,.05);padding:16px}
-  .pill{display:inline-block;padding:6px 12px;border-radius:999px;background:#e8f6ec;color:#0a7d2b;font-weight:600;font-size:14px}
-  label{font-size:14px;color:#333;display:block;margin:10px 0 6px}
-  input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #ddd;font-size:16px}
-  .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .btn{display:inline-block;border:none;border-radius:12px;padding:12px 16px;font-size:16px;font-weight:700;cursor:pointer}
-  .primary{background:#0a7d2b;color:#fff}
-  .ghost{background:#444;color:#ddd}
-  .hint{color:#666;margin-top:10px;line-height:1.35}
-  .lines{display:flex;flex-direction:column;gap:10px}
-  .line{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid #eee;border-radius:12px}
-  .muted{color:#555}
-  .total{font-weight:900;font-size:22px}
-  .empty{color:#666;padding:16px;border-radius:12px;background:#fff;border:1px dashed #ddd}
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f5f7f8 }
+  *{ box-sizing:border-box }
+  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  .wrap{ max-width:1100px; margin:22px auto; padding:0 14px }
+  h1{ font-size:40px; margin:0 0 16px }
+  .grid{ display:grid; grid-template-columns:1.1fr .9fr; gap:16px }
+  @media (max-width:960px){ .grid{ grid-template-columns:1fr; } }
+  .card{ background:#fff; border-radius:14px; padding:16px; box-shadow:0 10px 26px rgba(0,0,0,.06) }
+  .chip{ display:inline-block; padding:6px 12px; border-radius:999px; font-weight:700; background:#eaf7ee; color:#0a7d2b; margin-bottom:8px }
+
+  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  .row3{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  @media (max-width:720px){ .row,.row3{ grid-template-columns:1fr; } }
+  label{ display:block; font-size:13px; color:#444; margin:6px 0 6px }
+  input,select{ width:100%; padding:14px 12px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; font-size:16px; }
+  .muted{ color:#667085 }
+
+  .btn{ padding:12px 16px; border-radius:12px; border:0; cursor:pointer; font-weight:700 }
+  .btn.primary{ background:var(--green); color:#fff }
+  .btn.ghost{ background:#2d2d2d; color:#ddd }
+  .btn:disabled{ opacity:.6; cursor:not-allowed }
+
+  .rightItem{ display:flex; justify-content:space-between; margin:10px 0 }
+  .total{ font-weight:800; font-size:22px; text-align:right }
+
+  .att{ border:1px solid #eef0f2; border-radius:12px; padding:12px; margin-top:10px; }
+  .att h3{ margin:0 0 8px; font-size:16px }
+  .seg{ height:10px }
+
 </style>
-</head>
-<body>
+</head><body>
 <div class="wrap">
   <h1>Checkout</h1>
-  <div id="root" class="grid">
-    <div class="card">
-      <div id="evpill" class="pill" style="display:none;"></div>
-      <div class="row">
-        <div>
-          <label>Naam</label>
-          <input id="first" placeholder="Naam" autocomplete="given-name">
-        </div>
-        <div>
-          <label>Van</label>
-          <input id="last" placeholder="Van" autocomplete="family-name">
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>E-pos</label>
-          <input id="email" placeholder="E-pos" inputmode="email" autocomplete="email">
-        </div>
-        <div>
-          <label>Selfoon</label>
-          <input id="phone" placeholder="Selfoon (bv. 2771...)" inputmode="tel" autocomplete="tel">
-        </div>
-      </div>
-      <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
-        <button id="payNow" class="btn primary">Pay now</button>
-        <button id="payAt" class="btn ghost">(Pay at event)</button>
-      </div>
-      <div class="hint">
-        Jou kaartjies sal via WhatsApp en Epos eersdaags gestuur word sodra betaling ontvang was.
-      </div>
-    </div>
-    <div class="card">
-      <div id="cartView" class="lines"></div>
-    </div>
+  <div class="grid">
+    <div class="card" id="left">Loading…</div>
+    <div class="card" id="right">Loading…</div>
   </div>
 </div>
 
 <script>
-(async function(){
-  const slug = ${JSON.stringify(slug || "")} || (location.pathname.split("/")[2] || "");
-  const evRes = await fetch("/api/public/events/" + encodeURIComponent(slug));
-  if (!evRes.ok) { document.getElementById("root").innerHTML = "<div class='card'>Kon nie gebeurtenis laai nie.</div>"; return; }
-  const evData = await evRes.json();
-  const event = evData.event;
-  const ticketTypes = new Map((evData.ticket_types||[]).map(t => [Number(t.id), t]));
+const SLUG = ${JSON.stringify(slug)};
 
-  // Show event pill
-  const pill = document.getElementById("evpill");
-  pill.textContent = event.name || "";
-  pill.style.display = "inline-block";
-
-  // ---------- LOAD CART (first look for 'pending_cart') ----------
-  function tryParse(s){ try { return JSON.parse(s); } catch { return null; } }
-  function readFrom(storage, keys){
-    for (const k of keys) {
-      const val = storage.getItem(k);
-      const parsed = val && tryParse(val);
-      if (parsed) return parsed;
-    }
-    return null;
-  }
-
-  // Primary: the shop writes this
-  let pc = tryParse(sessionStorage.getItem("pending_cart"));
-  // Accept if event_id matches or if it just has items
-  let items = [];
-  if (pc && Array.isArray(pc.items) && (!pc.event_id || Number(pc.event_id) === Number(event.id))) {
-    items = pc.items.map(it => ({ ticket_type_id: Number(it.ticket_type_id||it.id||0), qty: Number(it.qty||it.quantity||0) }))
-                    .filter(it => it.ticket_type_id && it.qty>0);
-  }
-
-  // Fallbacks if pending_cart missing/empty
-  if (!items.length) {
-    const keys = ["cart:"+slug, "cart-"+slug, "cart_"+slug, "cart", "shop_cart", "ticket_cart"];
-    const other = readFrom(sessionStorage, keys) || readFrom(localStorage, keys) || {};
-    const arr = Array.isArray(other) ? other : (other.items || other.lines || []);
-    if (Array.isArray(arr)) {
-      items = arr.map(it => ({ ticket_type_id: Number(it.ticket_type_id||it.id||0), qty: Number(it.qty||it.quantity||0) }))
-                 .filter(it => it.ticket_type_id && it.qty>0);
-    } else if (other && typeof other === "object") {
-      // object like { "12": 2, "13": 1 }
-      for (const [k,v] of Object.entries(other)) if (/^\\d+$/.test(k) && Number(v)>0) items.push({ ticket_type_id: Number(k), qty: Number(v) });
-    }
-  }
-
-  // ---------- RENDER CART ----------
-  const cartView = document.getElementById("cartView");
-  function cents(n){ return "R" + (Number(n||0)/100).toFixed(2); }
-  function renderCart(){
-    cartView.innerHTML = "";
-    if (!items.length) {
-      cartView.innerHTML = "<div class='empty'>Geen items in mandjie nie.</div>";
-      return;
-    }
-    let total = 0;
-    for (const it of items) {
-      const tt = ticketTypes.get(Number(it.ticket_type_id));
-      if (!tt) continue;
-      const line = Number(tt.price_cents||0) * Number(it.qty||0);
-      total += line;
-      const row = document.createElement("div");
-      row.className = "line";
-      row.innerHTML = \`
-        <div><div><strong>\${tt.name}</strong></div>
-            <div class="muted">× \${it.qty}</div></div>
-        <div>\${cents(line)}</div>\`;
-      cartView.appendChild(row);
-    }
-    const t = document.createElement("div");
-    t.className = "line";
-    t.innerHTML = \`<div class="total">Totaal</div><div class="total">\${cents(total)}</div>\`;
-    cartView.appendChild(t);
-  }
-  renderCart();
-
-  // ---------- SUBMIT ----------
-  async function submit(method){
-    if (!items.length) { alert("Jou mandjie is leeg."); return; }
-    const first = document.getElementById("first").value.trim();
-    const last  = document.getElementById("last").value.trim();
-    const email = document.getElementById("email").value.trim();
-    const phone = document.getElementById("phone").value.trim();
-
-    if (!first) return alert("Vul jou Naam in.");
-    if (!last)  return alert("Vul jou Van in.");
-
-    const body = {
-      event_id: Number(event.id),
-      buyer_name: (first + " " + last).trim(),
-      email, phone,
-      items,
-      method // "pay_now" | "pay_at_event"
-    };
-
-    const r = await fetch("/api/public/orders/create", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok || !j.ok) {
-      alert("Kon nie bestelling skep nie: " + (j.error || r.status));
-      return;
-    }
-
-    // Clear carts
-    sessionStorage.removeItem("pending_cart");
-    ["cart:"+slug, "cart-"+slug, "cart_"+slug, "cart", "shop_cart", "ticket_cart"].forEach(k=>{
-      sessionStorage.removeItem(k); localStorage.removeItem(k);
-    });
-
-    location.href = "/t/" + encodeURIComponent(j.order.short_code);
-  }
-
-  document.getElementById("payNow").addEventListener("click", () => submit("pay_now"));
-  document.getElementById("payAt").addEventListener("click", () => submit("pay_at_event"));
-})();
-</script>
-</body>
-</html>`;
+// --- helpers
+const R = c => "R" + ((c||0)/100).toFixed(2);
+const esc = s => String(s||"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function normalizePhone(v){
+  // keep digits only
+  const digits = String(v||"").replace(/\\D+/g,"");
+  if (!digits) return "";
+  if (digits.startsWith("27") && digits.length===11) return digits;
+  if (digits.startsWith("0") && digits.length===10) return "27" + digits.slice(1);
+  if (digits.startsWith("27") && digits.length>11) return digits.slice(0,11);
+  if (digits.startsWith("27") && digits.length<11) return digits; // let server re-check
+  if (digits.length===9) return "27" + digits; // (just in case)
+  return digits;
 }
+
+let EVENT = null;
+let CART = null;        // {event_id, items:[{ticket_type_id, qty}]}
+let TTMAP = new Map();  // id -> ticket_type
+
+async function load(){
+  // 1) get cart
+  try { CART = JSON.parse(sessionStorage.getItem("pending_cart")||""); } catch { CART = null; }
+  if (!CART){ document.getElementById("left").innerHTML = "Geen items in mandjie nie."; document.getElementById("right").innerHTML=""; return; }
+
+  // 2) fetch event + ticket types
+  const res = await fetch("/api/public/events/"+encodeURIComponent(SLUG)).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!res.ok){ document.getElementById("left").innerHTML = "Kon nie event laai nie."; document.getElementById("right").innerHTML=""; return; }
+  EVENT = res.event || {}; 
+  const TTS = res.ticket_types||[];
+  TTMAP = new Map(TTS.map(t=>[Number(t.id), t]));
+
+  renderLeft();
+  renderRight();
+}
+
+function renderLeft(){
+  const left = document.getElementById("left");
+  const items = CART.items||[];
+  // build attendee blocks per qty
+  const blocks = [];
+  for (const it of items){
+    const tt = TTMAP.get(Number(it.ticket_type_id));
+    if (!tt) continue;
+    for (let i=0;i<Number(it.qty||0);i++){
+      blocks.push(attendeeBlock(tt, i));
+    }
+  }
+
+  left.innerHTML = \`
+    <div class="chip">\${esc(EVENT.name||"")}</div>
+    <div class="seg"></div>
+    <h2 style="margin:0 0 8px;">Koper inligting</h2>
+    <div class="row">
+      <div><label>Naam<input id="buyerFirst" autocomplete="given-name" placeholder="Naam"/></label></div>
+      <div><label>Van<input id="buyerLast"  autocomplete="family-name" placeholder="Van"/></label></div>
+    </div>
+    <div class="row">
+      <div><label>E-pos<input id="buyerEmail" type="email" autocomplete="email" placeholder="E-pos"/></label></div>
+      <div><label>Selfoon<input id="buyerPhone" inputmode="tel" placeholder="Selfoon (bv. 2771…)"/></label></div>
+    </div>
+    <div class="seg"></div>
+    \${blocks.length ? '<h2 style="margin:8px 0;">Besoeker inligting</h2>' : ''}
+    <div id="attendees">\${blocks.join("")}</div>
+    <div class="seg"></div>
+    <div class="row3">
+      <button id="payNow" class="btn primary">Pay now</button>
+      <button id="payLater" class="btn ghost">(Pay at event)</button>
+    </div>
+    <p class="muted" style="margin-top:10px">
+      Jou kaartjies sal via WhatsApp en Epos eersdaags gestuur word sodra betaling ontvang was.
+    </p>
+  \`;
+
+  // default attendee phones follow buyer phone
+  const bPhone = document.getElementById("buyerPhone");
+  bPhone.addEventListener("blur", ()=>{
+    const n = normalizePhone(bPhone.value);
+    bPhone.value = n;
+    document.querySelectorAll('[data-att-phone]').forEach(inp=>{
+      if (!inp.dataset.touched) inp.value = n;
+    });
+  });
+
+  document.querySelectorAll('[data-att-phone]').forEach(inp=>{
+    inp.addEventListener("input", ()=>{ inp.dataset.touched = "1"; });
+    inp.addEventListener("blur", ()=>{ inp.value = normalizePhone(inp.value); });
+  });
+
+  document.getElementById("payNow").onclick  = ()=> submitOrder("pay_now");
+  document.getElementById("payLater").onclick = ()=> submitOrder("pay_at_event");
+}
+
+function attendeeBlock(tt, idx){
+  const key = tt.id + ":" + (idx+1);
+  return \`
+  <div class="att">
+    <h3>\${esc(tt.name)} <span class="muted">#\${idx+1}</span></h3>
+    <div class="row">
+      <div><label>Naam en Van<input data-att="name" data-key="\${key}" placeholder="Naam en Van"/></label></div>
+      <div>
+        <label>Geslag
+          <select data-att="gender" data-key="\${key}">
+            <option value="male">Manlik</option>
+            <option value="female">Vroulik</option>
+            <option value="other">Ander</option>
+          </select>
+        </label>
+      </div>
+    </div>
+    <div class="row">
+      <div><label>Telefoon vir aflewering
+        <input data-att-phone data-att="phone" data-key="\${key}" placeholder="Selfoon (bv. 2771…)"/>
+      </label></div>
+      <div></div>
+    </div>
+    <input type="hidden" data-att="type" data-key="\${key}" value="\${tt.id}"/>
+  </div>`;
+}
+
+function renderRight(){
+  const right = document.getElementById("right");
+  const items = CART.items||[];
+  let total = 0;
+  const lines = items.map(it=>{
+    const tt = TTMAP.get(Number(it.ticket_type_id)) || {name:"", price_cents:0};
+    const qty = Number(it.qty||0);
+    const line = qty * Number(tt.price_cents||0);
+    total += line;
+    return \`<div class="rightItem"><div>\${esc(tt.name)} <span class="muted">× \${qty}</span></div><div>\${R(line)}</div></div>\`;
+  }).join("");
+
+  right.innerHTML = \`
+    \${lines || '<div class="muted">Geen items in mandjie nie.</div>'}
+    <hr style="border:0;border-top:1px solid #f0f0f0;margin:10px 0">
+    <div class="rightItem"><div style="font-weight:800">Totaal</div><div class="total">\${R(total)}</div></div>
+  \`;
+}
+
+function readAttendees(){
+  const out = [];
+  document.querySelectorAll('[data-att="type"]').forEach(hidden=>{
+    const key = hidden.dataset.key;
+    const typeId = Number(hidden.value);
+    const name = document.querySelector('[data-att="name"][data-key="'+key+'"]').value.trim();
+    const gender = document.querySelector('[data-att="gender"][data-key="'+key+'"]').value;
+    const phoneRaw = document.querySelector('[data-att="phone"][data-key="'+key+'"]').value;
+    const phone = normalizePhone(phoneRaw);
+    const [first="", last=""] = name.split(/\s+/,2);
+    out.push({ ticket_type_id:typeId, attendee_first:first, attendee_last:last||"", gender, phone });
+  });
+  return out;
+}
+
+async function submitOrder(method){
+  const buyerFirst = document.getElementById("buyerFirst").value.trim();
+  const buyerLast  = document.getElementById("buyerLast").value.trim();
+  const buyerName  = (buyerFirst + " " + buyerLast).trim();
+  const buyerEmail = document.getElementById("buyerEmail").value.trim();
+  const buyerPhone = normalizePhone(document.getElementById("buyerPhone").value);
+
+  if (!buyerName){ alert("Vul asseblief jou naam in."); return; }
+
+  const payload = {
+    event_id: CART.event_id,
+    items: CART.items,
+    buyer_name: buyerName,
+    email: buyerEmail,
+    phone: buyerPhone,
+    method,
+    attendees: readAttendees()
+  };
+
+  const r = await fetch("/api/public/orders/create", {
+    method:"POST",
+    headers:{ "content-type":"application/json" },
+    body: JSON.stringify(payload)
+  }).then(r=>r.json()).catch(()=>({ok:false, error:"Netwerk fout"}));
+
+  if (!r.ok){ alert("Misluk: " + (r.error||"Kon nie bestel nie")); return; }
+
+  // success — for now just show short code; later redirect to payment or success
+  alert("Bestelling aangemaak: " + r.order.short_code);
+  sessionStorage.removeItem("pending_cart");
+  location.href = "/";
+}
+
+load();
+</script>
+</body></html>`;
