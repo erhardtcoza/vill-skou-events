@@ -3,136 +3,62 @@ import { json, bad } from "../utils/http.js";
 
 export function mountPayments(router) {
 
-  // Helper: read a key from site_settings
+  // --- helpers -------------------------------------------------------------
+
+  // Read a single key from site_settings
   async function getSetting(env, key) {
     const row = await env.DB.prepare(
-      `SELECT value FROM site_settings WHERE key = ?1 LIMIT 1`
+      `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
     ).bind(key).first();
     return row ? row.value : null;
   }
 
-// POST /api/payments/yoco/intent  { code: "C123ABC" }
-router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
-  let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-  const code = String(b?.code || "").trim().toUpperCase();
-  if (!code) return bad("code required");
-
-  // Lookup order
-  const o = await env.DB.prepare(
-    `SELECT id, short_code, event_id, total_cents, status
-       FROM orders
-      WHERE UPPER(short_code)=?1
-      LIMIT 1`
-  ).bind(code).first();
-  if (!o) return bad("Order not found", 404);
-  if (!Number(o.total_cents || 0)) return bad("Order total is zero");
-
-  // Settings
-  async function getSetting(k){
-    const r = await env.DB.prepare(`SELECT value FROM site_settings WHERE key=?1 LIMIT 1`).bind(k).first();
-    return r ? r.value : null;
+  // Decide mode + pick proper secret
+  async function getYocoSecret(env) {
+    const mode = ((await getSetting(env, "YOCO_MODE")) || "sandbox").toLowerCase();
+    const testSecret = await getSetting(env, "YOCO_TEST_SECRET_KEY");
+    const liveSecret = await getSetting(env, "YOCO_LIVE_SECRET_KEY");
+    const secret = mode === "live" ? (liveSecret || "") : (testSecret || "");
+    return { mode, secret };
   }
 
-  const PUBLIC_BASE_URL = await getSetting("PUBLIC_BASE_URL");
-  if (!PUBLIC_BASE_URL || !/^https:\/\//i.test(PUBLIC_BASE_URL)) {
-    return bad("PUBLIC_BASE_URL missing or not https (required to build redirect_url)");
-  }
+  // --- Create checkout intent ---------------------------------------------
 
-  const mode = ((await getSetting("YOCO_MODE")) || "sandbox").toLowerCase();
-  const TEST_SECRET = await getSetting("YOCO_TEST_SECRET_KEY");
-  const LIVE_SECRET = await getSetting("YOCO_LIVE_SECRET_KEY");
-  const secret = mode === "live" ? (LIVE_SECRET || "") : (TEST_SECRET || "");
-  if (!secret) return bad(`Missing Yoco secret key for mode=${mode}`);
+  // POST /api/payments/yoco/intent  { code: "C123ABC" }
+  router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
+    let body; try { body = await req.json(); } catch { return bad("Bad JSON"); }
+    const code = String(body?.code || "").trim().toUpperCase();
+    if (!code) return bad("code required");
 
-  // cancel_url back to event shop if possible
-  let cancel_url = PUBLIC_BASE_URL + "/";
-  try {
-    const ev = await env.DB.prepare(`SELECT slug FROM events WHERE id=?1 LIMIT 1`).bind(o.event_id).first();
-    if (ev?.slug) cancel_url = PUBLIC_BASE_URL + "/shop/" + encodeURIComponent(ev.slug);
-  } catch {}
-
-  const redirect_url = PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code);
-
-  const payload = {
-    amount: Number(o.total_cents || 0),
-    currency: "ZAR",
-    reference: String(o.short_code),
-    description: "Villiersdorp Skou tickets",
-    redirect_url,
-    cancel_url
-  };
-
-  let res, y;
-  try {
-    res = await fetch("https://payments.yoco.com/api/checkouts", {
-      method: "POST",
-      headers: {
-        "authorization": "Bearer " + secret,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-    y = await res.json().catch(() => ({}));
-  } catch (e) {
-    return bad("Network to Yoco failed: " + (e?.message || e), 502);
-  }
-
-  if (!res.ok) {
-    const msg = y?.message || y?.error || (`Yoco error ${res.status}`);
-    // Store a quick diagnostic on the order (ignore failures)
-    try {
-      await env.DB.prepare(
-        `UPDATE orders SET payment_note=?2 WHERE id=?1`
-      ).bind(o.id, `yoco_fail:${mode}:${String(msg).slice(0,120)}`).run();
-    } catch {}
-    return bad(`Yoco rejected request: ${msg}`, res.status);
-  }
-
-  const redirect = y?.redirect_url || redirect_url;
-
-  // Ensure status is at least awaiting_payment; stash external id
-  try {
-    await env.DB.prepare(
-      `UPDATE orders
-          SET status = CASE WHEN status='awaiting_payment' THEN status ELSE 'awaiting_payment' END,
-              payment_ext_id = COALESCE(?2, payment_ext_id),
-              updated_at = strftime('%s','now')
-        WHERE id = ?1`
-    ).bind(o.id, (y?.id || null)).run();
-  } catch {}
-
-  return json({ ok: true, redirect_url: redirect, yoco: y || null });
-});
-  
-    // Lookup order
+    // Order lookup
     const o = await env.DB.prepare(
       `SELECT id, short_code, event_id, total_cents, status
          FROM orders
-        WHERE UPPER(short_code) = ?1
+        WHERE UPPER(short_code)=?1
         LIMIT 1`
     ).bind(code).first();
     if (!o) return bad("Order not found", 404);
+    if (!Number(o.total_cents || 0)) return bad("Order total is zero");
 
-    // Resolve base URL + (optional) event slug for cancel_url
-    const PUBLIC_BASE_URL = (await getSetting(env, "PUBLIC_BASE_URL")) || "";
-    let cancelUrl = PUBLIC_BASE_URL || "";
+    // Required settings
+    const PUBLIC_BASE_URL = await getSetting(env, "PUBLIC_BASE_URL");
+    if (!PUBLIC_BASE_URL || !/^https:\/\//i.test(PUBLIC_BASE_URL)) {
+      return bad("PUBLIC_BASE_URL missing or not https (required to build redirect_url)");
+    }
+
+    // Yoco mode + secret
+    const { mode, secret } = await getYocoSecret(env);
+    if (!secret) return bad(`Missing Yoco secret key for mode=${mode}`);
+
+    // cancel_url back to event shop if we know the slug
+    let cancel_url = PUBLIC_BASE_URL + "/";
     try {
-      const ev = await env.DB.prepare(
-        `SELECT slug FROM events WHERE id = ?1 LIMIT 1`
-      ).bind(o.event_id).first();
-      if (ev?.slug) cancelUrl = (PUBLIC_BASE_URL || "") + "/shop/" + encodeURIComponent(ev.slug);
+      const ev = await env.DB.prepare(`SELECT slug FROM events WHERE id=?1 LIMIT 1`).bind(o.event_id).first();
+      if (ev?.slug) cancel_url = PUBLIC_BASE_URL + "/shop/" + encodeURIComponent(ev.slug);
     } catch {}
 
-    // Determine keys/mode
-    const mode = ((await getSetting(env, "YOCO_MODE")) || "sandbox").toLowerCase();
-    const TEST_SECRET = await getSetting(env, "YOCO_TEST_SECRET_KEY");
-    const LIVE_SECRET = await getSetting(env, "YOCO_LIVE_SECRET_KEY");
-    const secret = mode === "live" ? (LIVE_SECRET || "") : (TEST_SECRET || "");
-    if (!secret) return bad("Yoco secret key not configured for current mode");
-
-    // Build redirect URL (required by Yoco)
-    const redirect_url = (PUBLIC_BASE_URL || "") + "/thanks/" + encodeURIComponent(code);
-    const cancel_url   = cancelUrl || (PUBLIC_BASE_URL || "/");
+    // Where Yoco should send the buyer after payment
+    const redirect_url = PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code);
 
     // Create Yoco checkout
     const payload = {
@@ -140,14 +66,13 @@ router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
       currency: "ZAR",
       reference: String(o.short_code),
       description: "Villiersdorp Skou tickets",
-      redirect_url,                 // ✅ required
-      cancel_url                    // optional but helpful
-      // You can also add: "metadata": { order_id: o.id }
+      redirect_url,
+      cancel_url
     };
 
-    let yocoRes;
+    let res, y;
     try {
-      const res = await fetch("https://payments.yoco.com/api/checkouts", {
+      res = await fetch("https://payments.yoco.com/api/checkouts", {
         method: "POST",
         headers: {
           "authorization": "Bearer " + secret,
@@ -155,54 +80,92 @@ router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
         },
         body: JSON.stringify(payload)
       });
-      yocoRes = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg = yocoRes?.message || yocoRes?.error || ("Yoco error " + res.status);
-        return bad(String(msg), res.status);
-      }
+      y = await res.json().catch(() => ({}));
     } catch (e) {
-      return bad("Failed to contact Yoco: " + (e?.message || e), 502);
+      return bad("Network to Yoco failed: " + (e?.message || e), 502);
     }
 
-    // Yoco should echo a redirect_url in the response;
-    // fall back to our constructed one if missing (defensive)
-    const outUrl = yocoRes?.redirect_url || redirect_url;
+    if (!res.ok) {
+      const msg = y?.message || y?.error || (`Yoco error ${res.status}`);
+      // Non-blocking: keep a tiny note on the order
+      try {
+        await env.DB.prepare(
+          `UPDATE orders SET payment_note=?2 WHERE id=?1`
+        ).bind(o.id, `yoco_fail:${mode}:${String(msg).slice(0,120)}`).run();
+      } catch {}
+      return bad(`Yoco rejected request: ${msg}`, res.status);
+    }
 
-    // Optionally store last checkout id/url on the order (non-blocking)
+    const redirect = y?.redirect_url || redirect_url;
+
+    // Update order to awaiting_payment + stash external id
     try {
       await env.DB.prepare(
         `UPDATE orders
             SET status = CASE WHEN status='awaiting_payment' THEN status ELSE 'awaiting_payment' END,
+                payment_method = 'online_yoco',
                 payment_ext_id = COALESCE(?2, payment_ext_id),
                 updated_at = strftime('%s','now')
           WHERE id = ?1`
-      ).bind(o.id, (yocoRes?.id || null)).run();
-    } catch { /* ignore */ }
+      ).bind(o.id, (y?.id || null)).run();
+    } catch {}
 
-    return json({ ok: true, redirect_url: outUrl, yoco: yocoRes || null });
+    return json({ ok: true, redirect_url: redirect, yoco: y || null });
   });
 
+  // --- Webhook (test/live share same URL; Yoco sets mode on its side) -----
 
-  // Webhook endpoint (already created earlier). Kept here for completeness.
+  // POST /api/payments/yoco/webhook
+  // Expect events like checkout.completed or payment events.
+  // We treat statuses "paid" / "succeeded" as paid, "failed" as failure.
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
-    // (If you’ve already implemented webhook logic, keep that; this is just a placeholder)
-    let body; try { body = await req.json(); } catch { return bad("Bad JSON"); }
+    let evt; try { evt = await req.json(); } catch { return bad("Bad JSON"); }
 
-    // Expect events like: { type, data: { object: { reference, status, amount } } }
-    // Update order status to 'paid' when appropriate.
-    try {
-      const ref = body?.data?.object?.reference || body?.reference || "";
-      const status = String(body?.data?.object?.status || body?.status || "").toLowerCase();
+    // Extract a sensible reference + status from possible shapes
+    // (defensive because Yoco examples vary by resource type)
+    const obj = evt?.data?.object || evt?.object || {};
+    const reference = obj?.reference || evt?.reference || "";
+    const extId = obj?.id || evt?.id || null;
+    const rawStatus = String(obj?.status || evt?.status || "").toLowerCase();
+    const type = String(evt?.type || "").toLowerCase();
 
-      if (ref && status === "paid") {
-        await env.DB.prepare(
-          `UPDATE orders
-              SET status='paid', paid_at=strftime('%s','now')
-            WHERE UPPER(short_code)=UPPER(?1)`
-        ).bind(ref).run();
+    // Map to internal status
+    const paidLike =
+      rawStatus === "paid" ||
+      rawStatus === "succeeded" ||
+      type.includes("checkout.completed") ||
+      type.includes("payment.succeeded");
+
+    const failedLike =
+      rawStatus === "failed" ||
+      type.includes("payment.failed");
+
+    // Update by short_code (our reference)
+    if (reference && (paidLike || failedLike)) {
+      try {
+        if (paidLike) {
+          await env.DB.prepare(
+            `UPDATE orders
+                SET status='paid',
+                    paid_at=strftime('%s','now'),
+                    payment_method='online_yoco',
+                    payment_ext_id=COALESCE(?2,payment_ext_id),
+                    updated_at=strftime('%s','now')
+              WHERE UPPER(short_code)=UPPER(?1)`
+          ).bind(reference, extId).run();
+        } else if (failedLike) {
+          await env.DB.prepare(
+            `UPDATE orders
+                SET status='payment_failed',
+                    payment_method='online_yoco',
+                    payment_ext_id=COALESCE(?2,payment_ext_id),
+                    updated_at=strftime('%s','now')
+              WHERE UPPER(short_code)=UPPER(?1)`
+          ).bind(reference, extId).run();
+        }
+      } catch {
+        // swallow — webhook must be idempotent & resilient
       }
-    } catch {
-      // swallow — webhook must be idempotent
     }
 
     return json({ ok: true });
