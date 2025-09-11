@@ -6,14 +6,14 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
   *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  .grid{ display:grid; grid-template-columns:1.25fr .9fr; gap:16px }
+  .grid{ display:grid; grid-template-columns:1.25fr .9fr; gap:16px; align-items:start } /* ★ tweak */
   @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
   h1{ margin:0 0 10px } h2{ margin:14px 0 10px } .muted{ color:var(--muted) }
-  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
+  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start } /* ★ tweak */
   @media (max-width:680px){ .row{ grid-template-columns:1fr; } }
   label{ display:block; font-size:13px; color:#444; margin:10px 0 6px }
-  input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
+  input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff; min-height:40px } /* ★ tweak */
   .btn{ padding:12px 14px; border-radius:10px; border:0; background:var(--green); color:#fff; font-weight:700; cursor:pointer }
   .btn.secondary{ background:#fff; color:#111; border:1px solid #e5e7eb }
   .att{ border:1px solid #eef0f2; border-radius:12px; padding:12px; margin:10px 0 }
@@ -144,6 +144,13 @@ function buildAttendeeForms(){
       wrap.appendChild(block);
     }
   });
+
+  // ★ Prefill on first focus if still empty
+  wrap.addEventListener('focusin', (e)=>{
+    if (e.target && e.target.classList.contains('att_phone')) {
+      if (!e.target.value) e.target.value = normPhone($('buyer_phone').value);
+    }
+  });
 }
 
 // Update summary
@@ -183,7 +190,7 @@ function collectPayload(){
       const ph = normPhone(attPhones[pointer]?.value||'');
       const gd = String(attGenders[pointer]?.value||'').trim() || null;
 
-      const firstLast = nm.split(/\s+/);
+      const firstLast = nm.split(/\\s+/);
       const first = firstLast.shift() || '';
       const last  = firstLast.join(' ') || '';
 
