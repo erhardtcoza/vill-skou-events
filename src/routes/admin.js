@@ -43,29 +43,63 @@ export function mountAdmin(router) {
 
   /* ----------------- settings ----------------- */
 
-  // Read all settings (used by Site settings UI)
-  router.add("GET", "/api/admin/settings", async (_req, env) => {
-    const s = await getSettingsMap(env);
-    return json({ ok: true, settings: s });
-  });
+// --- Site settings: read ---
+router.add("GET", "/api/admin/settings", requireRole("admin", async (_req, env) => {
+  await env.DB.exec?.("CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT)");
+  const q = await env.DB.prepare("SELECT key, value FROM site_settings").all();
+  const map = {};
+  for (const r of (q.results || [])) map[r.key] = r.value;
+  return json({ ok: true, settings: map });
+}));
 
-  // Save settings (expects {settings:{KEY:VALUE}})
-  router.add("POST", "/api/admin/settings/update", async (req, env) => {
-    try {
-      const body = await req.json();
-      const obj = body?.settings && typeof body.settings === "object" ? body.settings : null;
-      if (!obj) return bad("settings object required");
+// --- Site settings: update ---
+router.add("POST", "/api/admin/settings/update", requireRole("admin", async (req, env) => {
+  await env.DB.exec?.("CREATE TABLE IF NOT EXISTS site_settings (key TEXT PRIMARY KEY, value TEXT)");
 
-      for (const [k, v] of Object.entries(obj)) {
-        await setSetting(env, String(k), String(v ?? ""));
-      }
-      const s = await getSettingsMap(env);
-      return json({ ok: true, settings: s });
-    } catch (e) {
-      return bad("Failed to save settings: " + (e?.message || e), 500);
-    }
-  });
+  let body;
+  try { body = await req.json(); } catch { return bad("Bad JSON"); }
+  const entries = (body && body.entries) || body || {};
 
+  // Allow list (existing WhatsApp/general + new Yoco keys)
+  const ALLOWED = new Set([
+    // General / existing
+    "PUBLIC_BASE_URL",
+
+    // WhatsApp (existing or planned)
+    "WHATSAPP_TOKEN",
+    "WHATSAPP_TEMPLATE_NAME",
+    "WHATSAPP_TEMPLATE_LANG",
+    "VERIFY_TOKEN",
+    "PHONE_NUMBER_ID",
+
+    // ---- Yoco (NEW) ----
+    "YOCO_MODE",                    // "sandbox" | "live"
+    "YOCO_CLIENT_ID",
+    "YOCO_SCOPES",
+    "YOCO_REDIRECT_URI",
+    "YOCO_STATE"
+  ]);
+
+  // Basic normalization
+  if (typeof entries.YOCO_MODE === "string") {
+    const v = entries.YOCO_MODE.toLowerCase();
+    entries.YOCO_MODE = (v === "live" ? "live" : "sandbox");
+  }
+  if (Array.isArray(entries.YOCO_SCOPES)) {
+    entries.YOCO_SCOPES = entries.YOCO_SCOPES.join(" ");
+  }
+
+  const tx = env.DB; // D1 has implicit transactions per statement; keep it simple
+  for (const [k, v] of Object.entries(entries)) {
+    if (!ALLOWED.has(k)) continue;
+    await tx.prepare(
+      "INSERT INTO site_settings(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    ).bind(k, String(v ?? "")).run();
+  }
+
+  return json({ ok: true });
+}));
+  
   /* -------- WhatsApp templates management ------ */
 
   // List templates from local table
