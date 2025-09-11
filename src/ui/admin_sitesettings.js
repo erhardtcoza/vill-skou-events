@@ -1,145 +1,280 @@
 // /src/ui/admin_sitesettings.js
-export const adminSiteSettingsJS = `
-window.AdminPanels.settings = async function renderSettings(){
-  const el = $("panel-settings");
-  el.innerHTML = "<h2>Site Settings</h2><div class='muted'>Loading…</div>";
-  const j = await fetch("/api/admin/settings").then(r=>r.json()).catch(()=>({ok:false,settings:{}}));
-  const S = j.ok ? (j.settings||{}) : {};
+export const adminSiteSettingsJS = (() => {
+/* global $, esc */
 
-  // helpers
-  const get = (k, d="") => (S[k] ?? d);
-  const save = async (updates) => {
-    const r = await fetch("/api/admin/settings/update", {
+// ---- API endpoints used by this panel (adjust here if your routes differ)
+const API = {
+  settings_get:  "/api/admin/settings",
+  settings_set:  "/api/admin/settings/update",
+  wa_list:       "/api/admin/wa/templates",
+  wa_sync:       "/api/admin/wa/templates/sync",
+  wa_create:     "/api/admin/wa/templates/create",
+};
+
+// Fallback reader: return first non-empty among the provided keys
+const getAny = (obj, keys, def="") => {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v !== undefined && v !== null && String(v).length) return v;
+  }
+  return def;
+};
+
+// Build the whole panel
+async function render() {
+  const host = document.getElementById("panel-settings");
+  host.innerHTML = `<h2>Site Settings</h2><div class="muted">Loading…</div>`;
+
+  // 1) Load settings + templates (in parallel)
+  const [sRes, tRes] = await Promise.allSettled([
+    fetch(API.settings_get).then(r => r.json()),
+    fetch(API.wa_list).then(r => r.ok ? r.json() : { ok:false })
+  ]);
+
+  const S0 = (sRes.status === "fulfilled" && sRes.value?.ok) ? (sRes.value.settings || {}) : {};
+  const T0 = (tRes.status === "fulfilled" && tRes.value?.ok) ? (tRes.value.templates || []) : [];
+
+  // Map settings with fallbacks (handles previously saved/truncated keys)
+  const S = {
+    // General
+    SITE_NAME:      getAny(S0, ["SITE_NAME"], ""),
+    SITE_LOGO_URL:  getAny(S0, ["SITE_LOGO_URL"], ""),
+    PUBLIC_BASE_URL:getAny(S0, ["PUBLIC_BASE_URL","site.PUBLIC_BASE_URL"], ""),
+
+    // WhatsApp (DB may store WA_* but /api/admin/settings already maps; still keep fallbacks)
+    WHATSAPP_TOKEN: getAny(S0, ["WHATSAPP_TOKEN","WA_TOKEN"], ""),
+    PHONE_NUMBER_ID:getAny(S0, ["PHONE_NUMBER_ID","WA_PHONE_NUMBER_ID"], ""),
+    BUSINESS_ID:    getAny(S0, ["BUSINESS_ID","WA_BUSINESS_ID"], ""),
+    VERIFY_TOKEN:   getAny(S0, ["VERIFY_TOKEN"], ""),
+
+    // Yoco
+    YOCO_MODE:              getAny(S0, ["YOCO_MODE"], "sandbox"),
+    YOCO_TEST_PUBLIC_KEY:   getAny(S0, ["YOCO_TEST_PUBLIC_KEY","YOCO_TEST_PUBLIC_K"], ""),
+    YOCO_TEST_SECRET_KEY:   getAny(S0, ["YOCO_TEST_SECRET_KEY","YOCO_TEST_SECRET_K"], ""),
+    YOCO_LIVE_PUBLIC_KEY:   getAny(S0, ["YOCO_LIVE_PUBLIC_KEY","YOCO_LIVE_PUBLIC_K"], ""),
+    YOCO_LIVE_SECRET_KEY:   getAny(S0, ["YOCO_LIVE_SECRET_KEY","YOCO_LIVE_SECRET_K"], ""),
+  };
+
+  const callbackUrl = (S.PUBLIC_BASE_URL || location.origin) + "/api/admin/yoco/oauth/callback";
+
+  host.innerHTML = `
+    <h2>Site Settings</h2>
+
+    <div class="tabs" id="site-subtabs" style="margin-top:0">
+      <div class="tab active" data-sub="general">General</div>
+      <div class="tab" data-sub="whatsapp">WhatsApp</div>
+      <div class="tab" data-sub="yoco">Yoco</div>
+    </div>
+
+    <!-- General -->
+    <div id="site-general">
+      <div class="row">
+        <div>
+          <label>Site Name</label>
+          <input id="SITE_NAME" value="${esc(S.SITE_NAME)}"/>
+        </div>
+        <div>
+          <label>Logo URL</label>
+          <input id="SITE_LOGO_URL" value="${esc(S.SITE_LOGO_URL)}"/>
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn primary" id="saveGeneral">Save General</button>
+      </div>
+      <hr style="margin:16px 0"/>
+    </div>
+
+    <!-- WhatsApp -->
+    <div id="site-whatsapp" class="hide">
+      <div class="row">
+        <div>
+          <label>WHATSAPP_TOKEN</label>
+          <input id="WHATSAPP_TOKEN" value="${esc(S.WHATSAPP_TOKEN)}"/>
+        </div>
+        <div>
+          <label>VERIFY_TOKEN</label>
+          <input id="VERIFY_TOKEN" value="${esc(S.VERIFY_TOKEN)}"/>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>PHONE_NUMBER_ID</label>
+          <input id="PHONE_NUMBER_ID" value="${esc(S.PHONE_NUMBER_ID)}"/>
+        </div>
+        <div>
+          <label>BUSINESS_ID</label>
+          <input id="BUSINESS_ID" value="${esc(S.BUSINESS_ID)}"/>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>PUBLIC_BASE_URL</label>
+          <input id="PUBLIC_BASE_URL" value="${esc(S.PUBLIC_BASE_URL)}"/>
+        </div>
+        <div></div>
+      </div>
+
+      <div class="split" style="margin-top:10px">
+        <button class="btn primary" id="saveWA">Save WhatsApp</button>
+        <button class="btn" id="syncWA">Sync templates</button>
+        <button class="btn" id="newWATpl">New template</button>
+      </div>
+
+      <div id="wa-templates" style="margin-top:14px"></div>
+      <hr style="margin:16px 0"/>
+    </div>
+
+    <!-- Yoco -->
+    <div id="site-yoco" class="hide">
+      <div class="row">
+        <div>
+          <label>Mode</label>
+          <select id="YOCO_MODE">
+            <option value="sandbox" ${S.YOCO_MODE !== "live" ? "selected":""}>Sandbox</option>
+            <option value="live" ${S.YOCO_MODE === "live" ? "selected":""}>Live</option>
+          </select>
+        </div>
+        <div>
+          <label>OAuth Callback URL</label>
+          <input value="${esc(callbackUrl)}" readonly />
+        </div>
+      </div>
+
+      <h3 style="margin:16px 0 8px">Sandbox (Test) Keys</h3>
+      <div class="row">
+        <div>
+          <label>Test Public Key</label>
+          <input id="YOCO_TEST_PUBLIC_KEY" value="${esc(S.YOCO_TEST_PUBLIC_KEY)}"/>
+        </div>
+        <div>
+          <label>Test Secret Key</label>
+          <input id="YOCO_TEST_SECRET_KEY" value="${esc(S.YOCO_TEST_SECRET_KEY)}"/>
+        </div>
+      </div>
+
+      <h3 style="margin:16px 0 8px">Live Keys</h3>
+      <div class="row">
+        <div>
+          <label>Live Public Key</label>
+          <input id="YOCO_LIVE_PUBLIC_KEY" value="${esc(S.YOCO_LIVE_PUBLIC_KEY)}"/>
+        </div>
+        <div>
+          <label>Live Secret Key</label>
+          <input id="YOCO_LIVE_SECRET_KEY" value="${esc(S.YOCO_LIVE_SECRET_KEY)}"/>
+        </div>
+      </div>
+
+      <div class="split" style="margin-top:10px">
+        <button class="btn primary" id="saveYoco">Save Yoco</button>
+      </div>
+    </div>
+  `;
+
+  // Subtab logic
+  const subtabs = host.querySelectorAll("#site-subtabs .tab");
+  const pGeneral = document.getElementById("site-general");
+  const pWA      = document.getElementById("site-whatsapp");
+  const pYoco    = document.getElementById("site-yoco");
+
+  function showSub(name){
+    subtabs.forEach(x => x.classList.toggle("active", x.dataset.sub === name));
+    pGeneral.classList.toggle("hide", name !== "general");
+    pWA.classList.toggle("hide", name !== "whatsapp");
+    pYoco.classList.toggle("hide", name !== "yoco");
+  }
+  subtabs.forEach(t => t.onclick = () => showSub(t.dataset.sub));
+  // expose for deep-link support
+  window.AdminPanels.settingsSwitch = showSub;
+
+  // Render WhatsApp templates table
+  renderTemplatesTable(T0);
+
+  // Button handlers
+  document.getElementById("saveGeneral").onclick = () => saveSettings({
+    SITE_NAME:      document.getElementById("SITE_NAME").value,
+    SITE_LOGO_URL:  document.getElementById("SITE_LOGO_URL").value,
+  });
+
+  document.getElementById("saveWA").onclick = () => saveSettings({
+    PUBLIC_BASE_URL:  document.getElementById("PUBLIC_BASE_URL").value,
+    VERIFY_TOKEN:     document.getElementById("VERIFY_TOKEN").value,
+    WHATSAPP_TOKEN:   document.getElementById("WHATSAPP_TOKEN").value,
+    PHONE_NUMBER_ID:  document.getElementById("PHONE_NUMBER_ID").value,
+    BUSINESS_ID:      document.getElementById("BUSINESS_ID").value,
+  });
+
+  document.getElementById("syncWA").onclick = async () => {
+    const r = await fetch(API.wa_sync, { method:"POST" });
+    if (!r.ok) { alert("Sync failed"); return; }
+    await reloadTemplates();
+  };
+
+  document.getElementById("newWATpl").onclick = async () => {
+    const name = prompt("Template name (snake_case):", "");
+    if (!name) return;
+    const lang = prompt("Language (e.g. en_US or af):", "en_US") || "en_US";
+    const category = prompt("Category (TRANSACTIONAL/MARKETING):", "TRANSACTIONAL") || "TRANSACTIONAL";
+    const body = prompt("Body text (placeholders like {{1}}, {{2}} allowed):", "Hallo {{1}}, jou kaartjies is gereed.") || "";
+    const p = { name, language: lang, category, body };
+    const r = await fetch(API.wa_create, {
+      method:"POST",
+      headers:{ "content-type":"application/json" },
+      body: JSON.stringify(p)
+    });
+    if (!r.ok) { alert("Create failed"); return; }
+    await reloadTemplates();
+  };
+
+  document.getElementById("saveYoco").onclick = () => saveSettings({
+    YOCO_MODE:              document.getElementById("YOCO_MODE").value,
+    YOCO_TEST_PUBLIC_KEY:   document.getElementById("YOCO_TEST_PUBLIC_KEY").value,
+    YOCO_TEST_SECRET_KEY:   document.getElementById("YOCO_TEST_SECRET_KEY").value,
+    YOCO_LIVE_PUBLIC_KEY:   document.getElementById("YOCO_LIVE_PUBLIC_KEY").value,
+    YOCO_LIVE_SECRET_KEY:   document.getElementById("YOCO_LIVE_SECRET_KEY").value,
+  });
+
+  // Helpers
+  async function saveSettings(updates){
+    const r = await fetch(API.settings_set, {
       method:"POST",
       headers:{ "content-type":"application/json" },
       body: JSON.stringify({ updates })
     });
     if (!r.ok) { alert("Save failed"); return; }
     alert("Saved");
-  };
-
-  // sub-tabs UI
-  el.innerHTML = [
-    "<h2>Site Settings</h2>",
-    "<div class='tabs' style='margin-top:0'>",
-      "<div class='tab active' data-sub='general'>General</div>",
-      "<div class='tab' data-sub='whatsapp'>WhatsApp</div>",
-      "<div class='tab' data-sub='yoco'>Yoco</div>",
-    "</div>",
-
-    // General
-    "<div id='sub-general'>",
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px'>",
-        "<div><label>Site Name</label><input id='SITE_NAME' value='"+esc(get("SITE_NAME","Villiersdorp Skou"))+"'/></div>",
-        "<div><label>Logo URL</label><input id='SITE_LOGO_URL' value='"+esc(get("SITE_LOGO_URL",""))+"'/></div>",
-      "</div>",
-      "<div style='margin-top:10px'><button id='saveGeneral' class='btn primary' style='padding:10px 12px;border-radius:10px;border:0;background:#0a7d2b;color:#fff;font-weight:700;cursor:pointer'>Save General</button></div>",
-      "<hr style='margin:16px 0'/>",
-    "</div>",
-
-    // WhatsApp
-    "<div id='sub-whatsapp' class='hide'>",
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px'>",
-        "<div><label>WHATSAPP_TOKEN</label><input id='WHATSAPP_TOKEN' value='"+esc(get("WHATSAPP_TOKEN",""))+"'/></div>",
-        "<div><label>VERIFY_TOKEN</label><input id='VERIFY_TOKEN' value='"+esc(get("VERIFY_TOKEN",""))+"'/></div>",
-        "<div><label>PHONE_NUMBER_ID</label><input id='PHONE_NUMBER_ID' value='"+esc(get("PHONE_NUMBER_ID",""))+"'/></div>",
-        "<div><label>BUSINESS_ID</label><input id='BUSINESS_ID' value='"+esc(get("BUSINESS_ID",""))+"'/></div>",
-        "<div><label>PUBLIC_BASE_URL</label><input id='PUBLIC_BASE_URL' value='"+esc(get("PUBLIC_BASE_URL",""))+"'/></div>",
-      "</div>",
-      "<div style='margin-top:10px;display:flex;gap:8px;flex-wrap:wrap'>",
-        "<button id='saveWA' class='btn primary' style='padding:10px 12px;border-radius:10px;border:0;background:#0a7d2b;color:#fff;font-weight:700;cursor:pointer'>Save WhatsApp</button>",
-        "<button id='syncTemplates' class='btn' style='padding:10px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;cursor:pointer'>Sync templates</button>",
-        "<button id='newTemplate' class='btn' style='padding:10px 12px;border-radius:10px;border:1px solid #e5e7eb;background:#fff;cursor:pointer'>New template</button>",
-      "</div>",
-      "<hr style='margin:16px 0'/>",
-    "</div>",
-
-    // Yoco
-    "<div id='sub-yoco' class='hide'>",
-      "<div><label>Mode</label>",
-        "<select id='YOCO_MODE'>",
-          "<option value='sandbox' ", (get("YOCO_MODE","sandbox")!=="live"?"selected":""), ">Sandbox</option>",
-          "<option value='live' ", (get("YOCO_MODE","sandbox")==="live"?"selected":""), ">Live</option>",
-        "</select>",
-      "</div>",
-      "<div style='margin:12px 0; font-weight:700'>Sandbox (Test) Keys</div>",
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px'>",
-        "<div><label>Test Public Key</label><input id='YOCO_TEST_PUBLIC_KEY' value='"+esc(get("YOCO_TEST_PUBLIC_KEY",""))+"'/></div>",
-        "<div><label>Test Secret Key</label><input id='YOCO_TEST_SECRET_KEY' value='"+esc(get("YOCO_TEST_SECRET_KEY",""))+"'/></div>",
-      "</div>",
-      "<div style='margin:12px 0; font-weight:700'>Live Keys</div>",
-      "<div style='display:grid;grid-template-columns:1fr 1fr;gap:12px'>",
-        "<div><label>Live Public Key</label><input id='YOCO_LIVE_PUBLIC_KEY' value='"+esc(get("YOCO_LIVE_PUBLIC_KEY",""))+"'/></div>",
-        "<div><label>Live Secret Key</label><input id='YOCO_LIVE_SECRET_KEY' value='"+esc(get("YOCO_LIVE_SECRET_KEY",""))+"'/></div>",
-      "</div>",
-      "<div style='margin-top:10px'><button id='saveYoco' class='btn primary' style='padding:10px 12px;border-radius:10px;border:0;background:#0a7d2b;color:#fff;font-weight:700;cursor:pointer'>Save Yoco</button></div>",
-    "</div>"
-  ].join("");
-
-  // sub-tabs logic
-  const tabs = el.querySelectorAll(".tabs .tab");
-  const panels = {
-    general: el.querySelector("#sub-general"),
-    whatsapp: el.querySelector("#sub-whatsapp"),
-    yoco: el.querySelector("#sub-yoco")
-  };
-  function showSub(name){
-    tabs.forEach(t=>t.classList.toggle("active", t.dataset.sub===name));
-    Object.values(panels).forEach(p=>p.classList.add("hide"));
-    (panels[name]||panels.general).classList.remove("hide");
   }
-  tabs.forEach(t=> t.onclick = ()=> showSub(t.dataset.sub||"general"));
-  showSub("general");
 
-  // save handlers
-  el.querySelector("#saveGeneral").onclick = ()=> save({
-    SITE_NAME: (document.getElementById("SITE_NAME").value||"").trim(),
-    SITE_LOGO_URL: (document.getElementById("SITE_LOGO_URL").value||"").trim()
-  });
+  async function reloadTemplates(){
+    const j = await fetch(API.wa_list).then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok) { alert("Could not load templates"); return; }
+    renderTemplatesTable(j.templates || []);
+  }
 
-  el.querySelector("#saveWA").onclick = ()=> save({
-    WHATSAPP_TOKEN: (document.getElementById("WHATSAPP_TOKEN").value||"").trim(),
-    VERIFY_TOKEN: (document.getElementById("VERIFY_TOKEN").value||"").trim(),
-    PHONE_NUMBER_ID: (document.getElementById("PHONE_NUMBER_ID").value||"").trim(),
-    BUSINESS_ID: (document.getElementById("BUSINESS_ID").value||"").trim(),
-    PUBLIC_BASE_URL: (document.getElementById("PUBLIC_BASE_URL").value||"").trim()
-  });
+  function renderTemplatesTable(rows){
+    const box = document.getElementById("wa-templates");
+    if (!rows.length){
+      box.innerHTML = `<div class="muted">No templates found.</div>`;
+      return;
+    }
+    // Try to be resilient to schema differences
+    const cols = ["name","language","category","status","id","last_synced","updated_at","created_at"];
+    const head = cols.filter(c => rows.some(r => r[c] !== undefined));
+    box.innerHTML = [
+      `<table><thead><tr>`,
+      ...head.map(h => `<th>${esc(h)}</th>`),
+      `</tr></thead><tbody>`,
+      ...rows.map(r => [
+        `<tr>`,
+        ...head.map(h => `<td>${esc(String(r[h] ?? ""))}</td>`),
+        `</tr>`
+      ].join("")),
+      `</tbody></table>`
+    ].join("");
+  }
+}
 
-  el.querySelector("#saveYoco").onclick = ()=> save({
-    YOCO_MODE: (document.getElementById("YOCO_MODE").value||"sandbox"),
-    YOCO_TEST_PUBLIC_KEY: (document.getElementById("YOCO_TEST_PUBLIC_KEY").value||"").trim(),
-    YOCO_TEST_SECRET_KEY: (document.getElementById("YOCO_TEST_SECRET_KEY").value||"").trim(),
-    YOCO_LIVE_PUBLIC_KEY: (document.getElementById("YOCO_LIVE_PUBLIC_KEY").value||"").trim(),
-    YOCO_LIVE_SECRET_KEY: (document.getElementById("YOCO_LIVE_SECRET_KEY").value||"").trim()
-  });
+// Register renderer with the AdminPanels registry
+window.AdminPanels.settings = render;
 
-  // template actions (safe placeholders if API not present)
-  const syncBtn = el.querySelector("#syncTemplates");
-  if (syncBtn) syncBtn.onclick = async ()=>{
-    try{
-      const r = await fetch("/api/admin/whatsapp/templates/sync", { method:"POST" });
-      const j = await r.json().catch(()=>({ok:false}));
-      if (!j.ok) throw new Error(j.error||"Sync failed");
-      alert("Templates synced");
-    }catch(e){ alert(e.message||"Not available"); }
-  };
-  const newBtn = el.querySelector("#newTemplate");
-  if (newBtn) newBtn.onclick = async ()=>{
-    const name = prompt("Template name (snake_case)"); if (!name) return;
-    const lang = prompt("Language (e.g. af or en_US)", "af") || "af";
-    // Simple stub payload; extend later with header/body/buttons
-    try{
-      const r = await fetch("/api/admin/whatsapp/templates/create", {
-        method:"POST", headers:{ "content-type":"application/json" },
-        body: JSON.stringify({ name, language: lang, category: "TRANSACTIONAL" })
-      });
-      const j = await r.json().catch(()=>({ok:false}));
-      if (!j.ok) throw new Error(j.error||"Create failed");
-      alert("Template requested");
-    }catch(e){ alert(e.message||"Not available"); }
-  };
-
-  // allow deep-link switch via main shell
-  window.AdminPanels.settingsSwitch = showSub;
-};
-`;
+return ""; // module export placeholder
+})();
