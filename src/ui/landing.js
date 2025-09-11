@@ -5,7 +5,7 @@ export function landingHTML() {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Villiersdorp Skou — Tickets</title>
+  <title>Villiersdorp Landbou Skou — Tickets</title>
   <style>
     :root { --bg:#f6f8f7; --card:#ffffff; --ink:#0b1320; --muted:#6c7a7a; --accent:#0a7d2b; }
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
@@ -46,7 +46,7 @@ export function landingHTML() {
 </head>
 <body>
 <div class="wrap">
-  <h1>Admin dashboard</h1> <!-- hidden by CSS in production, kept for consistency -->
+  <h1>Villiersdorp Landbou Skou Events</h1> <!-- hidden by CSS in production, kept for consistency -->
 
   <!-- HERO -->
   <section id="hero" class="hero" aria-live="polite">
@@ -57,11 +57,10 @@ export function landingHTML() {
         </a>
       </div>
       <div class="hero-text">
-        <div class="brand" id="heroBrand">Villiersdorp Skou</div>
+        <div class="brand" id="heroBrand">Villiersdorp Landbou Skou</div>
         <h2 class="hero-title">
           <a id="heroTitleLink" class="hero-link" href="#">Tickets &amp; Inligting</a>
         </h2>
-        <!-- (tagline removed as requested) -->
         <div class="cta-row">
           <a id="heroCta" class="cta" href="#">Koop kaartjies</a>
         </div>
@@ -112,7 +111,7 @@ export function landingHTML() {
     document.getElementById('heroPosterLink').href = shopUrl;
     document.getElementById('heroTitleLink').href = shopUrl;
     document.getElementById('heroTitleLink').textContent = 'Tickets & Inligting';
-    document.getElementById('heroBrand').textContent = ev0.name || 'Villiersdorp Skou';
+    document.getElementById('heroBrand').textContent = ev0.name || 'Villiersdorp Landbou Skou';
     document.getElementById('heroCta').href = shopUrl;
 
     // List all events
