@@ -87,10 +87,10 @@ export function mountPublic(router) {
       if (!tid || !qty) continue;
 
       const tt = ttMap.get(tid);
-      if (!tt) return bad(\`Unknown ticket_type_id \${tid}\`);
+      if (!tt) return bad("Unknown ticket_type_id " + tid);
 
       const limit = Number(tt.per_order_limit || 0);
-      if (limit && qty > limit) return bad(\`Exceeded per-order limit for \${tt.name}\`);
+      if (limit && qty > limit) return bad("Exceeded per-order limit for " + tt.name);
 
       const unit = Number(tt.price_cents || 0);
       total_cents += qty * unit;
