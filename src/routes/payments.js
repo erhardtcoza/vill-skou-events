@@ -2,121 +2,181 @@
 import { json, bad } from "../utils/http.js";
 
 /**
- * Public payments endpoints (Yoco)
+ * YOCO Checkout integration (hosted checkout flow)
  *
- * ENV/Settings precedence:
- * - settings table (`settings` key/val) overrides env when present
- * - env fallback: YOCO_MODE, YOCO_SECRET_KEY, YOCO_PUBLIC_KEY
+ * Requirements:
+ * - Table: site_settings (key TEXT PRIMARY KEY, value TEXT JSON)
+ *   The 'site' blob should contain:
+ *   {
+ *     "yoco": {
+ *       "mode": "sandbox" | "live",
+ *       "secret_key": "...",   // server key
+ *       "public_key": "...",   // publishable key (optional but handy for UI)
+ *       "redirect_success_base": "https://tickets.villiersdorpskou.co.za/thanks", // required
+ *       "redirect_cancel_url": "https://tickets.villiersdorpskou.co.za/"          // optional
+ *     }
+ *   }
  *
- * Endpoints:
- * POST /api/payments/yoco/intent
- *   body: { order_id?: number, amount_cents?: number, currency?: "ZAR" }
- *   If order_id is provided, we fetch total from DB; else we use amount_cents.
+ * Notes:
+ * - This file exposes:
+ *   GET  /api/payments/yoco/config       -> returns current Yoco config (safe bits)
+ *   POST /api/payments/create-intent     -> creates a Yoco checkout session and returns redirect_url
+ *   POST /api/payments/yoco/webhook      -> (optional) webhook receiver to mark orders paid
+ *   GET  /api/payments/yoco/callback     -> (optional) OAuth / manual callback placeholder
+ *
+ * - The actual HTTP call to Yoco’s Checkout API is made server-side with the SECRET key.
+ *   If you haven’t got your keys yet, the endpoint returns a clear 400 with what’s missing.
  */
+
 export function mountPayments(router) {
-  // helper: read settings KV (settings table)
-  async function getSetting(env, key) {
-    const r = await env.DB.prepare(
-      "SELECT value FROM settings WHERE key = ?1 LIMIT 1"
-    ).bind(key).first();
-    return r?.value ?? null;
-  }
-  async function getConf(env) {
-    // settings first
-    const MODE = (await getSetting(env, "YOCO_MODE")) || env.YOCO_MODE || "sandbox"; // "live" | "sandbox"
-    const SECRET = (await getSetting(env, "YOCO_SECRET_KEY")) || env.YOCO_SECRET_KEY || "";
-    const PUB = (await getSetting(env, "YOCO_PUBLIC_KEY")) || env.YOCO_PUBLIC_KEY || "";
-    const CLIENT_ID = (await getSetting(env, "YOCO_CLIENT_ID")) || env.YOCO_CLIENT_ID || "";
-    const REDIRECT_URI = (await getSetting(env, "YOCO_REDIRECT_URI")) || env.YOCO_REDIRECT_URI || "";
-    const SCOPES = (await getSetting(env, "YOCO_REQUIRED_SCOPES")) || env.YOCO_REQUIRED_SCOPES || "CHECKOUT_PAYMENTS";
-    const STATE = (await getSetting(env, "YOCO_STATE")) || env.YOCO_STATE || "skou";
-    return { MODE, SECRET, PUB, CLIENT_ID, REDIRECT_URI, SCOPES, STATE };
+  /* ---------------- Helpers ---------------- */
+
+  async function loadSiteSettings(env) {
+    const row = await env.DB
+      .prepare(`SELECT value FROM site_settings WHERE key = 'site' LIMIT 1`)
+      .first();
+    if (!row?.value) return {};
+    try { return JSON.parse(row.value); } catch { return {}; }
   }
 
-  router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const order_id = Number(b?.order_id || 0);
-    const explicit_amount = Number(b?.amount_cents || 0);
-    const currency = (b?.currency || "ZAR").toUpperCase();
+  function cents(n) {
+    const v = Number(n || 0);
+    return Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
+  }
 
-    if (!order_id && !explicit_amount) return bad("order_id or amount_cents required");
-
-    let amount_cents = explicit_amount;
-    let reference = b?.reference || null;
-
-    if (order_id) {
-      const o = await env.DB.prepare(
-        "SELECT id, total_cents, short_code FROM orders WHERE id = ?1 LIMIT 1"
-      ).bind(order_id).first();
-      if (!o) return bad("Order not found", 404);
-      amount_cents = Number(o.total_cents || 0);
-      reference = reference || String(o.short_code || `ORD-${o.id}`);
-    }
-    if (!amount_cents || amount_cents < 100) { // Yoco min R1.00
-      return bad("amount_cents too low");
-    }
-
-    const conf = await getConf(env);
-    const isLive = (conf.MODE || "sandbox") === "live";
-    const secret = conf.SECRET || "";
-    const yocoUrl = isLive
-      ? "https://payments.yoco.com/api/checkouts"
-      : "https://payments.yoco.com/api/checkouts"; // same host, account decides live/sandbox
-
-    // If we have a secret, attempt a real checkout session; else return a fake/sandbox payload
-    if (!secret) {
-      // Fake intent for local/sandbox testing (front-end can proceed)
-      const fakeId = "chk_" + Math.random().toString(36).slice(2, 10);
-      return json({
-        ok: true,
-        sandbox: true,
-        intent: {
-          id: fakeId,
-          amount_cents,
-          currency,
-          reference: reference || "WEB-CHECKOUT",
-          checkout_url: null
-        }
-      });
-    }
-
-    // Build Yoco Checkout payload (hosted checkout)
-    // See: https://developer.yoco.com/guides/online-payments/accepting-a-payment
-    const payload = {
-      amount: amount_cents,
-      currency,                                  // "ZAR"
-      success_url: (env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za") + "/thanks/" + encodeURIComponent(reference || "ORDER"),
-      cancel_url: (env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za") + "/shop", // simple fallback
-      metadata: { reference: reference || "" }
-    };
-
-    const r = await fetch(yocoUrl, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${secret}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!r.ok) {
-      const t = await r.text().catch(()=> "");
-      return bad(`Yoco error ${r.status}: ${t}`, 502);
-    }
-    const j = await r.json();
-
-    // Expected: { id, status, amount, currency, hosted_url, ... }
+  /* ---------------- Public (safe) config for UI ---------------- */
+  router.add("GET", "/api/payments/yoco/config", async (_req, env) => {
+    const site = await loadSiteSettings(env);
+    const y = site?.yoco || {};
     return json({
       ok: true,
-      sandbox: false,
-      intent: {
-        id: j.id || null,
-        amount_cents: j.amount || amount_cents,
-        currency: j.currency || currency,
-        reference,
-        checkout_url: j.hosted_url || null,
-        raw: j
+      yoco: {
+        mode: (y.mode === "live" ? "live" : "sandbox"),
+        public_key: y.public_key || null
       }
     });
+  });
+
+  /* ---------------- Create a Yoco Checkout session -------------- */
+  // Body: { order_id, amount_cents, currency, code, success_code }
+  // Typical usage from checkout:
+  //  - Create your order first (status = 'awaiting_payment', method='online_yoco')
+  //  - Then call this to get { redirect_url } and send the user to Yoco-hosted checkout.
+  router.add("POST", "/api/payments/create-intent", async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const order_id    = Number(b?.order_id || 0);        // optional if you only pass code
+    const amount_cents = cents(b?.amount_cents);
+    const currency    = (b?.currency || "ZAR").toUpperCase();
+    const code        = String(b?.code || "").trim();    // your short_code like "C123ABC"
+    const successCode = code || String(b?.success_code || "").trim();
+
+    if (!amount_cents) return bad("amount_cents required");
+    if (!successCode)  return bad("order code required (code or success_code)");
+
+    // Load config
+    const site = await loadSiteSettings(env);
+    const y = site?.yoco || {};
+    const mode = (y.mode === "live" ? "live" : "sandbox");
+    const secret = String(y.secret_key || "").trim();
+    const successBase = String(y.redirect_success_base || "").trim();
+    const cancelUrl   = String(y.redirect_cancel_url || "").trim() ||
+                        "https://tickets.villiersdorpskou.co.za/";
+
+    if (!secret)      return bad("Yoco secret_key missing in site settings");
+    if (!successBase) return bad("Yoco redirect_success_base missing in site settings");
+
+    // Compose redirect URLs. We append the order short code so the thanks page can render it.
+    const successUrl = successBase.replace(/\/+$/,"") + "/" + encodeURIComponent(successCode);
+
+    // --- Call Yoco Checkout API (Hosted Checkout) ------------------------
+    // NOTE: Replace the URL + payload with the exact Yoco endpoint/shape you use.
+    // Many gateways accept a payload similar to this:
+    const yocoEndpoint = mode === "live"
+      ? "https://payments.yoco.com/api/checkouts"
+      : "https://payments-sandbox.yoco.com/api/checkouts";
+
+    const payload = {
+      amount: amount_cents,     // cents
+      currency,                 // "ZAR"
+      successUrl,               // where Yoco redirects the customer if payment is successful
+      cancelUrl,                // where Yoco redirects if cancelled/failed
+      reference: successCode    // tie the Yoco session back to your order
+    };
+
+    let yocoRes;
+    try {
+      yocoRes = await fetch(yocoEndpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "authorization": `Bearer ${secret}`,
+        },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      return bad("Network error calling Yoco: " + (e?.message || e), 502);
+    }
+
+    if (!yocoRes.ok) {
+      const text = await yocoRes.text().catch(()=>"(no body)");
+      return bad(`Yoco error ${yocoRes.status}: ${text}`, 502);
+    }
+
+    let out; try { out = await yocoRes.json(); } catch { out = {}; }
+
+    // Expecting something like { redirectUrl: "https://checkout..." } from Yoco:
+    const redirect_url = out.redirectUrl || out.redirect_url || out.url || null;
+    if (!redirect_url) {
+      return bad("Yoco response missing redirect_url", 502);
+    }
+
+    return json({
+      ok: true,
+      redirect_url,
+      mode,
+      ref: successCode
+    });
+  });
+
+  /* ---------------- Webhook (optional) ----------------
+     Configure on your Yoco dashboard (or via API).
+     Update the order to 'paid' when we receive a successful event. */
+  router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
+    let evt; try { evt = await req.json(); } catch { evt = null; }
+    if (!evt) return bad("Bad JSON");
+
+    // Verify webhook signature here if Yoco provides one (recommended).
+    // Parse event type / status and extract the reference to your order code.
+    const ref = evt?.data?.reference || evt?.reference || null;
+    const status = evt?.data?.status || evt?.status || null;
+
+    if (ref && status === "paid") {
+      const now = Math.floor(Date.now()/1000);
+      // Mark order as paid
+      await env.DB.prepare(
+        `UPDATE orders
+            SET status='paid', paid_at=?1
+          WHERE UPPER(short_code)=UPPER(?2)`
+      ).bind(now, ref).run();
+      return json({ ok: true });
+    }
+
+    // Ignore other statuses
+    return json({ ok: true, ignored: true });
+  });
+
+  /* ---------------- OAuth / Redirect callback (optional) ---------------
+     If you later add Yoco OAuth (for account linking), you can handle the
+     returned code/state here and store tokens under site_settings.yoco.* */
+  router.add("GET", "/api/payments/yoco/callback", async (req, env) => {
+    const u = new URL(req.url);
+    const code = u.searchParams.get("code") || "";
+    const state = u.searchParams.get("state") || "";
+
+    // You could exchange `code` for access_token here (if applicable) and
+    // then store it in site_settings.yoco.{ access_token, refresh_token }
+    // For now just echo the params so you can see it works:
+    return json({ ok: true, received: { code, state } });
   });
 }
