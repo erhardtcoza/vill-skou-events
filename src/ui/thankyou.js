@@ -34,25 +34,50 @@ export const thankYouHTML = (code) => `<!doctype html><html><head>
 const code = ${JSON.stringify(code||"")};
 document.getElementById('orderCode').textContent = code;
 
-(async function(){
+async function fetchStatus(){
   try{
-    const j = await fetch('/api/public/orders/status/'+encodeURIComponent(code)).then(r=>r.json());
-    const paid = j?.ok && String(j.status||'').toLowerCase()==='paid';
-    const payP = document.getElementById('payStatus');
-    const btn  = document.getElementById('viewBtn');
+    const j = await fetch('/api/public/orders/status/'+encodeURIComponent(code), { cache:'no-store' }).then(r=>r.json());
+    return (j?.ok && (j.status||'').toLowerCase()) || null;
+  }catch{ return null; }
+}
 
-    if (paid){
-      payP.textContent = 'Betaling ontvang. Jou kaartjies is gereed.';
-      btn.href = '/t/'+encodeURIComponent(code);
-      btn.style.display = 'inline-block';
-    }else{
-      payP.textContent = 'Wag tans vir betaling. Sodra betaling deur is, sal jou kaartjies beskikbaar wees.';
-      btn.style.display = 'none';
-    }
-  }catch{
-    const payP = document.getElementById('payStatus');
-    payP.textContent = 'Kon nie betalingstatus kry nie. Probeer asb. weer.';
+function setPaid(){
+  const payP = document.getElementById('payStatus');
+  const btn  = document.getElementById('viewBtn');
+  payP.textContent = 'Betaling ontvang. Jou kaartjies is gereed.';
+  btn.href = '/t/'+encodeURIComponent(code);
+  btn.style.display = 'inline-block';
+}
+
+// Initial check + poller
+(async ()=>{
+  const payP = document.getElementById('payStatus');
+  const status = await fetchStatus();
+  if (status === 'paid') { setPaid(); return; }
+
+  if (status === 'cancelled' || status === 'failed') {
+    payP.textContent = 'Betaling is nie voltooi nie. Jy kan weer probeer vanaf die betaalblad.';
+    return;
   }
+  // Default waiting text
+  payP.textContent = 'Wag tans vir betaling. Hierdie blad sal outomaties opdateer.';
+
+  // Poll every 4s for up to 3 minutes (45 tries)
+  let tries = 45;
+  const timer = setInterval(async ()=>{
+    const st = await fetchStatus();
+    if (!st){ if (--tries <= 0){ clearInterval(timer); } return; }
+    if (st === 'paid'){
+      clearInterval(timer);
+      setPaid();
+    } else if (st === 'cancelled' || st === 'failed'){
+      clearInterval(timer);
+      payP.textContent = 'Betaling is nie voltooi nie. Jy kan weer probeer vanaf die betaalblad.';
+    } else if (--tries <= 0){
+      clearInterval(timer);
+      payP.textContent = 'Kon nie betaling bevestig nie. Verfris asb. of kontak ondersteuning.';
+    }
+  }, 4000);
 })();
 </script>
 </body></html>`;
