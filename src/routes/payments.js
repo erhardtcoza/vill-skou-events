@@ -68,26 +68,24 @@ export function mountPayments(router) {
       description: "Villiersdorp Skou tickets",
       redirect_url,
       cancel_url,
-      // metadata is optional but handy for debugging:
       metadata: { order_id: o.id }
     };
 
     let res, y;
     try {
-      const { signal, cancel } = timeoutSignal(20000); // 20s client timeout
+      const { signal, cancel } = timeoutSignal(20000);
       res = await fetch("https://payments.yoco.com/api/checkouts", {
         method: "POST",
         headers: {
-          "authorization": "Bearer " + secret,
-          "content-type": "application/json"
+          authorization: "Bearer " + secret,
+          "content-type": "application/json",
         },
         body: JSON.stringify(payload),
-        signal
+        signal,
       });
       cancel();
       y = await res.json().catch(() => ({}));
     } catch (e) {
-      // Persist a short note for diagnostics
       try {
         await env.DB.prepare(
           `UPDATE orders SET payment_note=?2 WHERE id=?1`
@@ -106,7 +104,6 @@ export function mountPayments(router) {
       return bad(`Yoco rejected request: ${msg}`, res.status);
     }
 
-    // Yoco should return redirect_url on success; if missing, error out clearly
     const redirect = y?.redirect_url;
     if (!redirect) {
       try {
@@ -133,6 +130,7 @@ export function mountPayments(router) {
 
   // --- Webhook -------------------------------------------------------------
 
+  // POST /api/payments/yoco/webhook
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let evt; try { evt = await req.json(); } catch { return bad("Bad JSON"); }
 
@@ -178,5 +176,30 @@ export function mountPayments(router) {
     }
 
     return json({ ok: true });
+  });
+
+  // --- Diagnostics (no secrets exposed) -----------------------------------
+
+  // GET /api/payments/yoco/diag
+  // Returns a quick snapshot to verify configuration.
+  router.add("GET", "/api/payments/yoco/diag", async (_req, env) => {
+    const { mode, secret } = await getYocoSecret(env);
+    const PUBLIC_BASE_URL = await getSetting(env, "PUBLIC_BASE_URL");
+    const hasSecret = Boolean(secret);
+    const publicBaseUrl = PUBLIC_BASE_URL || "";
+
+    // Build example URLs if we have a base; code is a placeholder
+    const code = "EXAMPLE";
+    const redirectExample = publicBaseUrl ? `${publicBaseUrl}/thanks/${code}` : "";
+    const cancelExample   = publicBaseUrl ? `${publicBaseUrl}/shop/{event-slug}` : "";
+
+    return json({
+      ok: true,
+      mode,
+      hasSecret,
+      publicBaseUrl,
+      redirectExample,
+      cancelExample
+    });
   });
 }
