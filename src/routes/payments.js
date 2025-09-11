@@ -1,91 +1,58 @@
 // /src/routes/payments.js
 import { json, bad } from "../utils/http.js";
 
-/**
- * Yoco payments (Checkout bootstrap + Webhook).
- * - POST /api/payments/intent
- * - POST /api/payments/yoco/webhook
- *
- * Notes:
- * - We read configuration from the `site_settings` table (key,value).
- * - We DO NOT call Yoco in /intent (no external dependency). We return
- *   the publishable key + order totals so the frontend can start the
- *   Checkout-API flow. You can later extend this to create a Yoco
- *   session server-side if you prefer.
- * - Webhook is tolerant: it tries several common Yoco payload shapes and
- *   updates the matching order (by short_code inside metadata/reference).
- */
+// Tiny helpers for site_settings KV (D1 table)
+async function getSetting(env, key) {
+  const row = await env.DB
+    .prepare(`SELECT value FROM site_settings WHERE key = ?1 LIMIT 1`)
+    .bind(key)
+    .first();
+  return row ? row.value : null;
+}
+
+async function getYocoConfig(env) {
+  const mode = (await getSetting(env, "YOCO_MODE")) === "live" ? "live" : "sandbox";
+
+  const public_key = mode === "live"
+    ? await getSetting(env, "YOCO_LIVE_PUBLIC_KEY")
+    : await getSetting(env, "YOCO_TEST_PUBLIC_KEY");
+
+  const secret_key = mode === "live"
+    ? await getSetting(env, "YOCO_LIVE_SECRET_KEY")
+    : await getSetting(env, "YOCO_TEST_SECRET_KEY");
+
+  return { mode, public_key: public_key || "", secret_key: secret_key || "" };
+}
 
 export function mountPayments(router) {
 
-  /* ---------- tiny settings helpers (site_settings table) ---------- */
-
-  async function getSetting(env, key) {
-    const row = await env.DB
-      .prepare(`SELECT value FROM site_settings WHERE key = ?1 LIMIT 1`)
-      .bind(key)
-      .first();
-    return row ? row.value : null;
-  }
-
-  async function getYocoConfig(env) {
-    const mode = (await getSetting(env, "YOCO_MODE")) === "live" ? "live" : "sandbox";
-
-    // Keys by mode
-    const pub = mode === "live"
-      ? await getSetting(env, "YOCO_LIVE_PUBLIC_KEY")
-      : await getSetting(env, "YOCO_TEST_PUBLIC_KEY");
-
-    const sec = mode === "live"
-      ? await getSetting(env, "YOCO_LIVE_SECRET_KEY")
-      : await getSetting(env, "YOCO_TEST_SECRET_KEY");
-
-    return { mode, public_key: pub || "", secret_key: sec || "" };
-  }
-
-  /* ---------- POST /api/payments/intent ---------------------------- */
-  // Input: { code?: string, order_id?: number }
-  // Output: { ok, mode, public_key, order:{ id, short_code, amount_cents, currency } }
+  /* ------------------------------------------------------------------ *
+   * 1) Bootstrap intent for frontend (no external call, safe to cache)
+   * ------------------------------------------------------------------ */
   router.add("POST", "/api/payments/intent", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
     const code = String(b?.code || "").trim();
     const oid  = Number(b?.order_id || 0);
 
-    // Fetch order either by short_code or id
+    // Load order by code or id
     let order = null;
     if (code) {
       order = await env.DB.prepare(
-        `SELECT id, short_code, total_cents, currency, status, payment_method
-           FROM orders
-          WHERE UPPER(short_code)=UPPER(?1)
-          LIMIT 1`
+        `SELECT id, short_code, total_cents, status, payment_method, COALESCE(currency, 'ZAR') AS currency
+           FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
       ).bind(code).first();
     } else if (oid) {
       order = await env.DB.prepare(
-        `SELECT id, short_code, total_cents, currency, status, payment_method
-           FROM orders
-          WHERE id = ?1
-          LIMIT 1`
+        `SELECT id, short_code, total_cents, status, payment_method, COALESCE(currency, 'ZAR') AS currency
+           FROM orders WHERE id=?1 LIMIT 1`
       ).bind(oid).first();
     } else {
       return bad("order code or order_id required");
     }
-
     if (!order) return bad("Order not found", 404);
 
-    // Optional: gate-keep only online_yoco orders
-    // (not strict, but helps prevent wrong method usage)
-    if ((order.payment_method || "") !== "online_yoco") {
-      // Allow but warn
-      // return bad("Order is not set for online payment");
-    }
-
     const { mode, public_key } = await getYocoConfig(env);
-
-    // Default to ZAR if no currency column in your DB (some schemas don’t have it)
-    const currency = (order.currency || "ZAR").toUpperCase();
-    const amount_cents = Number(order.total_cents || 0);
 
     return json({
       ok: true,
@@ -95,39 +62,105 @@ export function mountPayments(router) {
       order: {
         id: order.id,
         short_code: order.short_code,
-        amount_cents,
-        currency
+        amount_cents: Number(order.total_cents || 0),
+        currency: String(order.currency || "ZAR").toUpperCase()
       }
-      // If you later create a Yoco session server-side, you can also add:
-      // session_id, session_url, expires_at, etc.
     });
   });
 
-  /* ---------- POST /api/payments/yoco/webhook ---------------------- */
-  // Configure this URL in Yoco's dashboard as your webhook endpoint:
-  //   https://<your-domain>/api/payments/yoco/webhook
-  //
-  // We accept JSON events. Because Yoco's publicly available examples differ
-  // a bit by product (SDK vs. Checkout API), we defensively extract:
-  // - type       : event or status
-  // - success    : boolean for final state
-  // - reference  : our order short_code (prefer metadata.short_code,
-  //                fallback metadata.reference || reference)
-  // - amount     : cents (optional)
-  //
-  // Security:
-  // - If you have a webhook secret/signature header from Yoco, add verification
-  //   here (HMAC). For now we proceed without, but we include a basic
-  //   origin allow-list if you want to enforce later.
-  router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
-    let body;
+  /* ------------------------------------------------------------------ *
+   * 2) Create a Yoco Checkout (server → Yoco) and return redirect info
+   *    POST /api/payments/yoco/create-checkout
+   *    Body: { code?: string, order_id?: number }
+   * ------------------------------------------------------------------ */
+  router.add("POST", "/api/payments/yoco/create-checkout", async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const code = String(b?.code || "").trim();
+    const oid  = Number(b?.order_id || 0);
+
+    // Fetch order
+    let order = null;
+    if (code) {
+      order = await env.DB.prepare(
+        `SELECT id, short_code, total_cents, COALESCE(currency,'ZAR') AS currency
+           FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
+      ).bind(code).first();
+    } else if (oid) {
+      order = await env.DB.prepare(
+        `SELECT id, short_code, total_cents, COALESCE(currency,'ZAR') AS currency
+           FROM orders WHERE id=?1 LIMIT 1`
+      ).bind(oid).first();
+    } else {
+      return bad("order code or order_id required");
+    }
+    if (!order) return bad("Order not found", 404);
+
+    const { secret_key } = await getYocoConfig(env);
+    if (!secret_key) return bad("Yoco secret key not configured", 500);
+
+    const amount = Number(order.total_cents || 0);
+    const currency = String(order.currency || "ZAR").toUpperCase();
+
+    // Minimal body per the API reference (you tested with curl)
+    const body = {
+      amount,
+      currency,
+      // Make it easy to reconcile in the webhook:
+      metadata: {
+        short_code: order.short_code
+      },
+      // Optional (uncomment when you’ve decided your UX flow):
+      // success_url: `${await publicBase(env)}/thanks/${order.short_code}`,
+      // cancel_url:  `${await publicBase(env)}/shop/current`, // or your event URL
+      // description: `Order ${order.short_code}`
+    };
+
+    let yocoRes, yocoJson;
     try {
-      body = await req.json();
-    } catch {
-      return bad("Expected application/json");
+      yocoRes = await fetch("https://payments.yoco.com/api/checkouts", {
+        method: "POST",
+        headers: {
+          "authorization": `Bearer ${secret_key}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+      yocoJson = await yocoRes.json().catch(() => ({}));
+    } catch (e) {
+      return bad("Failed to reach Yoco: " + (e?.message || e), 502);
     }
 
-    // Try to find a short_code in common places:
+    if (!yocoRes.ok) {
+      // Return the upstream error cleanly for debugging
+      return json({ ok: false, error: "yoco_error", detail: yocoJson }, { status: 502 });
+    }
+
+    // Try to normalize the redirect / hosted page URL the UI should open:
+    const checkout_url =
+      yocoJson.checkout_url ||
+      yocoJson.redirect_url ||
+      yocoJson.hosted_url ||
+      yocoJson.url ||
+      null;
+
+    return json({
+      ok: true,
+      provider: "yoco",
+      order: { id: order.id, short_code: order.short_code, amount_cents: amount, currency },
+      checkout: yocoJson,
+      checkout_url // convenience alias for the frontend to redirect to
+    });
+  });
+
+  /* ------------------------------------------------------------------ *
+   * 3) Webhook: mark order paid when Yoco notifies success
+   *    POST /api/payments/yoco/webhook
+   * ------------------------------------------------------------------ */
+  router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
+    let body; try { body = await req.json(); } catch { return bad("Expected JSON"); }
+
+    // Common places to find our reference:
     const meta = body?.data?.object?.metadata
               || body?.data?.metadata
               || body?.metadata
@@ -142,18 +175,12 @@ export function mountPayments(router) {
     );
 
     if (!reference) {
-      // We can’t map this event to an order
       return json({ ok: true, ignored: true, reason: "no reference/short_code" });
     }
 
-    // Determine success/failed
+    // Determine outcome
     const type   = String(body?.type || body?.event || body?.status || "").toLowerCase();
-    const status = String(
-      body?.data?.object?.status ||
-      body?.status ||
-      ""
-    ).toLowerCase();
-
+    const status = String(body?.data?.object?.status || body?.status || "").toLowerCase();
     const isSuccess =
       type.includes("success") ||
       type.includes("payment.succeeded") ||
@@ -166,7 +193,7 @@ export function mountPayments(router) {
       type.includes("payment.failed") ||
       status === "failed";
 
-    // Look up order by short_code
+    // Find order
     const order = await env.DB.prepare(
       `SELECT id, short_code, status, paid_at
          FROM orders
@@ -175,11 +202,10 @@ export function mountPayments(router) {
     ).bind(String(reference)).first();
 
     if (!order) {
-      // If we can’t find it, acknowledge to avoid retries storming
       return json({ ok: true, ignored: true, reason: "order not found", reference });
     }
 
-    // Idempotency: if already paid, do nothing.
+    // Idempotency
     if (order.status === "paid" || Number(order.paid_at || 0) > 0) {
       return json({ ok: true, idempotent: true });
     }
@@ -188,24 +214,26 @@ export function mountPayments(router) {
 
     if (isSuccess) {
       await env.DB.prepare(
-        `UPDATE orders
-            SET status='paid', paid_at=?1
-          WHERE id=?2`
+        `UPDATE orders SET status='paid', paid_at=?1 WHERE id=?2`
       ).bind(now, order.id).run();
-
-      // (Optional) You could also mark each ticket as 'unused' here if they’re
-      // created only after payment. In our flow tickets are already issued.
       return json({ ok: true, updated: "paid", order_id: order.id });
     }
 
     if (isFailed) {
-      // We won’t flip to a hard failed state here; keep awaiting or pending.
-      // You can add an 'failed_reason' column if you want to store details.
+      // No hard failure flip by default; acknowledge
       return json({ ok: true, noted: "failed", order_id: order.id });
     }
 
-    // Unknown / intermediate status — just acknowledge
     return json({ ok: true, acknowledged: true });
   });
 
 }
+
+/* ----------------- optional helper if you uncomment success_url ---------- */
+// async function publicBase(env) {
+//   const row = await env.DB
+//     .prepare(`SELECT value FROM site_settings WHERE key='PUBLIC_BASE_URL' LIMIT 1`)
+//     .bind()
+//     .first();
+//   return (row?.value || "").trim();
+// }
