@@ -14,7 +14,7 @@ export const thankYouHTML = (code) => `<!doctype html><html><head>
   .btn{ padding:12px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600; text-decoration:none; display:inline-block }
   .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
   .code{ font-weight:800; font-size:20px; letter-spacing:.5px; padding:8px 10px; border-radius:10px; background:#f1f5f9; display:inline-block }
-  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
+  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444; margin-left:8px }
 </style>
 </head><body>
 <div class="wrap">
@@ -23,58 +23,42 @@ export const thankYouHTML = (code) => `<!doctype html><html><head>
     <p>Ons het jou bestelling ontvang. Gebruik hierdie kode as verwysing:</p>
     <div class="code" id="code"></div>
 
-    <p class="muted" style="margin-top:12px" id="explain">
-      As jy aanlyn betaal het, finaliseer ons die betaling en laai ons jou kaartjies.
-      Hierdie blad sal outomaties opdateer sodra jou betaling bevestig is.
+    <p class="muted" style="margin-top:12px" id="desc">
+      As jy aanlyn betaal het, voltooi asseblief die betaling. Hierdie bladsy sal outomaties opdateer sodra die betaling bevestig is.
     </p>
 
     <div class="row" style="margin-top:18px">
-      <a id="viewBtn" class="btn primary" href="#" style="display:none">Wys my kaartjies</a>
-      <span id="statusPill" class="pill">Wag vir betaling…</span>
-      <button id="refreshBtn" class="btn">Verfris</button>
+      <a id="btnTickets" class="btn primary" href="#" style="display:none">Wys my kaartjies</a>
       <a class="btn" href="/">Terug na tuisblad</a>
+      <span id="pill" class="pill">Wag vir betaling…</span>
     </div>
   </div>
 </div>
 <script>
-const code = ${JSON.stringify(code||"")};
-document.getElementById('code').textContent = code;
+(function(){
+  const code = ${JSON.stringify(code || "")};
+  const $ = (id)=>document.getElementById(id);
+  $('code').textContent = code;
 
-const viewBtn = document.getElementById('viewBtn');
-const pill = document.getElementById('statusPill');
-const refreshBtn = document.getElementById('refreshBtn');
+  const btn = $('btnTickets');
+  const pill = $('pill');
+  const desc = $('desc');
 
-function setPaid(){
-  pill.textContent = 'Betaal — klaar!';
-  viewBtn.href = '/t/' + encodeURIComponent(code);
-  viewBtn.style.display = 'inline-block';
-}
-
-async function check(){
-  try{
-    const r = await fetch('/api/public/orders/status/' + encodeURIComponent(code));
-    if (!r.ok) return;
-    const j = await r.json().catch(()=>({}));
-    if (j.ok && j.status === 'paid'){
-      setPaid();
-      return true;
-    }
-  }catch{}
-  return false;
-}
-
-// Poll up to ~5 minutes
-let tries = 0;
-const maxTries = 100; // ~100 * 3s = 5 minutes
-async function poll(){
-  const ok = await check();
-  if (ok) return;
-  tries++;
-  if (tries < maxTries) setTimeout(poll, 3000);
-  else pill.textContent = 'Nog nie bevestig nie — probeer weer verfris.';
-}
-poll();
-
-refreshBtn.onclick = ()=>{ tries = 0; pill.textContent = 'Wag vir betaling…'; poll(); };
+  async function poll(){
+    try{
+      const r = await fetch('/api/public/orders/status/'+encodeURIComponent(code));
+      const j = await r.json();
+      if (j.ok && String(j.status||'').toLowerCase()==='paid'){
+        btn.href = '/t/'+encodeURIComponent(code);
+        btn.style.display = 'inline-block';
+        pill.textContent = 'Betaal ✅';
+        desc.textContent = 'Betaling ontvang! Jy kan nou jou kaartjies bekyk en aflaai.';
+        clearInterval(iv);
+      }
+    }catch{}
+  }
+  const iv = setInterval(poll, 2000);
+  poll();
+})();
 </script>
 </body></html>`;
