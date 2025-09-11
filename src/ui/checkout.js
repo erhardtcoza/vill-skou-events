@@ -93,21 +93,20 @@ const $ = (id)=>document.getElementById(id);
 function rands(cents){ return 'R' + ((cents||0)/100).toFixed(2); }
 function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
 
-// ZA phone normalizer
+// Normalize ZA phone
 function normPhone(raw){
   const s = String(raw||'').replace(/\\D+/g,'');
   if (s.length===10 && s.startsWith('0')) return '27'+s.slice(1);
   return s;
 }
 
-let catalog = null;      // { event, ticket_types }
-let cart = null;         // { event_id, items:[{ticket_type_id,qty}] }
+let catalog = null;
+let cart = null;
 
 function buildAttendeeForms(){
   const wrap = $('attWrap');
   wrap.innerHTML = '';
   const phoneSeed = normPhone($('buyer_phone').value);
-
   const ttypesById = new Map((catalog.ticket_types||[]).map(t=>[t.id, t]));
   let idx = 1;
   (cart.items||[]).forEach(it=>{
@@ -225,7 +224,7 @@ async function submit(){
 
   try{
     // 1) Create order
-    const payload = {
+    const orderPayload = {
       event_id: cart.event_id,
       items: cart.items,
       attendees,
@@ -236,28 +235,31 @@ async function submit(){
     };
     const r = await fetch('/api/public/orders/create', {
       method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify(payload)
+      body: JSON.stringify(orderPayload)
     });
     const j = await r.json().catch(()=>({ok:false,error:'network'}));
     if (!j.ok) throw new Error(j.error||'Kon nie bestelling skep nie');
 
-    const code = j.order?.short_code;
+    const code = j.order?.short_code || 'THANKS';
 
-    // 2) If pay-now, create Yoco checkout + redirect to Yoco
-    if (methodSel === 'pay_now') {
-      const ir = await fetch('/api/payments/yoco/intent', {
-        method: 'POST',
-        headers: {'content-type': 'application/json'},
+    // 2) Branch: Pay now → request Yoco checkout and redirect to it
+    if (methodSel === 'pay_now'){
+      const y = await fetch('/api/payments/yoco/intent', {
+        method:'POST', headers:{'content-type':'application/json'},
         body: JSON.stringify({ code })
-      });
-      const iy = await ir.json().catch(()=>({ok:false,error:'network'}));
-      if (!iy.ok) throw new Error(iy.error || 'Kon nie Yoco betaal skep nie');
-      location.href = iy.redirect_url;
+      }).then(x=>x.json()).catch(()=>({ok:false,error:'network'}));
+
+      if (!y.ok || !y.redirect_url){
+        // fall back to thanks with explanatory message
+        location.href = '/thanks/' + encodeURIComponent(code) + '?pay=err';
+        return;
+      }
+      location.href = y.redirect_url;   // ✅ Go to Yoco
       return;
     }
 
-    // 3) Otherwise go to thank-you (will poll for payment if needed)
-    location.href = '/thanks/' + encodeURIComponent(code || 'THANKS');
+    // 3) Pay at event → go to thanks
+    location.href = '/thanks/' + encodeURIComponent(code);
   }catch(e){
     showMsg('err', e.message||'Fout');
   }
@@ -299,6 +301,7 @@ async function load(){
 
   $('submitBtn').onclick = submit;
 }
+
 load();
 </script>
 </body></html>`;
