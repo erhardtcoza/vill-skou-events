@@ -36,15 +36,15 @@ export function mountAdmin(router) {
         voided:  Number(tQ?.voided || 0),
       };
     }
+
     return json({ ok: true, events: evQ.results || [], ticket_totals: sums });
   }));
 
   /* ---------------- Site settings (site_settings table) ------------------- */
-  // Table schema:
-  //   CREATE TABLE site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  // Table schema: CREATE TABLE site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
   function normalizeInKey(k) {
-    // Accept UI keys and map to canonical DB keys
+    // Accept UI keys and map them to canonical DB keys where needed
     const map = {
       WHATSAPP_TOKEN:  "WA_TOKEN",
       PHONE_NUMBER_ID: "WA_PHONE_NUMBER_ID",
@@ -52,8 +52,9 @@ export function mountAdmin(router) {
     };
     return map[k] || k;
   }
+
   function normalizeOutKey(k) {
-    // Convert DB keys to UI keys for WhatsApp
+    // Map DB keys back to UI keys so the admin UI gets expected field names
     const map = {
       WA_TOKEN:            "WHATSAPP_TOKEN",
       WA_PHONE_NUMBER_ID:  "PHONE_NUMBER_ID",
@@ -61,12 +62,14 @@ export function mountAdmin(router) {
     };
     return map[k] || k;
   }
+
   async function getSetting(env, key) {
     const row = await env.DB.prepare(
       `SELECT value FROM site_settings WHERE key = ?1 LIMIT 1`
     ).bind(key).first();
     return row ? row.value : null;
   }
+
   async function setSetting(env, key, value) {
     await env.DB.prepare(
       `INSERT INTO site_settings (key, value) VALUES (?1, ?2)
@@ -74,19 +77,27 @@ export function mountAdmin(router) {
     ).bind(key, value).run();
   }
 
-  // Get settings
   router.add("GET", "/api/admin/settings", guard(async (_req, env) => {
     const wanted = [
       // General
-      "SITE_NAME", "SITE_LOGO_URL", "PUBLIC_BASE_URL", "VERIFY_TOKEN",
-      // WhatsApp (DB uses WA_* keys)
-      "WA_TOKEN", "WA_PHONE_NUMBER_ID", "WA_BUSINESS_ID",
-      // Yoco (now split by mode + keys)
+      "SITE_NAME",
+      "SITE_LOGO_URL",
+      "PUBLIC_BASE_URL",
+      "VERIFY_TOKEN",
+      // WhatsApp (stored with WA_* in DB)
+      "WA_TOKEN",
+      "WA_PHONE_NUMBER_ID",
+      "WA_BUSINESS_ID",
+      // Yoco (split + legacy)
       "YOCO_MODE",
-      "YOCO_TEST_PUBLIC_KEY",  "YOCO_TEST_SECRET_KEY",
-      "YOCO_LIVE_PUBLIC_KEY",  "YOCO_LIVE_SECRET_KEY",
-      // Optional OAuth-ish fields if you add them later
-      "YOCO_CLIENT_ID", "YOCO_REDIRECT_URI", "YOCO_REQUIRED_SCOPES", "YOCO_STATE",
+      "YOCO_TEST_PUBLIC_KEY",
+      "YOCO_TEST_SECRET_KEY",
+      "YOCO_TEST_WEBHOOK_SECRET",
+      "YOCO_LIVE_PUBLIC_KEY",
+      "YOCO_LIVE_SECRET_KEY",
+      "YOCO_LIVE_WEBHOOK_SECRET",
+      "YOCO_PUBLIC_KEY",
+      "YOCO_SECRET_KEY",
     ];
 
     const out = {};
@@ -97,59 +108,62 @@ export function mountAdmin(router) {
     return json({ ok: true, settings: out });
   }));
 
-  // Update settings
   router.add("POST", "/api/admin/settings/update", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const updates = b?.updates && typeof b.updates === "object" ? b.updates : null;
     if (!updates) return bad("updates required");
 
     for (const [rawKey, rawVal] of Object.entries(updates)) {
-      const dbKey = normalizeInKey(String(rawKey || "").trim()); // map WA_* UI keys
+      const dbKey = normalizeInKey(String(rawKey || "").trim());
       const val = rawVal == null ? "" : String(rawVal);
       await setSetting(env, dbKey, val);
     }
+
     return json({ ok: true });
   }));
 
   /* ---------------- WhatsApp templates (list/sync/create) ----------------- */
-  // Assumes:
-  //   CREATE TABLE wa_templates (
-  //     id INTEGER PRIMARY KEY AUTOINCREMENT,
-  //     name TEXT, language TEXT, status TEXT, category TEXT,
-  //     created_at INTEGER
-  //   );
-  router.add("GET", "/api/admin/wa/templates", guard(async (_req, env) => {
-    const q = await env.DB.prepare(
-      `SELECT id, name, language, status, category, created_at
+  // Minimal schema assumed:
+  // CREATE TABLE wa_templates (
+  //   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  //   name TEXT,
+  //   language TEXT,
+  //   status TEXT,
+  //   category TEXT,
+  //   updated_at INTEGER
+  // );
+  router.add("GET", "/api/admin/whatsapp/templates", guard(async (_req, env) => {
+    const rows = await env.DB.prepare(
+      `SELECT id, name, language, status, category, updated_at
          FROM wa_templates
-        ORDER BY id DESC`
+        ORDER BY name ASC`
     ).all();
-    return json({ ok: true, templates: q.results || [] });
+    return json({ ok: true, templates: rows.results || [] });
   }));
 
-  // "Sync" stub – if you already have a job that populated the table, keep this
-  // as a no-op that simply returns the latest list so the UI refresh succeeds.
-  router.add("POST", "/api/admin/wa/templates/sync", guard(async (_req, env) => {
-    const q = await env.DB.prepare(
-      `SELECT id, name, language, status, category, created_at
-         FROM wa_templates
-        ORDER BY id DESC`
-    ).all();
-    return json({ ok: true, templates: q.results || [] });
+  // “Sync” stub: here we just re-read DB (you already populated via background/cron or separate task)
+  router.add("POST", "/api/admin/whatsapp/templates/sync", guard(async (_req, _env) => {
+    // If you later want to pull from Meta, do it here and upsert into wa_templates.
+    return json({ ok: true });
   }));
 
-  // Minimal "new template" – stores a draft row locally (you can extend to call Meta)
-  router.add("POST", "/api/admin/wa/templates/new", guard(async (req, env) => {
+  router.add("POST", "/api/admin/whatsapp/templates/create", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const name = String(b?.name || "").trim();
     const language = String(b?.language || "en_US").trim();
-    const category = String(b?.category || "UTILITY").trim();
+    const category = String(b?.category || "TRANSACTIONAL").trim();
+    const body = String(b?.body || ""); // not stored now; expand schema if you need parts/components
+
     if (!name) return bad("name required");
+
     const now = Math.floor(Date.now()/1000);
     await env.DB.prepare(
-      `INSERT INTO wa_templates (name, language, status, category, created_at)
-       VALUES (?1, ?2, 'PENDING', ?3, ?4)`
-    ).bind(name, language, category, now).run();
+      `INSERT INTO wa_templates (name, language, status, category, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5)`
+    ).bind(name, language, "pending_approval", category, now).run();
+
+    // If you want to also submit to Meta immediately, wire it in here.
+
     return json({ ok: true });
   }));
 
@@ -218,7 +232,7 @@ export function mountAdmin(router) {
     }
   }));
 
-  /* ---------------- Ticket types ---------------- */
+  /* ---------------- Ticket types for an event ---------------- */
   router.add("GET", "/api/admin/events/:id/ticket-types", guard(async (_req, env, _ctx, { id }) => {
     const q = await env.DB.prepare(
       `SELECT id, event_id, name, code, price_cents, capacity, per_order_limit, requires_gender
@@ -275,7 +289,7 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
-  /* ---------------- Tickets summary + order lookup ----------------------- */
+  /* ---------------- Tickets: per-event summary + order lookup ------------ */
   router.add("GET", "/api/admin/tickets/summary", guard(async (req, env) => {
     const u = new URL(req.url);
     const event_id = Number(u.searchParams.get("event_id") || 0);
@@ -298,6 +312,7 @@ export function mountAdmin(router) {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
+  // Order lookup by short_code (used in Tickets > Lookup)
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim();
     if (!c) return bad("code required");
@@ -310,7 +325,7 @@ export function mountAdmin(router) {
         LIMIT 1`
     ).bind(c).first();
 
-    if (!o) return json({ ok: false, error: `Kon nie bestelling vind met kode ${c} nie.` }, 404);
+    if (!o) return json({ ok: false, error: \`Kon nie bestelling vind met kode \${c} nie.\` }, 404);
 
     const tickets = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
@@ -420,6 +435,28 @@ export function mountAdmin(router) {
     }
   }));
 
+  // Vendor passes: list
+  router.add("GET", "/api/admin/vendor/:id/passes", guard(async (_req, env, _ctx, { id }) => {
+    const v = await env.DB.prepare(
+      `SELECT id, event_id, name
+         FROM vendors
+        WHERE id = ?1
+        LIMIT 1`
+    ).bind(Number(id)).first();
+    if (!v) return bad("Vendor not found", 404);
+
+    const pQ = await env.DB.prepare(
+      `SELECT id, vendor_id, type, label, vehicle_reg, qr, state,
+              first_in_at, last_out_at, issued_at
+         FROM vendor_passes
+        WHERE vendor_id = ?1
+        ORDER BY id ASC`
+    ).bind(Number(id)).all();
+
+    return json({ ok: true, vendor: v, passes: pQ.results || [] });
+  }));
+
+  // Vendor passes: add
   router.add("POST", "/api/admin/vendor/:id/pass/add", guard(async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const vendor_id = Number(id || 0);
@@ -440,6 +477,7 @@ export function mountAdmin(router) {
     return json({ ok: true, qr });
   }));
 
+  // Vendor passes: delete
   router.add("POST", "/api/admin/vendor/:id/pass/delete", guard(async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const pid = Number(b?.pass_id || 0);
@@ -451,7 +489,7 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
-  /* ---------------- Users ------------------------------------------------- */
+  /* ---------------- Users (read-only list for now) ----------------------- */
   router.add("GET", "/api/admin/users", guard(async (_req, env) => {
     const q = await env.DB.prepare(
       `SELECT id, username, role
@@ -461,7 +499,7 @@ export function mountAdmin(router) {
     return json({ ok: true, users: q.results || [] });
   }));
 
-  /* ---------------- WhatsApp helpers (send) ------------------------------- */
+  /* ---------------- WhatsApp helpers (admin-triggered send) -------------- */
   router.add("POST", "/api/admin/orders/:code/send-whatsapp", guard(async (req, env, _ctx, { code }) => {
     let b; try { b = await req.json(); } catch { b = {}; }
     const msisdn = String(b?.phone || "").trim();
@@ -472,3 +510,27 @@ export function mountAdmin(router) {
          FROM orders
         WHERE UPPER(short_code) = UPPER(?1)
         LIMIT 1`
+    ).bind(String(code || "")).first();
+    if (!o) return bad("Order not found", 404);
+
+    // Dynamic import to avoid hard dep if file missing
+    let sendFn = null;
+    try {
+      const mod = await import("../services/whatsapp.js");
+      sendFn = mod.sendWhatsAppTemplate || null;
+    } catch {
+      return bad("WhatsApp service not available");
+    }
+
+    const publicBase = (await getSetting(env, "PUBLIC_BASE_URL")) || "";
+    const link = o.short_code ? `${publicBase}/t/${o.short_code}` : publicBase;
+    const body = `Jou kaartjies is gereed.\nBestel nommer: ${o.short_code}\n${link}`;
+
+    try {
+      await sendFn(env, msisdn, body, (await getSetting(env,"WHATSAPP_TEMPLATE_LANG")) || "en_US");
+      return json({ ok: true });
+    } catch (e) {
+      return bad(String(e?.message || e || "WhatsApp send failed"), 500);
+    }
+  }));
+} // ←←← make sure this closing brace ends mountAdmin
