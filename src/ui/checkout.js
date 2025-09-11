@@ -6,14 +6,14 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
   *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  .grid{ display:grid; grid-template-columns:1.25fr .9fr; gap:16px; align-items:start } /* ★ tweak */
+  .grid{ display:grid; grid-template-columns:1.25fr .9fr; gap:16px; align-items:start }
   @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
   h1{ margin:0 0 10px } h2{ margin:14px 0 10px } .muted{ color:var(--muted) }
-  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start } /* ★ tweak */
+  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start }
   @media (max-width:680px){ .row{ grid-template-columns:1fr; } }
   label{ display:block; font-size:13px; color:#444; margin:10px 0 6px }
-  input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff; min-height:40px } /* ★ tweak */
+  input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff; min-height:40px }
   .btn{ padding:12px 14px; border-radius:10px; border:0; background:var(--green); color:#fff; font-weight:700; cursor:pointer }
   .btn.secondary{ background:#fff; color:#111; border:1px solid #e5e7eb }
   .att{ border:1px solid #eef0f2; border-radius:12px; padding:12px; margin:10px 0 }
@@ -145,7 +145,7 @@ function buildAttendeeForms(){
     }
   });
 
-  // ★ Prefill on first focus if still empty
+  // Prefill on first focus if still empty
   wrap.addEventListener('focusin', (e)=>{
     if (e.target && e.target.classList.contains('att_phone')) {
       if (!e.target.value) e.target.value = normPhone($('buyer_phone').value);
@@ -245,7 +245,31 @@ async function submit(){
     const j = await r.json().catch(()=>({ok:false,error:'network'}));
     if (!j.ok) throw new Error(j.error||'Kon nie bestelling skep nie');
 
-    const code = j.order?.short_code || 'THANKS';
+    const order = j.order || {};
+    const code  = order.short_code || 'THANKS';
+    const total = Number(order.total_cents||0);
+
+    if (methodSel === 'pay_now') {
+      // Start Yoco hosted checkout; backend returns a redirect_url
+      const yo = await fetch('/api/payments/create-intent', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body: JSON.stringify({
+          order_id: order.id,
+          amount_cents: total,
+          currency: 'ZAR',
+          code
+        })
+      }).then(r=>r.json()).catch(()=>({ok:false,error:'Kon nie met Yoco koppel nie'}));
+
+      if (!yo.ok || !yo.redirect_url) {
+        throw new Error(yo.error || 'Kon nie betaling begin nie');
+      }
+      location.href = yo.redirect_url;
+      return;
+    }
+
+    // Pay at event -> go to thanks
     location.href = '/thanks/' + encodeURIComponent(code);
   }catch(e){
     showMsg('err', e.message||'Fout');
@@ -282,7 +306,6 @@ async function load(){
   catalog = res;
   catalog.event = catalog.event || {};
   catalog.ticket_types = catalog.ticket_types || [];
-  // attach on event to keep parity with shop.js expectations
   catalog.event.ticket_types = catalog.ticket_types;
 
   $('eventMeta').textContent = (catalog.event?.name||'') + (catalog.event?.venue ? ' · '+catalog.event.venue : '');
@@ -294,6 +317,9 @@ async function load(){
 
   // Wire submit
   $('submitBtn').onclick = submit;
+
+  // Small UX: focus first name
+  $('buyer_first').focus();
 }
 
 load();
