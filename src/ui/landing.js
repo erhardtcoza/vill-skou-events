@@ -1,154 +1,146 @@
 // /src/ui/landing.js
 export function landingHTML() {
-  const POSTER =
-    "https://static.villiersdorpskou.co.za/posters/villiersdorp_skou_2025.jpg";
-
-  return /*html*/ `<!doctype html>
+  return `<!doctype html>
 <html lang="af">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Villiersdorp Skou — Tickets</title>
-<style>
-  :root{
-    --brand:#0a7d2b;
-    --brand-2:#e7f3ea;
-    --ink:#111;
-    --muted:#6b7280;
-    --card:#ffffff;
-    --bg:#f6f7f8;
-    --shadow:0 6px 22px rgba(0,0,0,.07);
-    --radius:16px;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";background:var(--bg);color:var(--ink)}
-  .wrap{max-width:1040px;margin:0 auto;padding:18px}
-  h1{font-size:clamp(28px,5vw,44px);margin:0 0 8px}
-  .sub{color:var(--muted);font-size:14px}
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Villiersdorp Skou — Tickets</title>
+  <style>
+    :root { --bg:#f6f8f7; --card:#ffffff; --ink:#0b1320; --muted:#6c7a7a; --accent:#0a7d2b; }
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    .wrap{max-width:1100px;margin:auto;padding:22px 16px}
+    h1{font-size:clamp(28px,4.5vw,40px);line-height:1.05;margin:0 0 8px}
+    h2{font-size:clamp(22px,3.5vw,30px);margin:28px 0 12px}
 
-  /* HERO */
-  .hero{
-    position:relative;
-    background:linear-gradient(90deg,#e9f7ec 0%, #fff 100%);
-    border-radius:var(--radius);
-    padding:18px;
-    display:grid;
-    gap:18px;
-    grid-template-columns: 1fr;
-    align-items:center;
-    box-shadow:var(--shadow);
-    overflow:hidden;
-  }
-  .hero .poster{
-    width:100%;
-    border-radius:12px;
-    box-shadow:0 12px 28px rgba(0,0,0,.18);
-    aspect-ratio:3/4;
-    object-fit:cover;
-  }
-  .hero .copy{padding:4px 2px}
-  .hero h1{line-height:1.05; letter-spacing:.2px}
-  .hero .kicker{display:inline-block;background:#eaf7ef;color:#0a7d2b;font-weight:700;padding:6px 10px;border-radius:999px;margin-bottom:10px}
-
-  /* At >= 760px go side-by-side, make poster visually dominant */
-  @media (min-width:760px){
-    .hero{
-      grid-template-columns: minmax(300px, 420px) 1fr; /* poster | text */
-      padding:22px;
+    /* hero */
+    .hero{background:linear-gradient(135deg,#eaf7ee,#f5faf7);border-radius:18px;padding:14px;box-shadow:0 12px 30px rgba(0,0,0,.08)}
+    .hero-grid{display:grid;grid-template-columns:minmax(320px,520px) 1fr;gap:18px;align-items:center}
+    .poster{border-radius:20px;overflow:hidden;background:#000}
+    .poster img{display:block;width:100%;height:auto}
+    .hero-text{padding:8px}
+    .brand{color:var(--accent);font-weight:800;margin-bottom:6px}
+    .hero-title{font-size:clamp(26px,4.5vw,42px);font-weight:900;letter-spacing:.2px;margin:0}
+    .hero-link{color:inherit;text-decoration:none}
+    .hero-link:hover{text-decoration:underline}
+    .cta-row{margin-top:14px}
+    .cta{display:inline-block;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:12px 18px;font-weight:700;text-decoration:none}
+    @media (max-width:820px){
+      .hero-grid{grid-template-columns:1fr}
+      .hero-text{padding-top:4px}
     }
-    .hero .poster{
-      width:100%;
-      aspect-ratio:3/4;
+
+    /* event list */
+    .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 6px 18px rgba(0,0,0,.06);margin-bottom:14px}
+    .ev{display:grid;grid-template-columns:120px 1fr auto;gap:14px;align-items:center}
+    .ev .thumb{border-radius:10px;overflow:hidden;background:#000}
+    .ev .thumb img{display:block;width:100%;height:auto}
+    .ev h3{margin:0 0 6px}
+    .muted{color:var(--muted)}
+    .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;text-decoration:none;font-weight:700}
+    @media (max-width:640px){
+      .ev{grid-template-columns:90px 1fr}
+      .ev .go{grid-column:1/-1}
     }
-  }
-
-  /* EVENTS */
-  .section{margin-top:22px}
-  .cards{display:grid;gap:14px}
-  @media (min-width:680px){ .cards{grid-template-columns:1fr 1fr} }
-  @media (min-width:980px){ .cards{grid-template-columns:1fr 1fr 1fr} }
-
-  .card{
-    background:var(--card);
-    border-radius:14px;
-    box-shadow:var(--shadow);
-    overflow:hidden;
-    display:flex;
-    flex-direction:column;
-  }
-  .thumb{width:100%; aspect-ratio:16/11; object-fit:cover; background:#ddd}
-  .pad{padding:14px}
-  .title{font-weight:800;margin:0 0 6px}
-  .meta{color:var(--muted);font-size:14px;margin-bottom:12px}
-  .row{display:flex;gap:10px}
-  .btn{
-    appearance:none;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;
-    background:#eef2f4;color:#111
-  }
-  .btn.primary{background:var(--brand);color:#fff}
-  .btn:active{transform:translateY(1px)}
-  a.btn{display:inline-block;text-decoration:none;text-align:center}
-</style>
+  </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <img class="poster" src="${POSTER}" alt="Skou 2025 plakkaat"/>
-      <div class="copy">
-        <span class="kicker">Villiersdorp Skou</span>
-        <h1>Tickets &amp; Inligting</h1>
-        <div class="sub">Koop aanlyn · POS · Toegangsbeheer</div>
+<div class="wrap">
+  <h1>Admin dashboard</h1> <!-- hidden by CSS in production, kept for consistency -->
+
+  <!-- HERO -->
+  <section id="hero" class="hero" aria-live="polite">
+    <div class="hero-grid">
+      <div class="poster">
+        <a id="heroPosterLink" class="hero-link" href="#">
+          <img id="heroPoster" src="" alt="Event poster"/>
+        </a>
       </div>
-    </div>
-
-    <div class="section">
-      <h2 style="margin:14px 0 10px;">Opkomende Vertonings</h2>
-      <div id="events" class="cards">
-        <div class="card"><div class="pad">Laai…</div></div>
-      </div>
-    </div>
-  </div>
-
-<script type="module">
-async function fmtDateRange(s,e){
-  const d1=new Date((s||0)*1000), d2=new Date((e||0)*1000);
-  const f=(d)=>d.toLocaleDateString(undefined,{weekday:'short', day:'2-digit', month:'short'});
-  return \`\${f(d1)} – \${f(d2)}\`;
-}
-
-function moneyZAR(cents){ return new Intl.NumberFormat('af-ZA',{style:'currency',currency:'ZAR'}).format((cents||0)/100); }
-
-function card(ev){
-  const img = ev.poster_url || ev.hero_url || "${POSTER}";
-  return \`
-    <div class="card">
-      <img class="thumb" src="\${img}" alt="\${ev.name}"/>
-      <div class="pad">
-        <div class="title">\${ev.name}</div>
-        <div class="meta">\${await fmtDateRange(ev.starts_at, ev.ends_at)} · \${ev.venue || ''}</div>
-        <div class="row">
-          <a class="btn" href="/shop/\${encodeURIComponent(ev.slug)}">Info</a>
-          <a class="btn primary" href="/shop/\${encodeURIComponent(ev.slug)}#buy">Kaartjies</a>
+      <div class="hero-text">
+        <div class="brand" id="heroBrand">Villiersdorp Skou</div>
+        <h2 class="hero-title">
+          <a id="heroTitleLink" class="hero-link" href="#">Tickets &amp; Inligting</a>
+        </h2>
+        <!-- (tagline removed as requested) -->
+        <div class="cta-row">
+          <a id="heroCta" class="cta" href="#">Koop kaartjies</a>
         </div>
       </div>
-    </div>\`;
-}
+    </div>
+  </section>
 
-(async function load(){
-  const root = document.getElementById('events');
-  try{
-    const r = await fetch('/api/public/events');
-    const j = await r.json();
-    const list = (j.events||[]);
-    if(!list.length){ root.innerHTML = '<div class="card"><div class="pad">Geen vertonings beskikbaar nie.</div></div>'; return; }
-    // Build each card (await because card() uses fmtDateRange async)
-    const parts = [];
-    for(const ev of list){ parts.push(await card(ev)); }
-    root.innerHTML = parts.join('');
-  }catch(e){
-    root.innerHTML = '<div class="card"><div class="pad">Kon nie laai nie.</div></div>';
+  <h2>Opkomende Vertonings</h2>
+  <div id="events"></div>
+</div>
+
+<script>
+  const esc = (s='') => String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+  async function load() {
+    const box = document.getElementById('events');
+    box.innerHTML = '<div class="card">Laai...</div>';
+
+    let res;
+    try {
+      res = await fetch('/api/public/events', { credentials: 'include' });
+    } catch (e) {
+      box.innerHTML = '<div class="card">Kon nie laai nie</div>';
+      return;
+    }
+    const data = await res.json().catch(()=>({ok:false}));
+    if (!data.ok) {
+      box.innerHTML = '<div class="card">Kon nie laai nie</div>';
+      return;
+    }
+
+    const evs = data.events || [];
+    if (!evs.length) {
+      box.innerHTML = '<div class="card">Geen vertonings beskikbaar nie.</div>';
+      return;
+    }
+
+    // HERO uses first event
+    const ev0 = evs[0];
+    const slug = ev0.slug;
+    const poster = ev0.poster_url || ev0.hero_url || '';
+    const shopUrl = '/shop/' + encodeURIComponent(slug);
+
+    document.getElementById('heroPoster').src = poster;
+    document.getElementById('heroPoster').alt = esc(ev0.name) + ' poster';
+    document.getElementById('heroPosterLink').href = shopUrl;
+    document.getElementById('heroTitleLink').href = shopUrl;
+    document.getElementById('heroTitleLink').textContent = 'Tickets & Inligting';
+    document.getElementById('heroBrand').textContent = ev0.name || 'Villiersdorp Skou';
+    document.getElementById('heroCta').href = shopUrl;
+
+    // List all events
+    box.innerHTML = '';
+    for (const ev of evs) {
+      const s = new Date((ev.starts_at||0)*1000);
+      const e = new Date((ev.ends_at||0)*1000);
+      const when = s.toLocaleDateString('af-ZA',{weekday:'short', day:'2-digit', month:'short'})
+                 + ' – '
+                 + e.toLocaleDateString('af-ZA',{weekday:'short', day:'2-digit', month:'short'});
+      const url = '/shop/' + encodeURIComponent(ev.slug);
+      const img = ev.poster_url || ev.hero_url || '';
+
+      const card = document.createElement('div');
+      card.className = 'card ev';
+      card.innerHTML = \`
+        <div class="thumb"><img src="\${esc(img)}" alt="\${esc(ev.name)}"/></div>
+        <div>
+          <h3>\${esc(ev.name)}</h3>
+          <div class="muted">\${when} · \${esc(ev.venue||'')}</div>
+        </div>
+        <div class="go"><a class="btn" href="\${url}">Kaartjies</a></div>
+      \`;
+      box.appendChild(card);
+    }
   }
-})();
+
+  load();
 </script>
 </body>
 </html>`;
