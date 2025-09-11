@@ -1,296 +1,297 @@
 // /src/ui/scanner.js
 export const scannerHTML = `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Scanner · Villiersdorp Skou</title>
+<title>Scanner</title>
 <style>
-  :root{ --green:#10b981; --amber:#f59e0b; --red:#ef4444; --muted:#667085; --bg:#f7f7f8; }
-  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:960px; margin:16px auto; padding:0 14px }
-  h1{ margin:0 0 10px }
-  .grid{ display:grid; grid-template-columns: 1.2fr .8fr; gap:14px }
-  @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
-  .muted{ color:var(--muted) }
-  .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center }
-  input{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
-  .btn{ padding:10px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
-  .btn.primary{ background:#0a7d2b; color:#fff; border-color:transparent }
-  .state{ display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; border:1px solid #e5e7eb }
-  .ok{ color:#065f46; border-color:#a7f3d0; background:#ecfdf5 }
-  .warn{ color:#92400e; border-color:#fcd34d; background:#fffbeb }
-  .bad{ color:#991b1b; border-color:#fecaca; background:#fef2f2 }
-  video{ width:100%; border-radius:10px; background:#000 }
-  canvas{ display:none }
-  .result{ font-size:14px }
-  .code{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:700 }
+  :root{ --ink:#0b1320; --muted:#667085; --bg:#f6f8f7; --card:#fff; --green:#0a7d2b; --amber:#a36f00; --red:#b42318; --border:#e5e7eb }
+  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink) }
+  .wrap{ max-width:900px; margin:12px auto; padding:0 14px }
+  h1{ margin:8px 0 12px; font-size:34px }
+  .card{ background:var(--card); border-radius:16px; padding:14px; box-shadow:0 10px 26px rgba(0,0,0,.08) }
+  .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+  .btn{ background:#f8fafc; border:1px solid var(--border); color:#2563eb; border-radius:10px; padding:8px 12px; cursor:pointer; font-weight:700 }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .pill{ display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid var(--border); color:#444 }
+  #view{ width:100%; aspect-ratio:3/4; background:#000; border-radius:10px; }
+  #status{ color:var(--muted); margin-top:10px; font-weight:600 }
+
   /* Flash overlay */
-  .flash{ position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .14s ease; }
-  .flash.show{ opacity:0.50 }
+  .flash{ position:fixed; inset:0; pointer-events:none; opacity:0; transition:opacity .15s ease }
+  .flash.show{ opacity:.85 }
+  .flash.ok{ background:rgba(10,125,43,.7) }
+  .flash.warn{ background:rgba(163,111,0,.7) }
+  .flash.err{ background:rgba(180,35,24,.8) }
+  .flash .msg{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+               color:#fff; font-weight:900; font-size:40px; text-shadow:0 2px 18px rgba(0,0,0,.4) }
+
+  /* Modal */
+  .modal{ position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; padding:14px }
+  .modal .box{ background:#fff; border-radius:14px; padding:16px; width:min(520px,90vw) }
+  .modal h3{ margin:0 0 10px }
+  label{ display:block; font-size:13px; color:#444; margin:8px 0 6px }
+  input, select{ width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:10px; font:inherit; background:#fff }
+
+  /* Gate bar */
+  .bar{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px }
 </style>
-<!-- jsQR (small, fast) -->
-<script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
 </head><body>
 <div class="wrap">
-  <h1>Scanner</h1>
-  <div class="grid">
-    <div class="card">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <div class="muted">Camera live scan</div>
-        <div class="row">
-          <button id="toggle" class="btn">Pause</button>
-          <button id="flip" class="btn">Flip</button>
-          <button id="torch" class="btn">Torch</button>
-        </div>
-      </div>
-      <video id="video" autoplay playsinline></video>
-      <canvas id="canvas"></canvas>
-      <div id="liveMsg" class="muted" style="margin-top:8px">Point the camera at a QR code.</div>
+  <div class="bar">
+    <h1>Scanner</h1>
+    <div class="row">
+      <span id="gatePill" class="pill">Geen hek gekies</span>
+      <button id="chooseGate" class="btn">Kies hek</button>
+      <a href="/scan/login" class="btn">Sign out</a>
     </div>
+  </div>
 
-    <div class="card">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">Camera live scan</h2>
       <div class="row">
-        <input id="code" placeholder="Type code manually (e.g. E4F3917274E7)" style="flex:1;min-width:220px"/>
-        <button id="lookup" class="btn primary">Lookup</button>
+        <button id="pause" class="btn">Pause</button>
+        <button id="flip" class="btn">Flip</button>
+        <button id="torch" class="btn">Torch</button>
       </div>
-      <div id="status" class="muted" style="margin-top:8px"></div>
-      <div id="result" class="result" style="margin-top:10px"></div>
+    </div>
+    <video id="view" playsinline muted></video>
+    <div id="status">Camera starting…</div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="row">
+      <input id="manual" placeholder="Type code manually (QR value)…"/>
+      <button id="lookup" class="btn primary">Lookup</button>
     </div>
   </div>
 </div>
 
-<!-- Flash overlays -->
-<div id="flashSuccess" class="flash" style="background:var(--green)"></div>
-<div id="flashWarn" class="flash" style="background:var(--amber)"></div>
-<div id="flashError" class="flash" style="background:var(--red)"></div>
+<!-- flash overlay -->
+<div id="flash" class="flash"><div class="msg" id="flashMsg"></div></div>
+
+<!-- modal: gate selection -->
+<div id="gateModal" class="modal">
+  <div class="box">
+    <h3>Kies Hek</h3>
+    <label>Hek</label>
+    <select id="gateSel"></select>
+    <div class="row" style="margin-top:12px; justify-content:flex-end">
+      <button id="gateOK" class="btn primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- modal: ticket details + gender -->
+<div id="genderModal" class="modal">
+  <div class="box">
+    <h3>Besonderhede</h3>
+    <div id="gdSummary" class="muted" style="margin-bottom:6px"></div>
+    <label>Geslag</label>
+    <select id="gdSelect">
+      <option value="">—</option>
+      <option value="male">Manlik</option>
+      <option value="female">Vroulik</option>
+      <option value="other">Ander</option>
+    </select>
+    <div class="row" style="margin-top:12px; justify-content:flex-end">
+      <button id="gdSave" class="btn primary">Bevestig</button>
+    </div>
+  </div>
+</div>
 
 <script>
-const $ = (id)=>document.getElementById(id);
+const $ = id => document.getElementById(id);
 const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
 
-/* ---------- Audio + Haptics + Flash helpers ---------- */
-let actx = null;
-function ensureAudio(){ if (!actx) try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch{} }
-
-function beep(pattern){
-  // pattern: array of [freqHz, ms, gain] steps
-  if (!actx){ ensureAudio(); if(!actx) return; }
-  const now = actx.currentTime;
-  let t = now;
-  pattern.forEach(([f, ms, g=0.2])=>{
-    const osc = actx.createOscillator();
-    const gain = actx.createGain();
-    osc.frequency.value = f;
-    gain.gain.setValueAtTime(g, t);
-    osc.connect(gain).connect(actx.destination);
-    osc.start(t);
-    t += ms/1000;
-    gain.gain.linearRampToValueAtTime(0.0001, t-0.02);
-    osc.stop(t);
-  });
+/* ---------------- gate selection ---------------- */
+let gates = [];
+let gate_id = Number(localStorage.getItem("scan_gate_id")||0) || 0;
+function setGatePill(){
+  const g = gates.find(x=>x.id===gate_id);
+  $("gatePill").textContent = g ? ("Hek: " + g.name) : "Geen hek gekies";
 }
 
-function vibrate(pattern){ try{ navigator.vibrate && navigator.vibrate(pattern); }catch{} }
-
-function flash(kind){
-  const el = kind==='ok' ? $('flashSuccess') : kind==='warn' ? $('flashWarn') : $('flashError');
-  el.classList.add('show');
-  setTimeout(()=>el.classList.remove('show'), 180);
+async function chooseGateFlow(){
+  // load gates
+  const j = await fetch('/api/scan/gates').then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ alert('Kon nie hekke laai nie'); return; }
+  gates = j.gates || [];
+  // render
+  const sel = $("gateSel");
+  sel.innerHTML = gates.map(g=>\`<option value="\${g.id}">\${g.name} (\${g.event_id})</option>\`).join("");
+  $("gateModal").style.display='flex';
+  $("gateOK").onclick = ()=>{
+    gate_id = Number(sel.value||0)||0;
+    localStorage.setItem("scan_gate_id", String(gate_id));
+    setGatePill();
+    $("gateModal").style.display='none';
+  };
 }
 
-function fx(kind){
-  // Success: short pleasant beep + short vibrate + green flash
-  if (kind==='ok'){
-    beep([[880,100,0.18],[1320,120,0.16]]);
-    vibrate([60,40,40]);
-    flash('ok');
-  }
-  // Warn: mid beep + amber flash
-  else if (kind==='warn'){
-    beep([[660,160,0.18]]);
-    vibrate([100]);
-    flash('warn');
-  }
-  // Error: low buzz + red flash
-  else {
-    beep([[220,180,0.22],[180,140,0.20]]);
-    vibrate([160,60,160]);
-    flash('err');
-  }
-}
+/* ---------------- camera + scan ---------------- */
+let mediaStream = null;
+let facing = "environment";
+let torchOn = false;
+let paused = false;
+let lastCode = "";     // to debounce
+let lastAt   = 0;
 
-/* ---------- Camera + QR ---------- */
-let stream = null, track = null, facing = 'environment', scanning = true, torchOn = false;
-let lastCode = '', lastAt = 0;
-
-function norm(s){ return String(s||'').trim().toUpperCase(); }
-
-async function startCamera(){
-  if (stream) await stopCamera();
-  try{
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: facing, width: {ideal:1280}, height:{ideal:720} },
+async function startCam(){
+  $("status").textContent = "Camera starting…";
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: facing, width:{ideal:1280}, height:{ideal:1700} },
       audio: false
     });
-    $('video').srcObject = stream;
-    track = stream.getVideoTracks()[0] || null;
-    $('liveMsg').textContent = 'Camera running.';
-  }catch(e){
-    $('liveMsg').textContent = 'Camera error: ' + (e.message||e);
+    const video = $("view");
+    video.srcObject = mediaStream;
+    await video.play();
+    $("status").textContent = "Camera running.";
+    loopRead();
+  } catch(e){
+    $("status").textContent = "Kon nie kamera open nie: " + (e.message||e);
   }
 }
 
-async function stopCamera(){
-  if (stream){
-    stream.getTracks().forEach(t=>t.stop());
-    stream = null; track = null;
-  }
-}
-
-async function setTorch(on){
+$("pause").onclick = ()=>{
+  paused = !paused;
+  $("pause").textContent = paused ? "Resume" : "Pause";
+};
+$("flip").onclick = ()=>{ facing = (facing==="environment"?"user":"environment"); stopCam().then(startCam); };
+$("torch").onclick = async ()=>{
   try{
-    if (!track) return false;
-    const caps = track.getCapabilities?.();
-    if (!caps || !caps.torch) return false;
-    await track.applyConstraints({ advanced: [{ torch: !!on }] });
-    torchOn = !!on;
-    return true;
-  }catch{ return false; }
-}
+    const t = mediaStream.getVideoTracks()[0];
+    await t.applyConstraints({ advanced: [{ torch: !torchOn }] });
+    torchOn = !torchOn;
+    $("torch").textContent = torchOn ? "Torch ✓" : "Torch";
+  }catch{}
+};
 
-async function loop(){
-  const video = $('video'); const canvas = $('canvas'); const ctx = canvas.getContext('2d', { willReadFrequently:true });
-  while(true){
-    try{
-      if (scanning && video.readyState === video.HAVE_ENOUGH_DATA){
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const qr = jsQR(img.data, img.width, img.height, { inversionAttempts:'dontInvert' });
-        if (qr && qr.data){
-          const code = norm(qr.data);
-          const tooSoon = (Date.now() - lastAt) < 1400;
-          if (!tooSoon && code && code !== lastCode){
-            lastCode = code; lastAt = Date.now();
-            $('code').value = code;
-            await handleLookup(code, true);
+async function stopCam(){ if (mediaStream){ mediaStream.getTracks().forEach(t=>t.stop()); mediaStream=null; }}
+
+// Simple barcode/QR read via browser BarcodeDetector when available
+const SupportedFormats = ["qr_code","aztec","code_128","code_39","ean_13","pdf417"];
+let detector = null;
+async function loopRead(){
+  if (!("BarcodeDetector" in window)){
+    $("status").textContent = "BarcodeDetector nie beskikbaar nie – gebruik handmatige invoer.";
+    return;
+  }
+  if (!detector){ try{ detector = new BarcodeDetector({ formats: SupportedFormats }); }catch{} }
+  const video = $("view");
+  while (mediaStream && !video.paused && !video.ended){
+    if (!paused){
+      try{
+        const barcodes = await detector.detect(video);
+        if (barcodes && barcodes.length){
+          const val = String(barcodes[0].rawValue||"").trim();
+          const now = Date.now();
+          if (val && (val!==lastCode || now-lastAt>1500)){
+            lastCode = val; lastAt = now;
+            handleCode(val);
           }
         }
-      }
-    }catch(e){
-      $('status').textContent = 'Scan error: ' + (e.message||e);
+      }catch{}
     }
     await sleep(120);
   }
 }
 
-/* ---------- API ---------- */
-function classifyState(state){
-  const s = String(state||'').toLowerCase();
-  if (s==='unused') return 'ok';
-  if (s==='in' || s==='out') return 'warn';
-  return 'err';
+/* ---------------- sounds + haptics + flashes ---------------- */
+function vibrate(pattern){ try{ navigator.vibrate && navigator.vibrate(pattern); }catch{} }
+const beepOK    = new Audio('data:audio/mp3;base64,//uQZAAAAAAAA...');
+const beepWarn  = new Audio('data:audio/mp3;base64,//uQZAAAAAAAA...');
+const beepErr   = new Audio('data:audio/mp3;base64,//uQZAAAAAAAA...');
+// (the tiny data URIs above are placeholders; the browser will just no-op if it can't play)
+
+async function flash(kind, text){
+  const el = $("flash");
+  const msg = $("flashMsg");
+  msg.textContent = text||"";
+  el.className = "flash show " + (kind==="ok"?"ok":kind==="warn"?"warn":"err");
+  await sleep(250);
+  el.classList.remove("show");
 }
 
-async function handleLookup(code, fromCamera=false){
-  ensureAudio();
-  $('status').textContent = 'Looking up ' + code + '…';
-  $('result').innerHTML = '';
-  try{
-    const r = await fetch('/api/scan/lookup/' + encodeURIComponent(code));
-    const j = await r.json();
-    if (!j.ok){
-      $('status').innerHTML = '<span class="state bad">Lookup failed</span>';
-      $('result').innerHTML = '<div class="muted">No record for <span class="code">'+code+'</span>.</div>';
-      fx('err');
-      return;
-    }
-    $('status').innerHTML = '<span class="state ok">Found</span>';
+/* ---------------- API glue ---------------- */
+async function scanApi(code, gender){
+  const r = await fetch("/api/scan/scan", {
+    method:"POST",
+    headers:{ "content-type":"application/json" },
+    body: JSON.stringify({ code, gate_id, gender: gender || null })
+  });
+  return await r.json().catch(()=>({ok:false,error:"network"}));
+}
 
-    // Visual classification by current state
-    const kind = j.kind; // 'ticket' | 'vendor_pass' | 'pass'
-    if (kind === 'ticket'){
-      const t = j.ticket;
-      const who = [t.attendee_first, t.attendee_last].filter(Boolean).join(' ') || '(no name)';
-      const level = classifyState(t.state);
-      if (level==='ok') fx('ok'); else if (level==='warn') fx('warn'); else fx('err');
+let pendingGender = null; // { code, summary }
 
-      const btnIn = (t.state !== 'in') ? '<button id="markIn" class="btn primary">Mark IN</button>' : '';
-      const btnOut= (t.state === 'in') ? '<button id="markOut" class="btn">Mark OUT</button>' : '';
-      $('result').innerHTML = \`
-        <div><div class="muted">Ticket</div>
-          <div style="font-weight:700">\${who}</div>
-          <div>\${t.type_name || ''} · <span class="code">\${t.qr}</span></div>
-          <div style="margin:6px 0">State: <span class="state \${t.state==='in'?'warn':(t.state==='unused'?'ok':'bad')}">\${t.state}</span></div>
-          <div class="row">\${btnIn} \${btnOut}</div>
-        </div>\`;
-      $('markIn')?.addEventListener('click', ()=> mark('ticket', t.id, 'IN'));
-      $('markOut')?.addEventListener('click', ()=> mark('ticket', t.id, 'OUT'));
-    } else if (kind === 'vendor_pass' || kind === 'pass'){
-      const v = j.pass;
-      const label = v.label || v.holder_name || '(no label)';
-      const level = classifyState(v.state);
-      if (level==='ok') fx('ok'); else if (level==='warn') fx('warn'); else fx('err');
+async function handleCode(code){
+  if (!gate_id){ await chooseGateFlow(); if (!gate_id) return; }
 
-      const btnIn = (v.state !== 'in') ? '<button id="markIn" class="btn primary">Mark IN</button>' : '';
-      const btnOut= (v.state === 'in') ? '<button id="markOut" class="btn">Mark OUT</button>' : '';
-      $('result').innerHTML = \`
-        <div><div class="muted">Vendor/Pass</div>
-          <div style="font-weight:700">\${label}</div>
-          <div>\${v.type || v.kind} · <span class="code">\${v.qr}</span></div>
-          <div style="margin:6px 0">State: <span class="state \${v.state==='in'?'warn':(v.state==='unused'?'ok':'bad')}">\${v.state}</span></div>
-          <div class="row">\${btnIn} \${btnOut}</div>
-        </div>\`;
-      $('markIn')?.addEventListener('click', ()=> mark(kind, v.id, 'IN'));
-      $('markOut')?.addEventListener('click', ()=> mark(kind, v.id, 'OUT'));
-    } else {
-      fx('warn');
-      $('result').innerHTML = '<div class="muted">Unknown kind.</div>';
-    }
-  }catch(e){
-    $('status').innerHTML = '<span class="state bad">Network</span>';
-    fx('err');
+  const j = await scanApi(code, null);
+
+  if (j?.ok && j.need_gender){
+    pendingGender = { code, summary: j.ticket };
+    $("gdSummary").textContent =
+      \`\${j.ticket?.name||"Onbekend"} · \${j.ticket?.type||""} · \${j.ticket?.qr||""}\`;
+    $("gdSelect").value = "";
+    $("genderModal").style.display='flex';
+    return;
+  }
+
+  renderOutcome(j);
+}
+
+$("gdSave").onclick = async ()=>{
+  const g = $("gdSelect").value || "";
+  if (!pendingGender || !g) { $("genderModal").style.display='none'; return; }
+  const j = await scanApi(pendingGender.code, g);
+  $("genderModal").style.display='none';
+  renderOutcome(j);
+  pendingGender = null;
+};
+
+function renderOutcome(j){
+  if (!j || !j.ok){
+    // Failures
+    const reason = j?.reason || "invalid";
+    const text =
+      reason==="unpaid"     ? "Onbetaalde kaartjie" :
+      reason==="wrong_date" ? "Verkeerde datum" :
+      reason==="void"       ? "Ongeldig" :
+      reason==="not_found"  ? "Nie gevind nie" :
+                              "Ongeldig";
+    flash("err", text);
+    vibrate([80,80,80]); // three short buzzes
+    try{ beepErr.currentTime=0; beepErr.play(); }catch{}
+    $("status").textContent = "❌ " + (j?.error || text);
+    return;
+  }
+
+  if (j.action === "in"){
+    flash("ok", "IN");
+    vibrate(50);
+    try{ beepOK.currentTime=0; beepOK.play(); }catch{}
+    $("status").textContent = "✅ In: " + (j.ticket?.name || "");
+  } else if (j.action === "out"){
+    flash("warn", "UIT");
+    try{ beepWarn.currentTime=0; beepWarn.play(); }catch{}
+    $("status").textContent = "↔️ Uit: " + (j.ticket?.name || "");
+  } else {
+    // pending (asked gender already)
+    $("status").textContent = "Vul geslag in…";
   }
 }
 
-async function mark(kind, id, action){
-  $('status').textContent = 'Updating…';
-  try{
-    const r = await fetch('/api/scan/mark', {
-      method:'POST',
-      headers:{ 'content-type':'application/json' },
-      body: JSON.stringify({ kind, id, action })
-    });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'mark failed');
-    $('status').innerHTML = '<span class="state ok">Updated</span>';
-    fx('ok');
-  }catch(e){
-    $('status').innerHTML = '<span class="state bad">Failed</span>';
-    fx('err');
-  }
-}
-
-/* ---------- UI wiring ---------- */
-$('lookup').onclick = ()=> {
-  const code = norm($('code').value);
-  if (!code) { $('status').textContent = 'Enter a code.'; return; }
-  handleLookup(code, false);
-};
-$('toggle').onclick = ()=> {
-  scanning = !scanning;
-  $('toggle').textContent = scanning ? 'Pause' : 'Resume';
-};
-$('flip').onclick = async ()=> {
-  facing = (facing === 'environment') ? 'user' : 'environment';
-  await startCamera();
-};
-$('torch').onclick = async ()=> {
-  const ok = await setTorch(!torchOn);
-  if (!ok) $('status').textContent = 'Torch not supported on this device';
+/* ---------------- manual entry ---------------- */
+$("lookup").onclick = ()=>{
+  const v = String($("manual").value||"").trim();
+  if (v) handleCode(v);
 };
 
-startCamera();
-loop();
+/* ---------------- init ---------------- */
+$("chooseGate").onclick = chooseGateFlow;
+setGatePill();
+startCam();
 </script>
 </body></html>`;
