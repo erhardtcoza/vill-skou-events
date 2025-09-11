@@ -202,6 +202,31 @@ export function mountAdmin(router) {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
+// --- Yoco OAuth callback (Admin) ---
+// GET /api/admin/yoco/oauth/callback?code=...&state=...
+router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
+  try {
+    const u = new URL(req.url);
+    const code  = String(u.searchParams.get("code")  || "");
+    const state = String(u.searchParams.get("state") || "");
+
+    if (!code) return new Response("Missing code", { status: 400 });
+
+    // Store the code/state in settings (so you can exchange it server-side later)
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO settings(key, value) VALUES('YOCO_OAUTH_CODE', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(code),
+      env.DB.prepare("INSERT INTO settings(key, value) VALUES('YOCO_OAUTH_STATE', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(state),
+      env.DB.prepare("INSERT INTO settings(key, value) VALUES('YOCO_OAUTH_AT_SAVED', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(String(Math.floor(Date.now()/1000)))
+    ]);
+
+    // Redirect back to admin → Site Settings → Yoco tab
+    const back = (env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za") + "/admin#site-settings-yoco";
+    return new Response(null, { status: 302, headers: { "Location": back }});
+  } catch (e) {
+    return new Response("OAuth callback error", { status: 500 });
+  }
+});
+  
   // Order lookup by code (used in Tickets > Lookup)
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim();
