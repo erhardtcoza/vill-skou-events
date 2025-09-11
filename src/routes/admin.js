@@ -6,27 +6,16 @@ import { requireRole } from "../utils/auth.js";
 export function mountAdmin(router) {
   const guard = (fn) => requireRole("admin", fn);
 
-  /* ---------------- helpers: load/save settings (single-row JSON) -------- */
-  async function loadSiteSettings(env) {
-    const row = await env.DB.prepare(
-      `SELECT json FROM settings WHERE key='site' LIMIT 1`
-    ).first();
-    try { return row?.json ? JSON.parse(row.json) : {}; } catch { return {}; }
-  }
-  async function saveSiteSettings(env, obj) {
-    const payload = JSON.stringify(obj || {});
-    await env.DB.prepare(
-      `INSERT INTO settings (key, json) VALUES ('site', ?1)
-       ON CONFLICT(key) DO UPDATE SET json=excluded.json`
-    ).bind(payload).run();
-  }
-
   /* ---------------- Dashboard summary ---------------- */
   router.add("GET", "/api/admin/summary", guard(async (_req, env) => {
     const evQ = await env.DB.prepare(
-      `SELECT id, slug, name FROM events WHERE status='active' ORDER BY starts_at ASC`
+      `SELECT id, slug, name
+         FROM events
+        WHERE status='active'
+        ORDER BY starts_at ASC`
     ).all();
 
+    // Ticket totals per active event
     const sums = {};
     for (const ev of (evQ.results || [])) {
       const tQ = await env.DB.prepare(
@@ -36,53 +25,43 @@ export function mountAdmin(router) {
            SUM(state='in')                     AS inside,
            SUM(state='out')                    AS outside,
            SUM(state='void')                   AS voided
-         FROM tickets WHERE event_id = ?1`
+         FROM tickets
+        WHERE event_id = ?1`
       ).bind(ev.id).first();
+
       sums[ev.id] = {
-        total: Number(tQ?.total || 0),
-        unused: Number(tQ?.unused || 0),
-        inside: Number(tQ?.inside || 0),
-        outside: Number(tQ?.outside || 0),
-        voided: Number(tQ?.voided || 0),
+        total:   Number(tQ?.total  || 0),
+        unused:  Number(tQ?.unused || 0),
+        inside:  Number(tQ?.inside || 0),
+        outside: Number(tQ?.outside|| 0),
+        voided:  Number(tQ?.voided || 0),
       };
     }
 
     return json({ ok: true, events: evQ.results || [], ticket_totals: sums });
   }));
 
-  /* ---------------- Site settings (single JSON row: key='site') ---------- */
+  /* ---------------- Site settings (stored in site_settings table) -------------- */
+  // Schema: CREATE TABLE site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)
   router.add("GET", "/api/admin/settings", guard(async (_req, env) => {
-    const s = await loadSiteSettings(env);
-
-    // We keep it FLAT for the UI (no nested whatsapp/yoco objects)
-    // Accept legacy nested shapes by hoisting known keys.
-    const out = { ...s };
-    if (s.whatsapp) Object.assign(out, s.whatsapp);
-    if (s.yoco)     Object.assign(out, s.yoco);
-
-    return json({ ok: true, settings: out });
+    const s = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key = 'site' LIMIT 1`
+    ).first();
+    let settings = {};
+    try { settings = s?.value ? JSON.parse(s.value) : {}; } catch {}
+    return json({ ok: true, settings });
   }));
 
-  // Accepts EITHER { settings: {...} } (replace) OR { updates: {...} } (merge)
   router.add("POST", "/api/admin/settings/update", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const settings = JSON.stringify(b?.settings || {});
 
-    const existing = await loadSiteSettings(env);
+    await env.DB.prepare(
+      `INSERT INTO site_settings (key, value) VALUES ('site', ?1)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).bind(settings).run();
 
-    if (b && typeof b.settings === "object" && b.settings !== null) {
-      // REPLACE behavior
-      await saveSiteSettings(env, b.settings);
-      return json({ ok: true, mode: "replaced" });
-    }
-
-    if (b && typeof b.updates === "object" && b.updates !== null) {
-      // MERGE behavior (shallow)
-      const merged = { ...existing, ...b.updates };
-      await saveSiteSettings(env, merged);
-      return json({ ok: true, mode: "merged" });
-    }
-
-    return bad("Provide {settings} or {updates}");
+    return json({ ok: true });
   }));
 
   /* ---------------- Events ---------------- */
@@ -100,7 +79,9 @@ export function mountAdmin(router) {
     const ev = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
               hero_url, poster_url, gallery_urls
-         FROM events WHERE id=?1 LIMIT 1`
+         FROM events
+        WHERE id = ?1
+        LIMIT 1`
     ).bind(Number(id)).first();
     if (!ev) return bad("Not found", 404);
     return json({ ok: true, event: ev });
@@ -108,7 +89,7 @@ export function mountAdmin(router) {
 
   router.add("POST", "/api/admin/events/save", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = Number(b?.id || 0);
+    const id  = Number(b?.id || 0);
     const now = Math.floor(Date.now() / 1000);
 
     const fields = {
@@ -120,7 +101,7 @@ export function mountAdmin(router) {
       status: (b.status || "active").trim(),
       hero_url: b.hero_url || null,
       poster_url: b.poster_url || null,
-      gallery_urls: b.gallery_urls || null
+      gallery_urls: b.gallery_urls || null,
     };
 
     if (id) {
@@ -136,8 +117,9 @@ export function mountAdmin(router) {
       return json({ ok: true, id });
     } else {
       const r = await env.DB.prepare(
-        `INSERT INTO events (slug, name, venue, starts_at, ends_at, status,
-                             hero_url, poster_url, gallery_urls, created_at, updated_at)
+        `INSERT INTO events
+           (slug, name, venue, starts_at, ends_at, status,
+            hero_url, poster_url, gallery_urls, created_at, updated_at)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)`
       ).bind(
         fields.slug, fields.name, fields.venue, fields.starts_at, fields.ends_at, fields.status,
@@ -160,7 +142,7 @@ export function mountAdmin(router) {
 
   router.add("POST", "/api/admin/ticket-types/save", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = Number(b?.id || 0);
+    const id       = Number(b?.id || 0);
     const event_id = Number(b?.event_id || 0);
     if (!event_id) return bad("event_id required");
 
@@ -170,7 +152,7 @@ export function mountAdmin(router) {
       price_cents: Number(b.price_cents || 0),
       capacity: Number(b.capacity || 0),
       per_order_limit: Number(b.per_order_limit || 10),
-      requires_gender: Number(b.requires_gender || 0) ? 1 : 0
+      requires_gender: Number(b.requires_gender || 0) ? 1 : 0,
     };
 
     if (id) {
@@ -185,7 +167,8 @@ export function mountAdmin(router) {
       return json({ ok: true, id });
     } else {
       const r = await env.DB.prepare(
-        `INSERT INTO ticket_types (event_id, name, code, price_cents, capacity, per_order_limit, requires_gender)
+        `INSERT INTO ticket_types
+           (event_id, name, code, price_cents, capacity, per_order_limit, requires_gender)
          VALUES (?1,?2,?3,?4,?5,?6,?7)`
       ).bind(
         event_id, fields.name, fields.code, fields.price_cents, fields.capacity,
@@ -226,7 +209,7 @@ export function mountAdmin(router) {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
-  // Order lookup by code
+  // Order lookup by short_code (used in Tickets > Lookup)
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim();
     if (!c) return bad("code required");
@@ -238,6 +221,7 @@ export function mountAdmin(router) {
         WHERE UPPER(short_code) = UPPER(?1)
         LIMIT 1`
     ).bind(c).first();
+
     if (!o) return json({ ok: false, error: `Kon nie bestelling vind met kode ${c} nie.` }, 404);
 
     const tickets = await env.DB.prepare(
@@ -264,6 +248,7 @@ export function mountAdmin(router) {
 
     const sessions = sQ.results || [];
 
+    // Aggregate totals from pos_payments
     const tQ = await env.DB.prepare(
       `SELECT session_id,
               SUM(CASE WHEN method='pos_cash' THEN amount_cents ELSE 0 END) AS cash_cents,
@@ -300,7 +285,7 @@ export function mountAdmin(router) {
       `SELECT id, event_id, name, contact_name, phone, email,
               stand_number, staff_quota, vehicle_quota
          FROM vendors
-        WHERE event_id=?1
+        WHERE event_id = ?1
         ORDER BY name ASC`
     ).bind(event_id).all();
 
@@ -309,7 +294,7 @@ export function mountAdmin(router) {
 
   router.add("POST", "/api/admin/vendors/save", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const id = Number(b?.id || 0);
+    const id       = Number(b?.id || 0);
     const event_id = Number(b?.event_id || 0);
     if (!event_id) return bad("event_id required");
 
@@ -348,10 +333,13 @@ export function mountAdmin(router) {
     }
   }));
 
-  // Vendor passes
+  // Vendor passes: list
   router.add("GET", "/api/admin/vendor/:id/passes", guard(async (_req, env, _ctx, { id }) => {
     const v = await env.DB.prepare(
-      `SELECT id, event_id, name FROM vendors WHERE id=?1 LIMIT 1`
+      `SELECT id, event_id, name
+         FROM vendors
+        WHERE id = ?1
+        LIMIT 1`
     ).bind(Number(id)).first();
     if (!v) return bad("Vendor not found", 404);
 
@@ -359,13 +347,14 @@ export function mountAdmin(router) {
       `SELECT id, vendor_id, type, label, vehicle_reg, qr, state,
               first_in_at, last_out_at, issued_at
          FROM vendor_passes
-        WHERE vendor_id=?1
+        WHERE vendor_id = ?1
         ORDER BY id ASC`
     ).bind(Number(id)).all();
 
     return json({ ok: true, vendor: v, passes: pQ.results || [] });
   }));
 
+  // Vendor passes: add
   router.add("POST", "/api/admin/vendor/:id/pass/add", guard(async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const vendor_id = Number(id || 0);
@@ -386,24 +375,31 @@ export function mountAdmin(router) {
     return json({ ok: true, qr });
   }));
 
+  // Vendor passes: delete
   router.add("POST", "/api/admin/vendor/:id/pass/delete", guard(async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const pid = Number(b?.pass_id || 0);
     if (!pid) return bad("pass_id required");
-    await env.DB.prepare(`DELETE FROM vendor_passes WHERE id=?1 AND vendor_id=?2`)
-      .bind(pid, Number(id || 0)).run();
+    await env.DB.prepare(
+      `DELETE FROM vendor_passes
+        WHERE id = ?1 AND vendor_id = ?2`
+    ).bind(pid, Number(id || 0)).run();
     return json({ ok: true });
   }));
 
   /* ---------------- Users (read-only list for now) ----------------------- */
   router.add("GET", "/api/admin/users", guard(async (_req, env) => {
     const q = await env.DB.prepare(
-      `SELECT id, username, role FROM users ORDER BY id ASC`
+      `SELECT id, username, role
+         FROM users
+        ORDER BY id ASC`
     ).all();
     return json({ ok: true, users: q.results || [] });
   }));
 
   /* ---------------- WhatsApp helpers (admin-triggered send) -------------- */
+  // Sends a template/message to a phone for a given order code.
+  // Expects your /src/services/whatsapp.js with sendWhatsAppTemplate(env, to, body, lang)
   router.add("POST", "/api/admin/orders/:code/send-whatsapp", guard(async (req, env, _ctx, { code }) => {
     let b; try { b = await req.json(); } catch { b = {}; }
     const msisdn = String(b?.phone || "").trim();
@@ -411,10 +407,13 @@ export function mountAdmin(router) {
 
     const o = await env.DB.prepare(
       `SELECT id, short_code, event_id, buyer_name, total_cents
-         FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
+         FROM orders
+        WHERE UPPER(short_code) = UPPER(?1)
+        LIMIT 1`
     ).bind(String(code || "")).first();
     if (!o) return bad("Order not found", 404);
 
+    // Dynamic import (keeps worker happy if file missing)
     let sendFn = null;
     try {
       const mod = await import("../services/whatsapp.js");
@@ -423,43 +422,28 @@ export function mountAdmin(router) {
       return bad("WhatsApp service not available");
     }
 
-    const s = await loadSiteSettings(env);
-    const publicBase = s.PUBLIC_BASE_URL || (env.PUBLIC_BASE_URL || "");
+    const publicBase = (await currentPublicBase(env)) || (env.PUBLIC_BASE_URL || "");
     const link = o.short_code ? `${publicBase}/t/${o.short_code}` : publicBase;
     const body = `Jou kaartjies is gereed.\nBestel nommer: ${o.short_code}\n${link}`;
 
     try {
-      await sendFn(env, msisdn, body, (s.WHATSAPP_TEMPLATE_LANG || env.WHATSAPP_TEMPLATE_LANG || "en_US"));
+      await sendFn(env, msisdn, body, (env.WHATSAPP_TEMPLATE_LANG || "en_US"));
       return json({ ok: true });
     } catch (e) {
       return bad(String(e?.message || e || "WhatsApp send failed"), 500);
     }
   }));
 
-  /* ---------------- Yoco OAuth callback (saves code/state) --------------- */
-  // Configure this redirect URL in Yoco dashboard:
-  // https://tickets.villiersdorpskou.co.za/api/admin/yoco/oauth/callback
-  router.add("GET", "/api/admin/yoco/oauth/callback", guard(async (req, env) => {
+  /* ---------------- Helper: read PUBLIC_BASE_URL from site_settings ------- */
+  async function currentPublicBase(env) {
+    const s = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key='site' LIMIT 1`
+    ).first();
     try {
-      const u = new URL(req.url);
-      const code  = String(u.searchParams.get("code")  || "");
-      const state = String(u.searchParams.get("state") || "");
-      if (!code) return new Response("Missing code", { status: 400 });
-
-      const s = await loadSiteSettings(env);
-      const now = Math.floor(Date.now()/1000);
-      const merged = {
-        ...s,
-        YOCO_OAUTH_CODE: code,
-        YOCO_OAUTH_STATE: state,
-        YOCO_OAUTH_AT_SAVED: String(now)
-      };
-      await saveSiteSettings(env, merged);
-
-      const back = (merged.PUBLIC_BASE_URL || env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za") + "/admin#site-settings-yoco";
-      return new Response(null, { status: 302, headers: { "Location": back }});
+      const j = s?.value ? JSON.parse(s.value) : null;
+      return j?.whatsapp?.PUBLIC_BASE_URL || j?.site?.PUBLIC_BASE_URL || null;
     } catch {
-      return new Response("OAuth callback error", { status: 500 });
+      return null;
     }
-  }));
+  }
 }
