@@ -24,7 +24,6 @@ export function checkoutHTML(slug) {
     .btn.gray{background:#141a22}
     .btn[disabled]{opacity:.6;cursor:not-allowed}
     .small{font-size:13px;color:var(--muted)}
-    .right{text-align:right}
     .line{display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #e6ecea}
     .line:last-child{border-bottom:0}
     .price{font-variant-numeric:tabular-nums}
@@ -38,7 +37,6 @@ export function checkoutHTML(slug) {
 
   <div class="grid">
     <div class="card" id="left">Loading...</div>
-
     <div class="card" id="right">Loading...</div>
   </div>
 </div>
@@ -46,21 +44,35 @@ export function checkoutHTML(slug) {
 <script>
 const slug = ${JSON.stringify(slug)};
 const fmtR = cents => 'R' + (Math.round(cents)/100).toFixed(2);
+const $ = s => document.querySelector(s);
 
-const sel = s => document.querySelector(s);
-const left  = sel('#left');
-const right = sel('#right');
-
+function getCartCandidates(sl) {
+  return [
+    'cart:'+sl,
+    'cart:'+sl+':v1',
+    'cart',           // legacy plain
+    'shop_cart'       // fallback some UIs use
+  ];
+}
 function readCart(sl) {
-  try {
-    const raw = localStorage.getItem('cart:'+sl) || '[]';
-    const arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr.filter(x => (x?.qty|0) > 0) : [];
-  } catch { return []; }
+  for (const key of getCartCandidates(sl)) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) continue;
+      const normalized = arr.map(x => ({
+        ticket_type_id: Number(x.ticket_type_id ?? x.id ?? x.tt_id ?? 0),
+        qty: Number(x.qty ?? x.count ?? x.quantity ?? 0)
+      })).filter(x => x.ticket_type_id && x.qty > 0);
+      if (normalized.length) return normalized;
+    } catch {}
+  }
+  return [];
 }
 
 function renderLeft(ev) {
-  left.innerHTML = \`
+  $('#left').innerHTML = \`
     <div class="tag">\${ev.name}</div>
     <div class="row">
       <div>
@@ -87,25 +99,23 @@ function renderLeft(ev) {
       <button id="payAt"  class="btn gray">(Pay at event)</button>
     </div>
     <div class="small" style="margin-top:10px;">
-      Jou kaartjies sal via WhatsApp/SMS eersdaags gestuur word wanneer betaling vasgestel is.
+      Jou kaartjies sal via WhatsApp en Epos eersdaags gestuur word sodra betaling ontvang was.
     </div>
     <div id="err" class="err"></div>
   \`;
 }
 
-function renderRight(ev, ttMap, items) {
-  if (!items.length) {
-    right.innerHTML = '<div>Geen items in mandjie nie.</div>';
-    return;
-  }
+function renderRight(ttMap, items) {
+  const right = $('#right');
+  if (!items.length) { right.innerHTML = 'Geen items in mandjie nie.'; return; }
+
   let total = 0;
   const lines = items.map(it => {
     const tt = ttMap.get(it.ticket_type_id);
     const price = Number(tt?.price_cents || 0);
     const qty = Number(it.qty || 0);
-    const line = price * qty;
-    total += line;
-    const name = tt ? tt.name : ('Type #' + it.ticket_type_id);
+    const line = price * qty; total += line;
+    const name = tt ? tt.name : ('Type #'+it.ticket_type_id);
     return \`
       <div class="line">
         <div>\${name} × \${qty}</div>
@@ -126,90 +136,71 @@ function renderRight(ev, ttMap, items) {
   \`;
 }
 
-function showError(msg) {
-  const el = document.getElementById('err');
-  if (el) el.textContent = msg || 'Onbekende fout';
-}
+function showError(msg) { const el = $('#err'); if (el) el.textContent = msg || 'Onbekende fout'; }
 
 async function boot() {
-  // Load event (for ticket-type pricing, event_id)
-  let evRes = await fetch('/api/public/events/'+encodeURIComponent(slug), { credentials:'include' })
-                    .catch(()=>null);
-  if (!evRes) { left.textContent = 'Kon nie laai nie'; right.textContent = ''; return; }
-  const evData = await evRes.json().catch(()=>({ok:false}));
-  if (!evData.ok) { left.textContent = 'Kon nie laai nie'; right.textContent = ''; return; }
-
-  const ev = evData.event;
-  const ttList = evData.ticket_types || [];
-  const ttMap = new Map(ttList.map(r => [Number(r.id), r]));
-
-  // Read cart
-  const items = readCart(slug);
-  renderLeft(ev);
-  renderRight(ev, ttMap, items);
-
-  // Disable actions if cart empty
-  if (!items.length) {
-    document.getElementById('payNow').disabled = true;
-    document.getElementById('payAt').disabled  = true;
+  // Load event
+  let ev;
+  try {
+    const res = await fetch('/api/public/events/'+encodeURIComponent(slug), { credentials:'include' });
+    const json = await res.json();
+    if (!json.ok) throw new Error('not ok');
+    ev = json.event;
+    var ttList = json.ticket_types || [];
+  } catch {
+    $('#left').textContent = 'Kon nie laai nie';
+    $('#right').textContent = '';
+    return;
   }
 
-  // Wire buttons
-  const go = async (kind) => {
-    showError('');
-    // Build buyer fields
-    const first = (document.getElementById('first')?.value || '').trim();
-    const last  = (document.getElementById('last')?.value  || '').trim();
-    const email = (document.getElementById('email')?.value || '').trim();
-    const phone = (document.getElementById('phone')?.value || '').trim();
+  const ttMap = new Map(ttList.map(r => [Number(r.id), r]));
+  const items = readCart(slug);
 
+  renderLeft(ev);
+  renderRight(ttMap, items);
+
+  if (!items.length) {
+    $('#payNow').disabled = true; $('#payAt').disabled = true;
+  }
+
+  const submit = async(kind) => {
+    showError('');
+    const first = ($('#first')?.value || '').trim();
+    const last  = ($('#last')?.value  || '').trim();
+    const email = ($('#email')?.value || '').trim();
+    const phone = ($('#phone')?.value || '').trim();
     if (!first) return showError('Vul asseblief jou naam in.');
     const buyer_name = (first + ' ' + last).trim();
 
     const payload = {
       event_id: Number(ev.id),
-      buyer_name,
-      email,
-      phone,
-      items: items.map(it => ({
-        ticket_type_id: Number(it.ticket_type_id),
-        qty: Number(it.qty)
-      })),
+      buyer_name, email, phone,
+      items: items.map(x => ({ ticket_type_id: x.ticket_type_id, qty: x.qty })),
       method: (kind === 'now') ? 'pay_now' : 'pay_at_event'
     };
 
-    // Send to server
-    let res;
+    let out;
     try {
-      res = await fetch('/api/public/orders/create', {
+      const res = await fetch('/api/public/orders/create', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload)
       });
-    } catch (e) {
-      return showError('Netwerkfout: kon nie stuur nie.');
-    }
+      out = await res.json();
+    } catch { return showError('Netwerkfout: kon nie stuur nie.'); }
 
-    const out = await res.json().catch(()=>({ok:false, error:'Bad JSON'}));
-    if (!out.ok) {
-      return showError(out.error || 'Kon nie bestelling skep nie.');
-    }
+    if (!out?.ok) return showError(out?.error || 'Kon nie bestelling skep nie.');
 
-    // Clear cart and redirect to ticket page for this order
-    try { localStorage.removeItem('cart:'+slug); } catch {}
+    try { localStorage.removeItem('cart:'+slug); localStorage.removeItem('cart:'+slug+':v1'); } catch {}
     const code = out.order?.short_code;
-    if (code) {
-      location.href = '/t/' + encodeURIComponent(code);
-    } else {
-      showError('Bestelling geskep maar sonder kode.');
-    }
+    if (code) location.href = '/t/' + encodeURIComponent(code);
+    else showError('Bestelling geskep maar sonder kode.');
   };
 
-  document.getElementById('payNow').addEventListener('click', () => go('now'));
-  document.getElementById('payAt').addEventListener('click',  () => go('event'));
+  $('#payNow').addEventListener('click', () => submit('now'));
+  $('#payAt').addEventListener('click',  () => submit('event'));
 }
-
 boot();
 </script>
 </body>
