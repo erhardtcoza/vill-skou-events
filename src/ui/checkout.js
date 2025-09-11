@@ -3,239 +3,275 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Checkout</title>
 <style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f5f7f8 }
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f5faf7; }
   *{ box-sizing:border-box }
-  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:22px auto; padding:0 14px }
-  h1{ font-size:40px; margin:0 0 16px }
-  .grid{ display:grid; grid-template-columns:1.1fr .9fr; gap:16px }
-  @media (max-width:960px){ .grid{ grid-template-columns:1fr; } }
-  .card{ background:#fff; border-radius:14px; padding:16px; box-shadow:0 10px 26px rgba(0,0,0,.06) }
-  .chip{ display:inline-block; padding:6px 12px; border-radius:999px; font-weight:700; background:#eaf7ee; color:#0a7d2b; margin-bottom:8px }
+  h1{ font-size:44px; margin:0 0 18px }
+  .grid{ display:grid; grid-template-columns: 1.1fr .9fr; gap:16px }
+  @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
+  .badge{ display:inline-block; background:#eaf6ee; color:#1a7a3a; padding:6px 10px; border-radius:999px; font-weight:700; font-size:14px }
 
-  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
-  @media (max-width:720px){ .row{ grid-template-columns:1fr; } }
-  label{ display:block; font-size:13px; color:#444; margin:6px 0 6px }
-  input,select{ width:100%; padding:14px 12px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; font-size:16px; }
+  .form-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:12px }
+  .form-grid .full{ grid-column: 1 / -1 }
+  label{ display:block; font-size:13px; color:#374151; margin:8px 0 6px }
+  input, select{ width:100%; padding:12px 14px; border:1px solid #e5e7eb; border-radius:12px; font-size:16px; background:#fff }
   .muted{ color:#667085 }
+  .btn{ padding:12px 14px; border-radius:12px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:700 }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .btn.ghost{ background:#2f2f2f; color:#fff; border-color:#2f2f2f; opacity:.75 }
+  .actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:8px }
 
-  .btn{ padding:12px 16px; border-radius:12px; border:0; cursor:pointer; font-weight:700 }
-  .btn.primary{ background:var(--green); color:#fff }
-  .btn.ghost{ background:#2d2d2d; color:#ddd }
-  .btn:disabled{ opacity:.6; cursor:not-allowed }
+  .summary-row{ display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid #f1f3f5 }
+  .summary-row:last-child{ border-bottom:0 }
+  .total{ display:flex; justify-content:space-between; font-weight:800; font-size:20px; margin-top:12px }
 
-  .rightItem{ display:flex; justify-content:space-between; margin:10px 0 }
-  .total{ font-weight:800; font-size:22px; text-align:right }
+  .att{ margin-top:14px; padding:12px; border:1px solid #eef2f7; border-radius:12px; background:#fafafa }
+  .att h3{ margin:0 0 10px; font-size:16px }
+  .att .two{ display:grid; grid-template-columns:1fr 170px; gap:10px }
+  @media(max-width:560px){ .att .two{ grid-template-columns:1fr; } }
 
-  .att{ border:1px solid #eef0f2; border-radius:12px; padding:12px; margin-top:10px; }
-  .att h3{ margin:0 0 8px; font-size:16px }
-  .seg{ height:10px }
+  .note{ margin-top:10px; color:#384454 }
 </style>
 </head><body>
 <div class="wrap">
   <h1>Checkout</h1>
-  <div class="grid">
-    <div class="card" id="left">Loading…</div>
-    <div class="card" id="right">Loading…</div>
-  </div>
+  <div id="app" class="card">Loading…</div>
 </div>
 
 <script>
-const SLUG = ${JSON.stringify(slug)};
+const slug = ${JSON.stringify(slug)};
 
-// ----- helpers
-const R = c => "R" + ((c||0)/100).toFixed(2);
-const esc = s => String(s||"").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-function normalizePhone(v){
-  const d = String(v||"").replace(/\\D+/g,"");
-  if (!d) return "";
-  if (d.startsWith("27") && d.length===11) return d;
-  if (d.startsWith("0")  && d.length===10) return "27" + d.slice(1);
-  if (d.startsWith("27") && d.length>11)  return d.slice(0,11);
-  if (d.length===9) return "27"+d;
+function rands(c){ return 'R' + ((c||0)/100).toFixed(2); }
+function esc(s){ return String(s||'').replace(/[&<>"]/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
+
+function normalizePhone(raw){
+  let d = String(raw||'').replace(/\\D+/g,'');
+  if (d.startsWith('27') && d.length===11) return d;
+  if (d.startsWith('0') && d.length===10) return '27' + d.slice(1);
+  if (d.startsWith('27') && d.length>11) d = d.slice(0,11);
+  if (d.startsWith('0027')) d = '27' + d.slice(4);
+  if (d.startsWith('+' )) { d = d.replace(/^\\+/, ''); if (d.startsWith('27')) return d; }
   return d;
 }
 
-let EVENT = null;
-let CART  = null; // {event_id, items:[{ticket_type_id, qty}]}
-let TTMAP = new Map();
-
-async function load(){
-  // cart from sessionStorage
-  try { CART = JSON.parse(sessionStorage.getItem("pending_cart")||""); } catch { CART = null; }
-  if (!CART){
-    document.getElementById("left").innerHTML = "Geen items in mandjie nie.";
-    document.getElementById("right").innerHTML = "";
-    return;
-  }
-
-  // event + ticket types
-  const res = await fetch("/api/public/events/"+encodeURIComponent(SLUG))
-    .then(r=>r.json()).catch(()=>({ok:false}));
-  if (!res.ok){
-    document.getElementById("left").innerHTML = "Kon nie event laai nie.";
-    document.getElementById("right").innerHTML = "";
-    return;
-  }
-  EVENT = res.event || {};
-  TTMAP = new Map((res.ticket_types||[]).map(t=>[Number(t.id), t]));
-
-  renderLeft();
-  renderRight();
+function buildAttendeeBlocks(event, items, buyerPhone){
+  // items: [{ticket_type_id, qty}]
+  const tmap = new Map((event.ticket_types||[]).map(t=>[Number(t.id), t]));
+  const blocks = [];
+  items.forEach(it=>{
+    const tt = tmap.get(Number(it.ticket_type_id));
+    for (let i=0;i<it.qty;i++){
+      const label = (tt ? tt.name : 'Ticket') + ' · #' + (i+1);
+      blocks.push({ ticket_type_id: Number(it.ticket_type_id), label, first:'', last:'', gender:'', phone: buyerPhone });
+    }
+  });
+  return blocks;
 }
 
-function attendeeBlock(tt, idx){
-  const key = tt.id + ":" + (idx+1);
-  return `
-  <div class="att">
-    <h3>${esc(tt.name)} <span class="muted">#${idx+1}</span></h3>
-    <div class="row">
-      <div><label>Naam en Van<input data-att="name" data-key="${key}" placeholder="Naam en Van"/></label></div>
-      <div>
-        <label>Geslag
-          <select data-att="gender" data-key="${key}">
+function render(state){
+  const ev = state.event;
+  const items = state.items;
+  const tmap = new Map((ev.ticket_types||[]).map(t=>[Number(t.id), t]));
+
+  const rightList = items.map(it=>{
+    const tt = tmap.get(Number(it.ticket_type_id));
+    const name = tt ? tt.name : 'Ticket';
+    const price = (tt && tt.price_cents) ? (tt.price_cents * it.qty) : 0;
+    return \`<div class="summary-row"><div>\${esc(name)}<div class="muted">× \${it.qty}</div></div><div>\${rands(price)}</div></div>\`;
+  }).join('');
+
+  const total = items.reduce((sum,it)=>{
+    const tt = tmap.get(Number(it.ticket_type_id));
+    return sum + ((tt && tt.price_cents) ? (tt.price_cents * it.qty) : 0);
+  },0);
+
+  const attHTML = state.attendees.map((a,idx)=>\`
+    <div class="att">
+      <h3>Besoeker \${idx+1}: <span class="muted">\${esc(a.label)}</span></h3>
+      <div class="two">
+        <div>
+          <label>Naam & Van</label>
+          <input data-att="\${idx}" data-k="name" placeholder="Naam en van" value="">
+        </div>
+        <div>
+          <label>Geslag</label>
+          <select data-att="\${idx}" data-k="gender">
+            <option value="">Kies…</option>
             <option value="male">Manlik</option>
             <option value="female">Vroulik</option>
-            <option value="other">Ander</option>
           </select>
-        </label>
+        </div>
+      </div>
+      <div style="margin-top:10px">
+        <label>Selfoon vir aflewering</label>
+        <input data-att="\${idx}" data-k="phone" placeholder="bv. 2771…" value="\${esc(a.phone||'')}">
+      </div>
+    </div>\`).join('');
+
+  document.getElementById('app').innerHTML = \`
+    <div class="grid">
+      <div class="card" style="padding:0">
+        <div style="padding:16px 16px 0"><span class="badge">\${esc(ev.name||'')}}</span></div>
+        <div style="padding:16px">
+          <h3 style="margin:0 0 8px">Koper inligting</h3>
+          <div class="form-grid">
+            <div>
+              <label>Naam</label>
+              <input id="buyer_first" placeholder="Naam">
+            </div>
+            <div>
+              <label>Van</label>
+              <input id="buyer_last" placeholder="Van">
+            </div>
+            <div>
+              <label>E-pos</label>
+              <input id="buyer_email" placeholder="E-pos" type="email">
+            </div>
+            <div>
+              <label>Selfoon</label>
+              <input id="buyer_phone" placeholder="Selfoon (bv. 2771…)" inputmode="numeric">
+            </div>
+          </div>
+
+          <div class="note">Jou kaartjies sal via WhatsApp en Epos eersdaags gestuur word sodra betaling ontvang was.</div>
+
+          <div style="margin-top:14px">
+            <h3 style="margin:0 0 6px">Besoeker inligting</h3>
+            \${attHTML || '<div class="muted">Geen besoekers benodig nie.</div>'}
+          </div>
+
+          <div class="actions">
+            <button class="btn primary" id="payNow">Pay now</button>
+            <button class="btn ghost" id="payEvent">(Pay at event)</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        \${rightList || '<div class="muted">Geen items in mandjie nie.</div>'}
+        <div class="total"><div>Totaal</div><div>\${rands(total)}</div></div>
       </div>
     </div>
-    <div class="row">
-      <div><label>Telefoon vir aflewering
-        <input data-att-phone data-att="phone" data-key="${key}" placeholder="Selfoon (bv. 2771…)"/>
-      </label></div>
-      <div></div>
-    </div>
-    <input type="hidden" data-att="type" data-key="${key}" value="${tt.id}"/>
-  </div>`;
-}
+  \`;
 
-function renderLeft(){
-  const left = document.getElementById("left");
-  const items = CART.items||[];
+  // Wire buyer phone normalization + copy into attendees when edited first time
+  const buyerPhoneEl = document.getElementById('buyer_phone');
+  buyerPhoneEl.addEventListener('blur', ()=>{
+    const n = normalizePhone(buyerPhoneEl.value);
+    buyerPhoneEl.value = n;
+    // If attendee phones are empty, prefill
+    document.querySelectorAll('input[data-k="phone"]').forEach((el)=>{
+      if (!el.value) el.value = n;
+    });
+  });
 
-  const blocks = [];
-  for (const it of items){
-    const tt = TTMAP.get(Number(it.ticket_type_id));
-    if (!tt) continue;
-    for (let i=0;i<Number(it.qty||0);i++){
-      blocks.push(attendeeBlock(tt, i));
+  // Wire attendee inputs
+  document.querySelectorAll('[data-att]').forEach(el=>{
+    el.addEventListener('input', ()=>{
+      const idx = Number(el.getAttribute('data-att'));
+      const key = el.getAttribute('data-k');
+      if (key === 'name'){
+        const parts = String(el.value||'').trim().split(/\\s+/);
+        state.attendees[idx].first = parts[0] || '';
+        state.attendees[idx].last  = parts.slice(1).join(' ');
+      } else if (key === 'gender'){
+        state.attendees[idx].gender = el.value || '';
+      } else if (key === 'phone'){
+        state.attendees[idx].phone = el.value || '';
+      }
+    });
+    if (el.getAttribute('data-k')==='phone'){
+      el.addEventListener('blur', ()=>{
+        el.value = normalizePhone(el.value);
+        const idx = Number(el.getAttribute('data-att'));
+        state.attendees[idx].phone = el.value;
+      });
     }
-  }
-
-  left.innerHTML = `
-    <div class="chip">${esc(EVENT.name||"")}</div>
-    <div class="seg"></div>
-    <h2 style="margin:0 0 8px;">Koper inligting</h2>
-    <div class="row">
-      <div><label>Naam<input id="buyerFirst" autocomplete="given-name" placeholder="Naam"/></label></div>
-      <div><label>Van<input id="buyerLast" autocomplete="family-name" placeholder="Van"/></label></div>
-    </div>
-    <div class="row">
-      <div><label>E-pos<input id="buyerEmail" type="email" autocomplete="email" placeholder="E-pos"/></label></div>
-      <div><label>Selfoon<input id="buyerPhone" inputmode="tel" placeholder="Selfoon (bv. 2771…)"/></label></div>
-    </div>
-    <div class="seg"></div>
-    ${blocks.length ? '<h2 style="margin:8px 0;">Besoeker inligting</h2>' : ''}
-    <div id="attendees">${blocks.join("")}</div>
-    <div class="seg"></div>
-    <div class="row">
-      <button id="payNow"  class="btn primary">Pay now</button>
-      <button id="payLater" class="btn ghost">(Pay at event)</button>
-    </div>
-    <p class="muted" style="margin-top:10px">
-      Jou kaartjies sal via WhatsApp en Epos eersdaags gestuur word sodra betaling ontvang was.
-    </p>
-  `;
-
-  const bPhone = document.getElementById("buyerPhone");
-  bPhone.addEventListener("blur", ()=>{
-    const n = normalizePhone(bPhone.value);
-    bPhone.value = n;
-    document.querySelectorAll('[data-att-phone]').forEach(inp=>{
-      if (!inp.dataset.touched) inp.value = n;
-    });
-  });
-  document.querySelectorAll('[data-att-phone]').forEach(inp=>{
-    inp.addEventListener("input", ()=>{ inp.dataset.touched = "1"; });
-    inp.addEventListener("blur", ()=>{ inp.value = normalizePhone(inp.value); });
   });
 
-  document.getElementById("payNow").onclick  = ()=> submitOrder("pay_now");
-  document.getElementById("payLater").onclick = ()=> submitOrder("pay_at_event");
+  // Submit handlers
+  document.getElementById('payNow').onclick   = ()=> submitOrder(state,'pay_now');
+  document.getElementById('payEvent').onclick = ()=> submitOrder(state,'pay_at_event');
 }
 
-function renderRight(){
-  const right = document.getElementById("right");
-  const items = CART.items||[];
-  let total = 0;
+async function submitOrder(state, method){
+  const buyer_first = document.getElementById('buyer_first').value.trim();
+  const buyer_last  = document.getElementById('buyer_last').value.trim();
+  const buyer_name  = (buyer_first + ' ' + buyer_last).trim();
+  const buyer_email = document.getElementById('buyer_email').value.trim();
+  const buyer_phone = normalizePhone(document.getElementById('buyer_phone').value);
 
-  const lines = items.map(it=>{
-    const tt = TTMAP.get(Number(it.ticket_type_id)) || {name:"", price_cents:0};
-    const qty = Number(it.qty||0);
-    const line = qty * Number(tt.price_cents||0);
-    total += line;
-    return `<div class="rightItem"><div>${esc(tt.name)} <span class="muted">× ${qty}</span></div><div>${R(line)}</div></div>`;
-  }).join("");
+  if (!buyer_first || !buyer_last){ alert('Voer asseblief jou naam en van in.'); return; }
+  if (!buyer_phone){ alert('Voer asseblief jou selfoon in.'); return; }
 
-  right.innerHTML = `
-    ${lines || '<div class="muted">Geen items in mandjie nie.</div>'}
-    <hr style="border:0;border-top:1px solid #f0f0f0;margin:10px 0">
-    <div class="rightItem"><div style="font-weight:800">Totaal</div><div class="total">${R(total)}</div></div>
-  `;
-}
+  // Build attendees payload
+  const attendees = state.attendees.map(a=>({
+    ticket_type_id: a.ticket_type_id,
+    attendee_first: a.first || '',
+    attendee_last:  a.last || '',
+    gender: (a.gender||''),
+    phone: normalizePhone(a.phone||'')
+  }));
 
-function readAttendees(){
-  const out = [];
-  document.querySelectorAll('[data-att="type"]').forEach(hidden=>{
-    const key = hidden.dataset.key;
-    const typeId = Number(hidden.value);
-    const name = (document.querySelector('[data-att="name"][data-key="'+key+'"]').value||"").trim();
-    const gender = document.querySelector('[data-att="gender"][data-key="'+key+'"]').value;
-    const phoneRaw = document.querySelector('[data-att="phone"][data-key="'+key+'"]').value;
-    const phone = normalizePhone(phoneRaw);
-    const parts = name.split(/\\s+/,2);
-    out.push({
-      ticket_type_id:typeId,
-      attendee_first: parts[0]||"",
-      attendee_last:  parts[1]||"",
-      gender, phone
-    });
-  });
-  return out;
-}
-
-async function submitOrder(method){
-  const buyerFirst = document.getElementById("buyerFirst").value.trim();
-  const buyerLast  = document.getElementById("buyerLast").value.trim();
-  const buyerName  = (buyerFirst + " " + buyerLast).trim();
-  const buyerEmail = document.getElementById("buyerEmail").value.trim();
-  const buyerPhone = normalizePhone(document.getElementById("buyerPhone").value);
-
-  if (!buyerName){ alert("Vul asseblief jou naam in."); return; }
-
-  const payload = {
-    event_id: CART.event_id,
-    items: CART.items,
-    buyer_name: buyerName,
-    email: buyerEmail,
-    phone: buyerPhone,
-    method,
-    attendees: readAttendees()
+  const body = {
+    event_id: state.event.id,
+    items: state.items,
+    attendees,
+    buyer_name,
+    email: buyer_email,
+    phone: buyer_phone,
+    method
   };
 
-  const r = await fetch("/api/public/orders/create", {
-    method:"POST",
-    headers:{ "content-type":"application/json" },
-    body: JSON.stringify(payload)
-  }).then(r=>r.json()).catch(()=>({ok:false, error:"Netwerk fout"}));
+  try{
+    const res = await fetch('/api/public/orders/create', {
+      method:'POST',
+      headers:{ 'content-type':'application/json' },
+      body: JSON.stringify(body)
+    });
+    const j = await res.json().catch(()=>({ok:false}));
+    if (!j.ok) throw new Error(j.error || 'Failed to create order');
 
-  if (!r.ok){ alert("Misluk: " + (r.error||"Kon nie bestel nie")); return; }
+    // Success – clear cart and show code
+    sessionStorage.removeItem('pending_cart');
+    alert('Bestelling aangemaak: ' + j.order.short_code);
+    // Optionally redirect to a confirmation or ticket lookup page:
+    // location.href = '/t/' + encodeURIComponent(j.order.short_code);
+  }catch(err){
+    alert('Kon nie bestelling skep nie: ' + err.message);
+  }
+}
 
-  alert("Bestelling aangemaak: " + r.order.short_code);
-  sessionStorage.removeItem("pending_cart");
-  location.href = "/";
+async function load(){
+  const cartRaw = sessionStorage.getItem('pending_cart');
+  let cart = null;
+  try{ cart = JSON.parse(cartRaw||'null'); }catch{ cart = null; }
+  if (!cart || !Array.isArray(cart.items) || !cart.items.length){
+    document.getElementById('app').innerHTML = '<div class="muted">Geen items in mandjie nie.</div>';
+    return;
+  }
+
+  // Load event (to resolve ticket names & prices)
+  const evRes = await fetch('/api/public/events/'+encodeURIComponent(${JSON.stringify(slug)})).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!evRes.ok){ document.getElementById('app').innerHTML = '<div class="muted">Kon nie event laai nie.</div>'; return; }
+
+  // Attach ticket types onto event for quick mapping
+  evRes.event = evRes.event || {};
+  evRes.event.ticket_types = evRes.ticket_types || [];
+
+  // Build attendees array
+  const firstBuyerPhone = '';
+  const attendees = buildAttendeeBlocks(evRes.event, cart.items, firstBuyerPhone);
+
+  const state = {
+    event: evRes.event,
+    items: cart.items.map(x=>({ ticket_type_id:Number(x.ticket_type_id), qty:Number(x.qty) })),
+    attendees
+  };
+
+  render(state);
 }
 
 load();
