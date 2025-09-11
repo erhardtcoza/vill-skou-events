@@ -3,6 +3,7 @@ import { json, bad } from "../utils/http.js";
 
 /** Public-facing endpoints (shop/checkout, event catalog) */
 export function mountPublic(router) {
+
   // ---- List active events (landing page)
   router.add("GET", "/api/public/events", async (_req, env) => {
     const q = await env.DB.prepare(
@@ -16,16 +17,9 @@ export function mountPublic(router) {
     return json({
       ok: true,
       events: (q.results || []).map(r => ({
-        id: Number(r.id),
-        slug: r.slug,
-        name: r.name,
-        venue: r.venue,
-        starts_at: Number(r.starts_at),
-        ends_at: Number(r.ends_at),
-        status: r.status,
-        hero_url: r.hero_url,
-        poster_url: r.poster_url,
-        gallery_urls: r.gallery_urls
+        id: r.id, slug: r.slug, name: r.name, venue: r.venue,
+        starts_at: r.starts_at, ends_at: r.ends_at, status: r.status,
+        hero_url: r.hero_url, poster_url: r.poster_url, gallery_urls: r.gallery_urls
       }))
     });
   });
@@ -41,7 +35,7 @@ export function mountPublic(router) {
     ).bind(slug).all();
 
     const ev = (evQ.results || [])[0];
-    if (!ev) return json({ ok: false, error: "Not found" }, { status: 404 });
+    if (!ev) return bad("Not found", 404);
 
     const ttQ = await env.DB.prepare(
       `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender
@@ -59,21 +53,7 @@ export function mountPublic(router) {
       requires_gender: Number(r.requires_gender || 0) ? 1 : 0
     }));
 
-    // Normalize numeric fields on event too
-    const event = {
-      id: Number(ev.id),
-      slug: ev.slug,
-      name: ev.name,
-      venue: ev.venue,
-      starts_at: Number(ev.starts_at),
-      ends_at: Number(ev.ends_at),
-      status: ev.status,
-      hero_url: ev.hero_url,
-      poster_url: ev.poster_url,
-      gallery_urls: ev.gallery_urls
-    };
-
-    return json({ ok: true, event, ticket_types });
+    return json({ ok:true, event: ev, ticket_types });
   });
 
   // ---- Create order (checkout)
@@ -82,6 +62,7 @@ export function mountPublic(router) {
 
     const event_id = Number(b?.event_id || 0);
     const items = Array.isArray(b?.items) ? b.items : [];
+    const attendees = Array.isArray(b?.attendees) ? b.attendees : [];
     const buyer_name = String(b?.buyer_name || "").trim();
     const buyer_email = String(b?.email || "").trim();
     const buyer_phone = String(b?.phone || "").trim();
@@ -91,6 +72,7 @@ export function mountPublic(router) {
     if (!items.length) return bad("items required");
     if (!buyer_name) return bad("buyer_name required");
 
+    // Validate ticket types & compute totals
     const ttQ = await env.DB.prepare(
       `SELECT id, name, price_cents, per_order_limit
          FROM ticket_types WHERE event_id = ?1`
@@ -105,10 +87,10 @@ export function mountPublic(router) {
       if (!tid || !qty) continue;
 
       const tt = ttMap.get(tid);
-      if (!tt) return bad(`Unknown ticket_type_id ${tid}`);
+      if (!tt) return bad(\`Unknown ticket_type_id \${tid}\`);
 
       const limit = Number(tt.per_order_limit || 0);
-      if (limit && qty > limit) return bad(`Exceeded per-order limit for ${tt.name}`);
+      if (limit && qty > limit) return bad(\`Exceeded per-order limit for \${tt.name}\`);
 
       const unit = Number(tt.price_cents || 0);
       total_cents += qty * unit;
@@ -116,8 +98,8 @@ export function mountPublic(router) {
     }
     if (!order_items.length) return bad("No valid items");
 
-    const now = Math.floor(Date.now() / 1000);
-    const short_code = ("C" + Math.random().toString(36).slice(2, 8)).toUpperCase();
+    const now = Math.floor(Date.now()/1000);
+    const short_code = ("C" + Math.random().toString(36).slice(2,8)).toUpperCase();
 
     const contact_json = JSON.stringify({ name: buyer_name, email: buyer_email, phone: buyer_phone });
     const items_json = JSON.stringify(order_items);
@@ -137,41 +119,58 @@ export function mountPublic(router) {
 
     const order_id = r.meta.last_row_id;
 
-    // Insert order_items + mint tickets
+    // Build queues of attendee info by ticket_type_id (FIFO)
+    const attQueues = new Map();
+    for (const a of attendees){
+      const tid = Number(a?.ticket_type_id||0);
+      if (!tid) continue;
+      const arr = attQueues.get(tid) || [];
+      arr.push({
+        first: String(a.attendee_first||"").trim(),
+        last:  String(a.attendee_last||"").trim(),
+        gender: (a.gender||"").toLowerCase(),
+        phone: String(a.phone||"").trim()
+      });
+      attQueues.set(tid, arr);
+    }
+
+    // Insert order_items and tickets with optional attendee fields
     for (const it of order_items) {
       await env.DB.prepare(
         `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
          VALUES (?1, ?2, ?3, ?4)`
       ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
 
+      const queue = attQueues.get(it.ticket_type_id) || [];
       for (let i = 0; i < it.qty; i++) {
-        const qr = short_code + "-" + it.ticket_type_id + "-" +
-                   (Math.random().toString(36).slice(2, 8)).toUpperCase();
+        const qr = short_code + "-" + it.ticket_type_id + "-" + (Math.random().toString(36).slice(2,8)).toUpperCase();
+        const a = queue.length ? queue.shift() : {first:"", last:"", gender:null, phone:null};
+
         await env.DB.prepare(
-          `INSERT INTO tickets (order_id, event_id, ticket_type_id, qr, issued_at)
-           VALUES (?1, ?2, ?3, ?4, ?5)`
-        ).bind(order_id, event_id, it.ticket_type_id, qr, now).run();
+          `INSERT INTO tickets
+             (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, issued_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`
+        ).bind(
+          order_id, event_id, it.ticket_type_id,
+          a.first || null, a.last || null, (a.gender||null), (a.phone||null),
+          qr, now
+        ).run();
       }
     }
 
     return json({
       ok: true,
       order: {
-        id: order_id,
-        short_code,
-        event_id,
-        status: method === "online_yoco" ? "awaiting_payment" : "pending",
-        payment_method: method,
-        total_cents,
-        buyer_name,
-        buyer_email,
-        buyer_phone,
+        id: order_id, short_code, event_id,
+        status: (method === "online_yoco" ? "awaiting_payment" : "pending"),
+        payment_method: method, total_cents,
+        buyer_name, buyer_email, buyer_phone,
         items: order_items
       }
     });
   });
 
-  // ---- Public ticket lookup by order code (for /t/:code)
+  // ---- Public ticket lookup by order code
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, p) => {
     const code = String(p.code || "").trim().toUpperCase();
     if (!code) return bad("code required");
@@ -187,6 +186,6 @@ export function mountPublic(router) {
         ORDER BY t.id ASC`
     ).bind(code).all();
 
-    return json({ ok: true, tickets: q.results || [] });
+    return json({ ok:true, tickets:q.results||[] });
   });
 }
