@@ -82,7 +82,7 @@ export function checkoutHTML(slug) {
   pill.textContent = event.name || "";
   pill.style.display = "inline-block";
 
-  // ---- CART LOADER (robust) ----
+  // ---------- LOAD CART (first look for 'pending_cart') ----------
   function tryParse(s){ try { return JSON.parse(s); } catch { return null; } }
   function readFrom(storage, keys){
     for (const k of keys) {
@@ -92,29 +92,31 @@ export function checkoutHTML(slug) {
     }
     return null;
   }
-  const keys = [
-    "cart:"+slug, "cart-"+slug, "cart_"+slug,
-    "cart", "shop_cart", "ticket_cart"
-  ];
-  let cart = readFrom(sessionStorage, keys) || readFrom(localStorage, keys) || {};
-  // Normalize
-  const arr = Array.isArray(cart) ? cart : (cart.items || cart.lines || []);
+
+  // Primary: the shop writes this
+  let pc = tryParse(sessionStorage.getItem("pending_cart"));
+  // Accept if event_id matches or if it just has items
   let items = [];
-  for (const it of (arr || [])) {
-    // Accept {ticket_type_id, qty} OR {id, qty}
-    const tid = Number(it.ticket_type_id ?? it.id ?? 0);
-    const qty = Number(it.qty ?? it.quantity ?? 0);
-    if (tid && qty > 0) items.push({ ticket_type_id: tid, qty });
-  }
-  // Fallback: if nothing, also check if we accidentally saved IDs as strings
-  if (!items.length && cart && typeof cart === "object") {
-    for (const [k,v] of Object.entries(cart)) {
-      if (/^\\d+$/.test(k)) items.push({ ticket_type_id: Number(k), qty: Number(v||0) });
-    }
-    items = items.filter(x => x.qty > 0);
+  if (pc && Array.isArray(pc.items) && (!pc.event_id || Number(pc.event_id) === Number(event.id))) {
+    items = pc.items.map(it => ({ ticket_type_id: Number(it.ticket_type_id||it.id||0), qty: Number(it.qty||it.quantity||0) }))
+                    .filter(it => it.ticket_type_id && it.qty>0);
   }
 
-  // Render cart
+  // Fallbacks if pending_cart missing/empty
+  if (!items.length) {
+    const keys = ["cart:"+slug, "cart-"+slug, "cart_"+slug, "cart", "shop_cart", "ticket_cart"];
+    const other = readFrom(sessionStorage, keys) || readFrom(localStorage, keys) || {};
+    const arr = Array.isArray(other) ? other : (other.items || other.lines || []);
+    if (Array.isArray(arr)) {
+      items = arr.map(it => ({ ticket_type_id: Number(it.ticket_type_id||it.id||0), qty: Number(it.qty||it.quantity||0) }))
+                 .filter(it => it.ticket_type_id && it.qty>0);
+    } else if (other && typeof other === "object") {
+      // object like { "12": 2, "13": 1 }
+      for (const [k,v] of Object.entries(other)) if (/^\\d+$/.test(k) && Number(v)>0) items.push({ ticket_type_id: Number(k), qty: Number(v) });
+    }
+  }
+
+  // ---------- RENDER CART ----------
   const cartView = document.getElementById("cartView");
   function cents(n){ return "R" + (Number(n||0)/100).toFixed(2); }
   function renderCart(){
@@ -144,7 +146,7 @@ export function checkoutHTML(slug) {
   }
   renderCart();
 
-  // ---- SUBMIT ORDER ----
+  // ---------- SUBMIT ----------
   async function submit(method){
     if (!items.length) { alert("Jou mandjie is leeg."); return; }
     const first = document.getElementById("first").value.trim();
@@ -160,7 +162,7 @@ export function checkoutHTML(slug) {
       buyer_name: (first + " " + last).trim(),
       email, phone,
       items,
-      method // "pay_now" | other (treated as pay at event)
+      method // "pay_now" | "pay_at_event"
     };
 
     const r = await fetch("/api/public/orders/create", {
@@ -174,14 +176,12 @@ export function checkoutHTML(slug) {
       return;
     }
 
-    // Clear cart keys we understand
-    const allKeys = [
-      "cart:"+slug, "cart-"+slug, "cart_"+slug,
-      "cart", "shop_cart", "ticket_cart"
-    ];
-    for (const k of allKeys){ sessionStorage.removeItem(k); localStorage.removeItem(k); }
+    // Clear carts
+    sessionStorage.removeItem("pending_cart");
+    ["cart:"+slug, "cart-"+slug, "cart_"+slug, "cart", "shop_cart", "ticket_cart"].forEach(k=>{
+      sessionStorage.removeItem(k); localStorage.removeItem(k);
+    });
 
-    // For now just take them to the ticket page by order code
     location.href = "/t/" + encodeURIComponent(j.order.short_code);
   }
 
