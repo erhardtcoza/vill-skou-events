@@ -14,70 +14,67 @@ export const thankYouHTML = (code) => `<!doctype html><html><head>
   .btn{ padding:12px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600; text-decoration:none; display:inline-block }
   .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
   .code{ font-weight:800; font-size:20px; letter-spacing:.5px; padding:8px 10px; border-radius:10px; background:#f1f5f9; display:inline-block }
+  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
 </style>
 </head><body>
 <div class="wrap">
   <div class="card">
     <h1>Dankie! 🎟️</h1>
     <p>Ons het jou bestelling ontvang. Gebruik hierdie kode as verwysing:</p>
-    <div class="code" id="orderCode"></div>
+    <div class="code" id="code"></div>
 
-    <p id="payStatus" class="muted" style="margin-top:12px">Kontroleer betalingstatus…</p>
+    <p class="muted" style="margin-top:12px" id="explain">
+      As jy aanlyn betaal het, finaliseer ons die betaling en laai ons jou kaartjies.
+      Hierdie blad sal outomaties opdateer sodra jou betaling bevestig is.
+    </p>
 
     <div class="row" style="margin-top:18px">
       <a id="viewBtn" class="btn primary" href="#" style="display:none">Wys my kaartjies</a>
+      <span id="statusPill" class="pill">Wag vir betaling…</span>
+      <button id="refreshBtn" class="btn">Verfris</button>
       <a class="btn" href="/">Terug na tuisblad</a>
     </div>
   </div>
 </div>
 <script>
 const code = ${JSON.stringify(code||"")};
-document.getElementById('orderCode').textContent = code;
+document.getElementById('code').textContent = code;
 
-async function fetchStatus(){
-  try{
-    const j = await fetch('/api/public/orders/status/'+encodeURIComponent(code), { cache:'no-store' }).then(r=>r.json());
-    return (j?.ok && (j.status||'').toLowerCase()) || null;
-  }catch{ return null; }
-}
+const viewBtn = document.getElementById('viewBtn');
+const pill = document.getElementById('statusPill');
+const refreshBtn = document.getElementById('refreshBtn');
 
 function setPaid(){
-  const payP = document.getElementById('payStatus');
-  const btn  = document.getElementById('viewBtn');
-  payP.textContent = 'Betaling ontvang. Jou kaartjies is gereed.';
-  btn.href = '/t/'+encodeURIComponent(code);
-  btn.style.display = 'inline-block';
+  pill.textContent = 'Betaal — klaar!';
+  viewBtn.href = '/t/' + encodeURIComponent(code);
+  viewBtn.style.display = 'inline-block';
 }
 
-// Initial check + poller
-(async ()=>{
-  const payP = document.getElementById('payStatus');
-  const status = await fetchStatus();
-  if (status === 'paid') { setPaid(); return; }
-
-  if (status === 'cancelled' || status === 'failed') {
-    payP.textContent = 'Betaling is nie voltooi nie. Jy kan weer probeer vanaf die betaalblad.';
-    return;
-  }
-  // Default waiting text
-  payP.textContent = 'Wag tans vir betaling. Hierdie blad sal outomaties opdateer.';
-
-  // Poll every 4s for up to 3 minutes (45 tries)
-  let tries = 45;
-  const timer = setInterval(async ()=>{
-    const st = await fetchStatus();
-    if (!st){ if (--tries <= 0){ clearInterval(timer); } return; }
-    if (st === 'paid'){
-      clearInterval(timer);
+async function check(){
+  try{
+    const r = await fetch('/api/public/orders/status/' + encodeURIComponent(code));
+    if (!r.ok) return;
+    const j = await r.json().catch(()=>({}));
+    if (j.ok && j.status === 'paid'){
       setPaid();
-    } else if (st === 'cancelled' || st === 'failed'){
-      clearInterval(timer);
-      payP.textContent = 'Betaling is nie voltooi nie. Jy kan weer probeer vanaf die betaalblad.';
-    } else if (--tries <= 0){
-      clearInterval(timer);
-      payP.textContent = 'Kon nie betaling bevestig nie. Verfris asb. of kontak ondersteuning.';
+      return true;
     }
-  }, 4000);
-})();
+  }catch{}
+  return false;
+}
+
+// Poll up to ~5 minutes
+let tries = 0;
+const maxTries = 100; // ~100 * 3s = 5 minutes
+async function poll(){
+  const ok = await check();
+  if (ok) return;
+  tries++;
+  if (tries < maxTries) setTimeout(poll, 3000);
+  else pill.textContent = 'Nog nie bevestig nie — probeer weer verfris.';
+}
+poll();
+
+refreshBtn.onclick = ()=>{ tries = 0; pill.textContent = 'Wag vir betaling…'; poll(); };
 </script>
 </body></html>`;
