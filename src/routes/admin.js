@@ -6,14 +6,27 @@ import { requireRole } from "../utils/auth.js";
 export function mountAdmin(router) {
   const guard = (fn) => requireRole("admin", fn);
 
+  /* ---------------- helpers: load/save settings (single-row JSON) -------- */
+  async function loadSiteSettings(env) {
+    const row = await env.DB.prepare(
+      `SELECT json FROM settings WHERE key='site' LIMIT 1`
+    ).first();
+    try { return row?.json ? JSON.parse(row.json) : {}; } catch { return {}; }
+  }
+  async function saveSiteSettings(env, obj) {
+    const payload = JSON.stringify(obj || {});
+    await env.DB.prepare(
+      `INSERT INTO settings (key, json) VALUES ('site', ?1)
+       ON CONFLICT(key) DO UPDATE SET json=excluded.json`
+    ).bind(payload).run();
+  }
+
   /* ---------------- Dashboard summary ---------------- */
   router.add("GET", "/api/admin/summary", guard(async (_req, env) => {
-    // Totals across active events
     const evQ = await env.DB.prepare(
       `SELECT id, slug, name FROM events WHERE status='active' ORDER BY starts_at ASC`
     ).all();
 
-    // Ticket totals per event (sold/unused/in/out/void)
     const sums = {};
     for (const ev of (evQ.results || [])) {
       const tQ = await env.DB.prepare(
@@ -37,27 +50,39 @@ export function mountAdmin(router) {
     return json({ ok: true, events: evQ.results || [], ticket_totals: sums });
   }));
 
-  /* ---------------- Site settings (stored in settings table) -------------- */
-  // Assumes: CREATE TABLE settings (key TEXT PRIMARY KEY, json TEXT)
+  /* ---------------- Site settings (single JSON row: key='site') ---------- */
   router.add("GET", "/api/admin/settings", guard(async (_req, env) => {
-    const s = await env.DB.prepare(
-      `SELECT json FROM settings WHERE key = 'site' LIMIT 1`
-    ).first();
-    let settings = {};
-    try { settings = s?.json ? JSON.parse(s.json) : {}; } catch {}
-    return json({ ok: true, settings });
+    const s = await loadSiteSettings(env);
+
+    // We keep it FLAT for the UI (no nested whatsapp/yoco objects)
+    // Accept legacy nested shapes by hoisting known keys.
+    const out = { ...s };
+    if (s.whatsapp) Object.assign(out, s.whatsapp);
+    if (s.yoco)     Object.assign(out, s.yoco);
+
+    return json({ ok: true, settings: out });
   }));
 
+  // Accepts EITHER { settings: {...} } (replace) OR { updates: {...} } (merge)
   router.add("POST", "/api/admin/settings/update", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const settings = JSON.stringify(b?.settings || {});
 
-    await env.DB.prepare(
-      `INSERT INTO settings (key, json) VALUES ('site', ?1)
-       ON CONFLICT(key) DO UPDATE SET json=excluded.json`
-    ).bind(settings).run();
+    const existing = await loadSiteSettings(env);
 
-    return json({ ok: true });
+    if (b && typeof b.settings === "object" && b.settings !== null) {
+      // REPLACE behavior
+      await saveSiteSettings(env, b.settings);
+      return json({ ok: true, mode: "replaced" });
+    }
+
+    if (b && typeof b.updates === "object" && b.updates !== null) {
+      // MERGE behavior (shallow)
+      const merged = { ...existing, ...b.updates };
+      await saveSiteSettings(env, merged);
+      return json({ ok: true, mode: "merged" });
+    }
+
+    return bad("Provide {settings} or {updates}");
   }));
 
   /* ---------------- Events ---------------- */
@@ -184,7 +209,6 @@ export function mountAdmin(router) {
     const event_id = Number(u.searchParams.get("event_id") || 0);
     if (!event_id) return bad("event_id required");
 
-    // Summary by ticket type
     const rows = await env.DB.prepare(
       `SELECT tt.id AS ticket_type_id, tt.name,
               COUNT(t.id)                         AS total,
@@ -202,32 +226,7 @@ export function mountAdmin(router) {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
-// --- Yoco OAuth callback (Admin) ---
-// GET /api/admin/yoco/oauth/callback?code=...&state=...
-router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
-  try {
-    const u = new URL(req.url);
-    const code  = String(u.searchParams.get("code")  || "");
-    const state = String(u.searchParams.get("state") || "");
-
-    if (!code) return new Response("Missing code", { status: 400 });
-
-    // Store the code/state in settings (so you can exchange it server-side later)
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO settings(key, value) VALUES('YOCO_OAUTH_CODE', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(code),
-      env.DB.prepare("INSERT INTO settings(key, value) VALUES('YOCO_OAUTH_STATE', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(state),
-      env.DB.prepare("INSERT INTO settings(key, value) VALUES('YOCO_OAUTH_AT_SAVED', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(String(Math.floor(Date.now()/1000)))
-    ]);
-
-    // Redirect back to admin → Site Settings → Yoco tab
-    const back = (env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za") + "/admin#site-settings-yoco";
-    return new Response(null, { status: 302, headers: { "Location": back }});
-  } catch (e) {
-    return new Response("OAuth callback error", { status: 500 });
-  }
-});
-  
-  // Order lookup by code (used in Tickets > Lookup)
+  // Order lookup by code
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim();
     if (!c) return bad("code required");
@@ -255,7 +254,6 @@ router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
 
   /* ---------------- POS Admin: sessions with cash/card totals ------------ */
   router.add("GET", "/api/admin/pos/sessions", guard(async (_req, env) => {
-    // Sessions joined with gates for name
     const sQ = await env.DB.prepare(
       `SELECT ps.id, ps.cashier_name, ps.event_id, ps.gate_id, g.name AS gate_name,
               ps.opened_at, ps.closed_at, ps.closing_manager, ps.opening_float_cents
@@ -266,8 +264,6 @@ router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
 
     const sessions = sQ.results || [];
 
-    // Totals from pos_payments
-    const totals = {};
     const tQ = await env.DB.prepare(
       `SELECT session_id,
               SUM(CASE WHEN method='pos_cash' THEN amount_cents ELSE 0 END) AS cash_cents,
@@ -275,6 +271,8 @@ router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
          FROM pos_payments
         GROUP BY session_id`
     ).all();
+
+    const totals = {};
     for (const r of (tQ.results || [])) {
       totals[r.session_id] = {
         cash_cents: Number(r.cash_cents || 0),
@@ -282,7 +280,6 @@ router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
       };
     }
 
-    // Attach totals
     const out = sessions.map(s => ({
       ...s,
       gate_name: s.gate_name || String(s.gate_id || ""),
@@ -407,8 +404,6 @@ router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
   }));
 
   /* ---------------- WhatsApp helpers (admin-triggered send) -------------- */
-  // Sends an admin-triggered template to a phone for a given order code.
-  // Expects that your /src/services/whatsapp.js is already present and configured.
   router.add("POST", "/api/admin/orders/:code/send-whatsapp", guard(async (req, env, _ctx, { code }) => {
     let b; try { b = await req.json(); } catch { b = {}; }
     const msisdn = String(b?.phone || "").trim();
@@ -420,7 +415,6 @@ router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
     ).bind(String(code || "")).first();
     if (!o) return bad("Order not found", 404);
 
-    // Lazy import to avoid hard dep if file missing
     let sendFn = null;
     try {
       const mod = await import("../services/whatsapp.js");
@@ -429,24 +423,43 @@ router.add("GET", "/api/admin/yoco/oauth/callback", async (req, env) => {
       return bad("WhatsApp service not available");
     }
 
-    const publicBase = (await currentPublicBase(env)) || (env.PUBLIC_BASE_URL || "");
+    const s = await loadSiteSettings(env);
+    const publicBase = s.PUBLIC_BASE_URL || (env.PUBLIC_BASE_URL || "");
     const link = o.short_code ? `${publicBase}/t/${o.short_code}` : publicBase;
     const body = `Jou kaartjies is gereed.\nBestel nommer: ${o.short_code}\n${link}`;
 
     try {
-      await sendFn(env, msisdn, body, (env.WHATSAPP_TEMPLATE_LANG || "en_US"));
+      await sendFn(env, msisdn, body, (s.WHATSAPP_TEMPLATE_LANG || env.WHATSAPP_TEMPLATE_LANG || "en_US"));
       return json({ ok: true });
     } catch (e) {
       return bad(String(e?.message || e || "WhatsApp send failed"), 500);
     }
   }));
 
-  /* ---------------- Helper: pull PUBLIC_BASE_URL from settings or env ---- */
-  async function currentPublicBase(env) {
-    const s = await env.DB.prepare(`SELECT json FROM settings WHERE key='site' LIMIT 1`).first();
+  /* ---------------- Yoco OAuth callback (saves code/state) --------------- */
+  // Configure this redirect URL in Yoco dashboard:
+  // https://tickets.villiersdorpskou.co.za/api/admin/yoco/oauth/callback
+  router.add("GET", "/api/admin/yoco/oauth/callback", guard(async (req, env) => {
     try {
-      const j = s?.json ? JSON.parse(s.json) : null;
-      return j?.whatsapp?.PUBLIC_BASE_URL || j?.site?.PUBLIC_BASE_URL || null;
-    } catch { return null; }
-  }
+      const u = new URL(req.url);
+      const code  = String(u.searchParams.get("code")  || "");
+      const state = String(u.searchParams.get("state") || "");
+      if (!code) return new Response("Missing code", { status: 400 });
+
+      const s = await loadSiteSettings(env);
+      const now = Math.floor(Date.now()/1000);
+      const merged = {
+        ...s,
+        YOCO_OAUTH_CODE: code,
+        YOCO_OAUTH_STATE: state,
+        YOCO_OAUTH_AT_SAVED: String(now)
+      };
+      await saveSiteSettings(env, merged);
+
+      const back = (merged.PUBLIC_BASE_URL || env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za") + "/admin#site-settings-yoco";
+      return new Response(null, { status: 302, headers: { "Location": back }});
+    } catch {
+      return new Response("OAuth callback error", { status: 500 });
+    }
+  }));
 }
