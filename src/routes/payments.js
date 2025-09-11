@@ -11,13 +11,99 @@ export function mountPayments(router) {
     return row ? row.value : null;
   }
 
-  // POST /api/payments/yoco/intent  { code: "C123ABC" }
-  // Creates a Yoco hosted checkout and returns { ok, redirect_url }
-  router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const code = String(b?.code || "").trim().toUpperCase();
-    if (!code) return bad("code required");
+// POST /api/payments/yoco/intent  { code: "C123ABC" }
+router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
+  let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+  const code = String(b?.code || "").trim().toUpperCase();
+  if (!code) return bad("code required");
 
+  // Lookup order
+  const o = await env.DB.prepare(
+    `SELECT id, short_code, event_id, total_cents, status
+       FROM orders
+      WHERE UPPER(short_code)=?1
+      LIMIT 1`
+  ).bind(code).first();
+  if (!o) return bad("Order not found", 404);
+  if (!Number(o.total_cents || 0)) return bad("Order total is zero");
+
+  // Settings
+  async function getSetting(k){
+    const r = await env.DB.prepare(`SELECT value FROM site_settings WHERE key=?1 LIMIT 1`).bind(k).first();
+    return r ? r.value : null;
+  }
+
+  const PUBLIC_BASE_URL = await getSetting("PUBLIC_BASE_URL");
+  if (!PUBLIC_BASE_URL || !/^https:\/\//i.test(PUBLIC_BASE_URL)) {
+    return bad("PUBLIC_BASE_URL missing or not https (required to build redirect_url)");
+  }
+
+  const mode = ((await getSetting("YOCO_MODE")) || "sandbox").toLowerCase();
+  const TEST_SECRET = await getSetting("YOCO_TEST_SECRET_KEY");
+  const LIVE_SECRET = await getSetting("YOCO_LIVE_SECRET_KEY");
+  const secret = mode === "live" ? (LIVE_SECRET || "") : (TEST_SECRET || "");
+  if (!secret) return bad(`Missing Yoco secret key for mode=${mode}`);
+
+  // cancel_url back to event shop if possible
+  let cancel_url = PUBLIC_BASE_URL + "/";
+  try {
+    const ev = await env.DB.prepare(`SELECT slug FROM events WHERE id=?1 LIMIT 1`).bind(o.event_id).first();
+    if (ev?.slug) cancel_url = PUBLIC_BASE_URL + "/shop/" + encodeURIComponent(ev.slug);
+  } catch {}
+
+  const redirect_url = PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code);
+
+  const payload = {
+    amount: Number(o.total_cents || 0),
+    currency: "ZAR",
+    reference: String(o.short_code),
+    description: "Villiersdorp Skou tickets",
+    redirect_url,
+    cancel_url
+  };
+
+  let res, y;
+  try {
+    res = await fetch("https://payments.yoco.com/api/checkouts", {
+      method: "POST",
+      headers: {
+        "authorization": "Bearer " + secret,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    y = await res.json().catch(() => ({}));
+  } catch (e) {
+    return bad("Network to Yoco failed: " + (e?.message || e), 502);
+  }
+
+  if (!res.ok) {
+    const msg = y?.message || y?.error || (`Yoco error ${res.status}`);
+    // Store a quick diagnostic on the order (ignore failures)
+    try {
+      await env.DB.prepare(
+        `UPDATE orders SET payment_note=?2 WHERE id=?1`
+      ).bind(o.id, `yoco_fail:${mode}:${String(msg).slice(0,120)}`).run();
+    } catch {}
+    return bad(`Yoco rejected request: ${msg}`, res.status);
+  }
+
+  const redirect = y?.redirect_url || redirect_url;
+
+  // Ensure status is at least awaiting_payment; stash external id
+  try {
+    await env.DB.prepare(
+      `UPDATE orders
+          SET status = CASE WHEN status='awaiting_payment' THEN status ELSE 'awaiting_payment' END,
+              payment_ext_id = COALESCE(?2, payment_ext_id),
+              updated_at = strftime('%s','now')
+        WHERE id = ?1`
+    ).bind(o.id, (y?.id || null)).run();
+  } catch {}
+
+  return json({ ok: true, redirect_url: redirect, yoco: y || null });
+});
+  
     // Lookup order
     const o = await env.DB.prepare(
       `SELECT id, short_code, event_id, total_cents, status
