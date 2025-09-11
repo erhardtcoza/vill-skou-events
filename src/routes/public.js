@@ -1,10 +1,49 @@
 // /src/routes/public.js
 import { json, bad } from "../utils/http.js";
 
-/** Public-facing endpoints (shop/checkout, event catalog) */
+/** Public-facing endpoints (shop/checkout, event catalog, checkout) */
 export function mountPublic(router) {
 
-  // ---- List active events (landing page)
+  /* ----------------------------- helpers -------------------------------- */
+
+  // Read a single key from site_settings
+  async function getSetting(env, key) {
+    const row = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+    ).bind(key).first();
+    return row ? row.value : null;
+  }
+
+  // WhatsApp template + lang (for order confirmation)
+  async function getWhatsAppTemplateConfig(env) {
+    const [orderTpl, lang] = await Promise.all([
+      getSetting(env, "TPL_ORDER_CONFIRM"),
+      getSetting(env, "WHATSAPP_TEMPLATE_LANG"),
+    ]);
+    return { order_confirm: orderTpl || null, lang: lang || "en_US" };
+  }
+
+  // Send WhatsApp via services/whatsapp.js (template if configured; otherwise text)
+  async function sendWhatsApp(env, toMsisdn, textBody, preferredTemplateName, lang) {
+    let svc = null;
+    try { svc = await import("../services/whatsapp.js"); } catch { return; }
+    const sendTemplate = svc.sendWhatsAppTemplate || null;
+    const sendText     = svc.sendWhatsAppText || svc.sendWhatsApp || null;
+
+    try {
+      if (preferredTemplateName && sendTemplate) {
+        await sendTemplate(env, toMsisdn, textBody, lang, preferredTemplateName);
+      } else if (sendText) {
+        await sendText(env, toMsisdn, textBody, lang);
+      }
+    } catch {
+      // non-blocking
+    }
+  }
+
+  /* --------------------------- public: events ---------------------------- */
+
+  // List active events (landing page)
   router.add("GET", "/api/public/events", async (_req, env) => {
     const q = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -24,7 +63,7 @@ export function mountPublic(router) {
     });
   });
 
-  // ---- Event detail (with ticket types)
+  // Event detail (with ticket types)
   router.add("GET", "/api/public/events/:slug", async (_req, env, _ctx, { slug }) => {
     const evQ = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -56,14 +95,16 @@ export function mountPublic(router) {
     return json({ ok:true, event: ev, ticket_types });
   });
 
-  // ---- Create order (checkout)
+  /* --------------------------- public: checkout -------------------------- */
+
+  // Create order (checkout)
   router.add("POST", "/api/public/orders/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
     const event_id = Number(b?.event_id || 0);
     const items = Array.isArray(b?.items) ? b.items : [];
     const attendees = Array.isArray(b?.attendees) ? b.attendees : [];
-    const buyer_name = String(b?.buyer_name || "").trim();
+    const buyer_name  = String(b?.buyer_name || "").trim();
     const buyer_email = String(b?.email || "").trim();
     const buyer_phone = String(b?.phone || "").trim();
     const method = b?.method === "pay_now" ? "online_yoco" : "pos_cash";
@@ -129,7 +170,7 @@ export function mountPublic(router) {
         first: String(a.attendee_first||"").trim(),
         last:  String(a.attendee_last||"").trim(),
         gender: (a.gender||"").toLowerCase(),
-        phone: String(a.phone||"").trim()
+        phone:  String(a.phone||"").trim()
       });
       attQueues.set(tid, arr);
     }
@@ -158,6 +199,26 @@ export function mountPublic(router) {
       }
     }
 
+    // ---- WhatsApp: order confirmation (non-blocking)
+    try {
+      const tpl   = await getWhatsAppTemplateConfig(env);
+      const base  = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
+      const link  = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
+
+      const msg = [
+        `Bestelling ontvang 👍`,
+        `Verwysingskode: ${short_code}`,
+        link ? `Volg vordering of betaal hier: ${link}` : ``,
+        `Ons stuur jou kaartjies sodra betaling klaar is.`
+      ].filter(Boolean).join("\n");
+
+      if (buyer_phone) {
+        await sendWhatsApp(env, String(buyer_phone), msg, tpl.order_confirm, tpl.lang);
+      }
+    } catch {
+      // ignore
+    }
+
     return json({
       ok: true,
       order: {
@@ -170,7 +231,7 @@ export function mountPublic(router) {
     });
   });
 
-  // ---- Minimal order status (used by /thanks/:code page & poller)
+  // Minimal order status (thank-you page poller)
   router.add("GET", "/api/public/orders/status/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
@@ -181,7 +242,7 @@ export function mountPublic(router) {
     return json({ ok:true, status: o.status });
   });
 
-  // ---- Public ticket lookup by order code
+  // Public ticket lookup by order code
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, p) => {
     const code = String(p.code || "").trim().toUpperCase();
     if (!code) return bad("code required");
