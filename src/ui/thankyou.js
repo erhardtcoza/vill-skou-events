@@ -11,53 +11,57 @@ export const thankYouHTML = (code) => `<!doctype html><html><head>
   h1{ margin:0 0 10px; font-size:26px }
   .muted{ color:var(--muted) }
   .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px }
-  .btn{ padding:12px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600; text-decoration:none; display:inline-block }
+  .btn{ padding:12px 14px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
   .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
   .code{ font-weight:800; font-size:20px; letter-spacing:.5px; padding:8px 10px; border-radius:10px; background:#f1f5f9; display:inline-block }
-  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444; margin-left:8px }
+  .spinner{ display:inline-block; width:14px; height:14px; border:2px solid #cbd5e1; border-top-color:#0a7d2b; border-radius:50%; animation:spin 1s linear infinite; vertical-align:-2px; margin-right:6px }
+  @keyframes spin{ to{ transform:rotate(360deg) } }
 </style>
 </head><body>
 <div class="wrap">
   <div class="card">
     <h1>Dankie! 🎟️</h1>
     <p>Ons het jou bestelling ontvang. Gebruik hierdie kode as verwysing:</p>
-    <div class="code" id="code"></div>
+    <div class="code" id="thecode"></div>
 
-    <p class="muted" style="margin-top:12px" id="desc">
-      As jy aanlyn betaal het, voltooi asseblief die betaling. Hierdie bladsy sal outomaties opdateer sodra die betaling bevestig is.
+    <p class="muted" id="statusline" style="margin-top:12px">
+      <span class="spinner"></span> Wag vir betaalbevestiging…
     </p>
 
     <div class="row" style="margin-top:18px">
-      <a id="btnTickets" class="btn primary" href="#" style="display:none">Wys my kaartjies</a>
+      <a class="btn" id="ticketsBtn" href="#" style="display:none">Wys my kaartjies</a>
       <a class="btn" href="/">Terug na tuisblad</a>
-      <span id="pill" class="pill">Wag vir betaling…</span>
     </div>
   </div>
 </div>
 <script>
 (function(){
-  const code = ${JSON.stringify(code || "")};
-  const $ = (id)=>document.getElementById(id);
-  $('code').textContent = code;
-
-  const btn = $('btnTickets');
-  const pill = $('pill');
-  const desc = $('desc');
+  const code = ${JSON.stringify(code||"")};
+  document.getElementById('thecode').textContent = code;
+  const btn = document.getElementById('ticketsBtn');
+  const status = document.getElementById('statusline');
 
   async function poll(){
     try{
       const r = await fetch('/api/public/orders/status/'+encodeURIComponent(code));
+      if (!r.ok) throw 0;
       const j = await r.json();
-      if (j.ok && String(j.status||'').toLowerCase()==='paid'){
+      const s = String(j.status||'').toLowerCase();
+      if (s === 'paid'){
+        status.innerHTML = 'Betaling bevestig. Stuur jou kaartjies…';
+        // show button AND auto-redirect to ticket view:
         btn.href = '/t/'+encodeURIComponent(code);
-        btn.style.display = 'inline-block';
-        pill.textContent = 'Betaal ✅';
-        desc.textContent = 'Betaling ontvang! Jy kan nou jou kaartjies bekyk en aflaai.';
-        clearInterval(iv);
+        btn.style.display = '';
+        setTimeout(()=>{ location.href = btn.href; }, 800);
+        return; // stop polling
+      }
+      if (s === 'payment_failed'){
+        status.innerHTML = 'Betaling het misluk. Probeer asseblief weer.';
+        return;
       }
     }catch{}
+    setTimeout(poll, 2000);
   }
-  const iv = setInterval(poll, 2000);
   poll();
 })();
 </script>
