@@ -1,545 +1,419 @@
-// src/ui/admin.js
+// /src/ui/admin.js
 import { LOGO_URL } from "../constants.js";
 
-export function adminHTML() {
-  return `<!doctype html><html><head>
+export const adminHTML = `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Admin · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
-  *{ box-sizing:border-box }
-  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --border:#e5e7eb }
+  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  h1{ margin:0 0 10px } .muted{ color:var(--muted) }
-  .tabs{ display:flex; gap:8px; flex-wrap:wrap; margin:10px 0 14px }
-  .tab{ padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:600 }
-  .tab.active{ background:var(--green); border-color:transparent; color:#fff }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px; margin-bottom:12px }
+  .top{ display:flex; align-items:center; justify-content:space-between; margin-bottom:10px }
+  .brand{ display:flex; gap:10px; align-items:center }
+  .brand img{ height:36px; width:auto }
+  .tabs{ display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 }
+  .tab{ padding:8px 12px; border:1px solid var(--border); border-radius:10px; cursor:pointer; background:#fff }
+  .tab.active{ background:var(--green); color:#fff; border-color:transparent }
+  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px; margin-top:10px }
   .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px }
-  @media (max-width:860px){ .row{ grid-template-columns:1fr; } }
-  label{ display:block; font-size:13px; color:#444; margin:10px 0 6px }
-  input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
-  .btn{ padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; font-weight:700 }
-  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
-  .btn.danger{ background:#b42318; color:#fff; border-color:transparent }
-  .btn.small{ font-weight:600; padding:8px 10px }
-  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
+  @media (max-width:900px){ .row{ grid-template-columns:1fr } }
+  label{ display:block; font-size:13px; color:#444; margin:8px 0 6px }
+  input, select, textarea{ width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:10px; font:inherit; background:#fff }
   table{ width:100%; border-collapse:collapse; }
-  th, td{ text-align:left; padding:8px 6px; border-bottom:1px solid #f1f3f5; vertical-align:top }
-  .right{ text-align:right }
-  .mt6{ margin-top:6px } .mt10{ margin-top:10px } .mt14{ margin-top:14px } .mt18{ margin-top:18px }
-  .ok{ color:#0a7d2b; font-weight:700 }
-  .err{ color:#b42318; font-weight:700 }
-  .panel{ display:none } .panel.active{ display:block }
+  th, td{ text-align:left; padding:8px 10px; border-bottom:1px solid #f1f3f5 }
+  .btn{ padding:10px 12px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer; font-weight:600 }
+  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
+  .muted{ color:var(--muted) }
+  .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid var(--border); color:#444 }
+  .hide{ display:none }
+  .split{ display:flex; gap:12px; flex-wrap:wrap; align-items:center }
 </style>
 </head><body>
 <div class="wrap">
-  <h1>Admin</h1>
-  <div class="tabs">
-    <button class="tab" data-panel="events">Events</button>
-    <button class="tab" data-panel="tickets">Tickets</button>
-    <button class="tab" data-panel="pos">POS Admin</button>
-    <button class="tab" data-panel="vendors">Vendors</button>
-    <button class="tab" data-panel="users">Users</button>
-    <button class="tab" data-panel="settings">Site Settings</button>
+  <div class="top">
+    <div class="brand">
+      <img src="${encodeURI(LOGO_URL || "https://placehold.co/160x36?text=Skou")}" alt="logo"/>
+      <h1 style="margin:0">Admin</h1>
+    </div>
+    <a class="btn" href="/admin/login">Sign out</a>
   </div>
 
-  <!-- Events -->
-  <section id="panel-events" class="panel card">
-    <div class="muted mt6">Quick list of events. (Add/Edit preserved elsewhere; this keeps the UI light.)</div>
-    <div id="evList" class="mt10">Loading…</div>
-  </section>
+  <!-- Tabs -->
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-tab="events">Events</div>
+    <div class="tab" data-tab="tickets">Tickets</div>
+    <div class="tab" data-tab="pos">POS Admin</div>
+    <div class="tab" data-tab="vendors">Vendors</div>
+    <div class="tab" data-tab="users">Users</div>
+    <div class="tab" data-tab="settings">Site Settings</div>
+  </div>
 
-  <!-- Tickets -->
-  <section id="panel-tickets" class="panel card">
-    <div class="row">
-      <div>
-        <label>Kies event</label>
-        <select id="tEvent"></select>
-      </div>
-      <div>
-        <label>Orderkode (bv. C0AB12)</label>
-        <div style="display:flex; gap:8px">
-          <input id="orderCode" placeholder="Order Short Code"/>
-          <button id="btnLookupOrder" class="btn">Soek</button>
-        </div>
-      </div>
-    </div>
-    <div id="tixSummary" class="mt14 muted">Laai…</div>
-    <div id="orderResult" class="mt10"></div>
-  </section>
-
-  <!-- POS -->
-  <section id="panel-pos" class="panel card">
-    <div class="muted">POS shifts en totals.</div>
-    <div id="posStats" class="mt10">Laai…</div>
-  </section>
-
-  <!-- Vendors -->
-  <section id="panel-vendors" class="panel card">
-    <div class="row">
-      <div>
-        <label>Kies event</label>
-        <select id="vEvent"></select>
-      </div>
-      <div style="display:flex; align-items:flex-end; gap:8px">
-        <button id="btnLoadVendors" class="btn">Laai Vendors</button>
-        <button id="btnAddVendor" class="btn primary">Voeg Vendor by</button>
-      </div>
-    </div>
-    <div id="vendorsList" class="mt14">—</div>
-  </section>
-
-  <!-- Users -->
-  <section id="panel-users" class="panel card">
-    <div class="muted">Sisteem gebruikers.</div>
-    <div id="userList" class="mt10">Laai…</div>
-  </section>
-
-  <!-- Settings -->
-  <section id="panel-settings" class="panel">
-    <div class="card">
-      <h2 style="margin:0 0 8px">WhatsApp</h2>
-      <div class="row">
-        <div>
-          <label>Public Base URL</label>
-          <input id="s_public_base_url" placeholder="https://tickets.villiersdorpskou.co.za"/>
-        </div>
-        <div>
-          <label>VERIFY_TOKEN</label>
-          <input id="s_verify_token" placeholder="vs-verify-2025"/>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>PHONE_NUMBER_ID</label>
-          <input id="s_phone_id" placeholder="7802…"/>
-        </div>
-        <div>
-          <label>Access Token</label>
-          <input id="s_wa_token" placeholder="EAAG…"/>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>Default Template Name</label>
-          <input id="s_wa_tmpl" placeholder="ticket_delivery"/>
-        </div>
-        <div>
-          <label>Template Language</label>
-          <input id="s_wa_lang" placeholder="af"/>
-        </div>
-      </div>
-      <div class="mt10">
-        <button id="btnSaveWA" class="btn primary">Save WhatsApp</button>
-        <span id="msgWA" class="muted"></span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2 style="margin:0 0 8px">Yoco</h2>
-      <div class="row">
-        <div>
-          <label>Mode</label>
-          <select id="y_mode">
-            <option value="sandbox">Sandbox</option>
-            <option value="live">Live</option>
-          </select>
-        </div>
-        <div>
-          <label>Client ID</label>
-          <input id="y_client_id" placeholder="your_client_id"/>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>Redirect URI</label>
-          <input id="y_redirect_uri" placeholder="https://tickets.villiersdorpskou.co.za/api/admin/yoco/oauth/callback"/>
-        </div>
-        <div>
-          <label>Scopes (comma-separated)</label>
-          <input id="y_scopes" placeholder="payments:write,profile:read"/>
-        </div>
-      </div>
-      <div class="row">
-        <div>
-          <label>State (anti-CSRF)</label>
-          <input id="y_state" placeholder="random_state_123"/>
-        </div>
-        <div>
-          <label>Access Token (stored post-OAuth)</label>
-          <input id="y_access_token" placeholder="(read-only after connect)" disabled/>
-        </div>
-      </div>
-      <div class="mt10" style="display:flex; gap:8px; flex-wrap:wrap">
-        <button id="btnSaveYoco" class="btn primary">Save Yoco</button>
-        <button id="btnConnectYoco" class="btn">Connect Yoco (OAuth)</button>
-        <button id="btnTestIntent" class="btn">Create Test Payment Intent</button>
-        <span id="msgY" class="muted"></span>
-      </div>
-    </div>
-  </section>
+  <!-- Panels -->
+  <div id="panel-events" class="card"></div>
+  <div id="panel-tickets" class="card hide"></div>
+  <div id="panel-pos" class="card hide"></div>
+  <div id="panel-vendors" class="card hide"></div>
+  <div id="panel-users" class="card hide"></div>
+  <div id="panel-settings" class="card hide"></div>
 </div>
 
 <script>
 const $ = (id)=>document.getElementById(id);
-
-// -------- Tabs
-const tabs = document.querySelectorAll('.tab');
-const panels = {
-  events:   document.getElementById('panel-events'),
-  tickets:  document.getElementById('panel-tickets'),
-  pos:      document.getElementById('panel-pos'),
-  vendors:  document.getElementById('panel-vendors'),
-  users:    document.getElementById('panel-users'),
-  settings: document.getElementById('panel-settings'),
+const API = {
+  events: "/api/admin/events",
+  ticketTypes: (event_id)=> \`/api/admin/events/\${event_id}/ticket_types\`,
+  sessions: "/api/admin/pos/sessions/summary",
+  vendors: (event_id)=> \`/api/admin/vendors?event_id=\${event_id}\`,
+  users: "/api/admin/users",
+  settings_get: "/api/admin/settings",
+  settings_set: "/api/admin/settings/update"
 };
-function showPanel(name){
-  tabs.forEach(t=>t.classList.toggle('active', t.dataset.panel===name));
-  Object.entries(panels).forEach(([k,el])=>el.classList.toggle('active', k===name));
-  if (name==='events')   loadEvents();
-  if (name==='tickets')  initTickets();
-  if (name==='pos')      loadPOS();
-  if (name==='vendors')  initVendors();
-  if (name==='users')    loadUsers();
-  if (name==='settings') loadSettings();
+
+function esc(s){ return String(s||"").replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])); }
+function rands(c){ return "R"+((c||0)/100).toFixed(2); }
+
+function switchTab(name){
+  document.querySelectorAll(".tab").forEach(t=>{
+    t.classList.toggle("active", t.dataset.tab===name);
+  });
+  document.querySelectorAll("[id^=panel-]").forEach(p=>p.classList.add("hide"));
+  const p = $("panel-"+name); if (p) p.classList.remove("hide");
+  // Initial render per tab
+  if (name==="events") renderEvents();
+  if (name==="tickets") renderTickets();
+  if (name==="pos") renderPOS();
+  if (name==="vendors") renderVendors();
+  if (name==="users") renderUsers();
+  if (name==="settings") renderSettings();
 }
-tabs.forEach(t=>t.addEventListener('click', ()=>showPanel(t.dataset.panel)));
-showPanel('events');
+document.querySelectorAll(".tab").forEach(t=>{
+  t.onclick = ()=> switchTab(t.dataset.tab);
+});
 
-// -------- Events (read-only list)
-async function loadEvents(){
-  const el = document.getElementById('evList');
-  el.textContent = 'Laai…';
-  try{
-    const r = await fetch('/api/admin/events'); // your existing list route
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error||'failed');
-    if (!Array.isArray(j.events) || !j.events.length){ el.textContent='Geen events'; return; }
-    el.innerHTML = '<table><thead><tr><th>Naam</th><th>Slug</th><th>Wanneer</th><th>Venue</th></tr></thead><tbody>' +
-      j.events.map(ev=>{
-        const when = fmt(ev.starts_at)+' – '+fmt(ev.ends_at);
-        return '<tr>'+
-          '<td>'+esc(ev.name)+'</td>'+
-          '<td>'+esc(ev.slug)+'</td>'+
-          '<td>'+esc(when)+'</td>'+
-          '<td>'+esc(ev.venue||'')+'</td>'+
-        '</tr>';
-      }).join('') + '</tbody></table>';
-  }catch(e){
-    el.innerHTML = '<span class="err">Kon nie laai nie</span>';
-  }
+// ---- Events
+async function renderEvents(){
+  const el = $("panel-events");
+  el.innerHTML = "<div class='muted'>Loading events…</div>";
+  const j = await fetch(API.events).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ el.innerHTML = "<div class='muted'>Failed to load events</div>"; return; }
+
+  el.innerHTML = [
+    "<h2>Events</h2>",
+    "<table><thead><tr><th>ID</th><th>Name</th><th>Slug</th><th>Venue</th><th>When</th></tr></thead><tbody>",
+    ...(j.events||[]).map(ev=>[
+      "<tr>",
+      "<td>", String(ev.id), "</td>",
+      "<td>", esc(ev.name), "</td>",
+      "<td>", esc(ev.slug), "</td>",
+      "<td>", esc(ev.venue||""), "</td>",
+      "<td>", new Date(ev.starts_at*1000).toLocaleDateString(), "</td>",
+      "</tr>"
+    ].join("")),
+    "</tbody></table>"
+  ].join("");
 }
 
-// -------- Tickets
-async function initTickets(){
-  const sel = document.getElementById('tEvent');
-  const sum = document.getElementById('tixSummary');
-  const btn = document.getElementById('btnLookupOrder');
-  const code = document.getElementById('orderCode');
-  sel.innerHTML = '<option>Laai…</option>';
-  sum.textContent = '—';
+// ---- Tickets
+async function renderTickets(){
+  const el = $("panel-tickets");
+  el.innerHTML = "<h2>Tickets</h2><div class='muted'>Kies 'n event om opsomming te sien.</div>";
+  // Minimal UI: event picker + summary call
+  const evs = await fetch(API.events).then(r=>r.json()).catch(()=>({ok:false,events:[]}));
+  if (!evs.ok || !evs.events?.length) return;
 
-  // events for dropdown
-  try{
-    const r = await fetch('/api/admin/events');
-    const j = await r.json();
-    if (!j.ok) throw new Error();
-    sel.innerHTML = j.events.map(e=>'<option value="'+e.id+'">'+esc(e.name)+' ('+esc(e.slug)+')</option>').join('');
-  }catch{ sel.innerHTML='<option value="">Geen events</option>'; }
+  const picker = document.createElement("div");
+  picker.className = "split";
+  picker.innerHTML = "<label>Event</label>";
+  const sel = document.createElement("select");
+  sel.innerHTML = evs.events.map(ev=>"<option value='"+ev.id+"'>"+esc(ev.name)+"</option>").join("");
+  picker.appendChild(sel);
+  el.appendChild(picker);
 
-  sel.onchange = async ()=>{
+  const box = document.createElement("div");
+  box.style.marginTop = "10px";
+  el.appendChild(box);
+
+  async function loadSum(){
     const id = Number(sel.value||0);
-    if (!id){ sum.textContent='—'; return; }
-    sum.textContent = 'Laai…';
-    try{
-      const r = await fetch('/api/admin/tickets/summary?event_id='+id);
-      const j = await r.json();
-      if (!j.ok) throw new Error();
-      sum.innerHTML =
-        '<div class="pill">Verkoop: '+(j.sold||0)+'</div> '+
-        '<div class="pill">In: '+(j.checked_in||0)+'</div> '+
-        '<div class="pill">Uit: '+(j.checked_out||0)+'</div> '+
-        '<div class="pill">Nog nie in: '+(j.not_in||0)+'</div>';
-    }catch{ sum.innerHTML='<span class="err">Kon nie laai nie</span>'; }
-  };
-
-  btn.onclick = async ()=>{
-    const c = (code.value||'').trim().toUpperCase();
-    if (!c) return;
-    const box = document.getElementById('orderResult');
-    box.textContent = 'Laai…';
-    try{
-      const r = await fetch('/api/public/tickets/by-code/'+encodeURIComponent(c));
-      const j = await r.json();
-      if (!j.ok) throw new Error(j.error||'not ok');
-      if (!Array.isArray(j.tickets)||!j.tickets.length){
-        box.innerHTML = '<div class="err">Kon nie kaartjies vind met kode '+esc(c)+' nie.</div>';
-        return;
-      }
-      box.innerHTML = j.tickets.map(t =>
-        '<div class="card" style="margin:8px 0">'+
-          '<div><b>'+esc(t.type_name||'Ticket')+'</b> · '+esc(t.qr)+'</div>'+
-          '<div class="muted">Status: '+esc(t.state||'unused')+'</div>'+
-          '<div class="mt6" style="display:flex; gap:8px; flex-wrap:wrap">'+
-            '<a class="btn small" href="/t/'+encodeURIComponent(c)+'" target="_blank">Open tickets</a>'+
-            '<button class="btn small" data-wa="'+escAttr(c)+'">Stuur via WhatsApp</button>'+
-          '</div>'+
-        '</div>'
-      ).join('');
-
-      // wire WA buttons
-      box.querySelectorAll('[data-wa]').forEach(b=>{
-        b.addEventListener('click', async ()=>{
-          const msisdn = prompt('WhatsApp nommer (bv. 2771…)?')||'';
-          if (!msisdn) return;
-          b.disabled = true;
-          try{
-            const r = await fetch('/api/admin/send-tickets/whatsapp', {
-              method:'POST', headers:{'content-type':'application/json'},
-              body: JSON.stringify({ code: c, to: msisdn })
-            });
-            const jj = await r.json().catch(()=>({ok:false}));
-            if (!jj.ok) throw new Error(jj.error||'send failed');
-            alert('Gestuur 👍');
-          }catch(e){ alert('Kon nie stuur nie: '+(e.message||'fout')); }
-          b.disabled = false;
-        });
-      });
-
-    }catch(e){
-      box.innerHTML = '<div class="err">Fout: '+esc(e.message||'')+'</div>';
-    }
-  };
-}
-
-// -------- POS Admin
-async function loadPOS(){
-  const el = document.getElementById('posStats');
-  el.textContent = 'Laai…';
-  try{
-    const r = await fetch('/api/admin/pos/summary');
-    const j = await r.json();
-    if (!j.ok) throw new Error();
-    const rows = (j.sessions||[]).map(s =>
-      '<tr>'+
-        '<td>#'+s.id+'</td>'+
-        '<td>'+esc(s.cashier_name||'')+'</td>'+
-        '<td>'+esc(s.gate_name||s.gate||'')+'</td>'+
-        '<td>'+fmtDT(s.opened_at)+'</td>'+
-        '<td>'+(s.closed_at?fmtDT(s.closed_at):'—')+'</td>'+
-        '<td class="right">R'+toRand(s.cash_taken_cents)+'</td>'+
-        '<td class="right">R'+toRand(s.card_taken_cents)+'</td>'+
-        '<td>'+esc(s.manager_name||s.closing_manager||'')+'</td>'+
-      '</tr>'
-    ).join('');
-    el.innerHTML =
-      '<table><thead><tr>'+
-      '<th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th>'+
-      '<th class="right">Cash</th><th class="right">Card</th><th>Closed by</th>'+
-      '</tr></thead><tbody>'+rows+'</tbody></table>';
-  }catch{ el.innerHTML='<span class="err">Kon nie laai nie</span>'; }
-}
-
-// -------- Vendors
-async function initVendors(){
-  const sel = document.getElementById('vEvent');
-  const list = document.getElementById('vendorsList');
-  sel.innerHTML = '<option>Laai…</option>';
-  list.textContent = '—';
-
-  try{
-    const r = await fetch('/api/admin/events');
-    const j = await r.json();
-    if (!j.ok) throw new Error();
-    sel.innerHTML = j.events.map(e=>'<option value="'+e.id+'">'+esc(e.name)+' ('+esc(e.slug)+')</option>').join('');
-  }catch{ sel.innerHTML='<option value="">Geen events</option>'; }
-
-  document.getElementById('btnLoadVendors').onclick = async ()=>{
-    const id = Number(sel.value||0);
-    if (!id){ list.textContent='—'; return; }
-    list.textContent = 'Laai…';
-    try{
-      const r = await fetch('/api/admin/vendors?event_id='+id);
-      const j = await r.json();
-      if (!j.ok) throw new Error();
-      if (!j.vendors?.length){ list.textContent='Geen vendors'; return; }
-      list.innerHTML = '<table><thead><tr><th>Naam</th><th>Stand</th><th>Kontak</th><th></th></tr></thead><tbody>' +
-        j.vendors.map(v =>
-          '<tr>'+
-            '<td>'+esc(v.name)+'</td>'+
-            '<td>'+esc(v.stand_number||'')+'</td>'+
-            '<td>'+esc(v.contact_name||"")+' · '+esc(v.phone||"")+'</td>'+
-            '<td><button class="btn small" data-edit="'+v.id+'">Wysig</button></td>'+
-          '</tr>'
-        ).join('') + '</tbody></table>';
-
-      list.querySelectorAll('[data-edit]').forEach(b=>{
-        b.addEventListener('click', ()=> editVendor(Number(b.dataset.edit||0)));
-      });
-    }catch{ list.innerHTML = '<span class="err">Kon nie laai nie</span>'; }
-  };
-
-  document.getElementById('btnAddVendor').onclick = ()=> editVendor(0);
-}
-
-async function editVendor(id){
-  const payload = id ? await fetch('/api/admin/vendor/get?id='+id).then(r=>r.json()).catch(()=>({ok:false}))
-                     : { ok:true, vendor: { id:0, name:'', contact_name:'', phone:'', email:'', stand_number:'', staff_quota:0, vehicle_quota:0 } };
-  if (!payload.ok){ alert('Kon nie vendor laai nie'); return; }
-  const v = payload.vendor;
-
-  const form = document.createElement('div');
-  form.className = 'card';
-  form.style = 'position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:10';
-  form.innerHTML =
-    '<div class="card" style="max-width:640px;width:96%;max-height:90vh;overflow:auto">'+
-      '<h2 style="margin:0 0 8px">'+(v.id?'Wysig Vendor':'Nuwe Vendor')+'</h2>'+
-      '<div class="row">'+
-        '<div><label>Naam</label><input id="v_name" value="'+escAttr(v.name||'')+'"/></div>'+
-        '<div><label>Stand #</label><input id="v_stand" value="'+escAttr(v.stand_number||'')+'"/></div>'+
-      '</div>'+
-      '<div class="row">'+
-        '<div><label>Kontak Naam</label><input id="v_cname" value="'+escAttr(v.contact_name||'')+'"/></div>'+
-        '<div><label>Selfoon</label><input id="v_phone" value="'+escAttr(v.phone||'')+'"/></div>'+
-      '</div>'+
-      '<div class="row">'+
-        '<div><label>E-pos</label><input id="v_email" value="'+escAttr(v.email||'')+'"/></div>'+
-        '<div><label>Staff Quota</label><input id="v_squota" type="number" min="0" value="'+Number(v.staff_quota||0)+'"/></div>'+
-      '</div>'+
-      '<div class="row">'+
-        '<div><label>Vehicle Quota</label><input id="v_vquota" type="number" min="0" value="'+Number(v.vehicle_quota||0)+'"/></div>'+
-        '<div></div>'+
-      '</div>'+
-      '<div class="mt10" style="display:flex; gap:8px; flex-wrap:wrap">'+
-        '<button id="v_save" class="btn primary">Save</button>'+
-        '<button id="v_close" class="btn">Close</button>'+
-      '</div>'+
-    '</div>';
-  document.body.appendChild(form);
-  form.querySelector('#v_close').onclick = ()=> form.remove();
-  form.querySelector('#v_save').onclick = async ()=>{
-    const body = {
-      id: v.id||0,
-      name: form.querySelector('#v_name').value||'',
-      stand_number: form.querySelector('#v_stand').value||'',
-      contact_name: form.querySelector('#v_cname').value||'',
-      phone: form.querySelector('#v_phone').value||'',
-      email: form.querySelector('#v_email').value||'',
-      staff_quota: Number(form.querySelector('#v_squota').value||0),
-      vehicle_quota: Number(form.querySelector('#v_vquota').value||0),
-    };
-    try{
-      const r = await fetch('/api/admin/vendor/upsert', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
-      const j = await r.json().catch(()=>({ok:false}));
-      if (!j.ok) throw new Error(j.error||'save failed');
-      alert('Gestoor');
-      form.remove();
-    }catch(e){ alert('Fout: '+(e.message||'save')); }
-  };
-}
-
-// -------- Users
-async function loadUsers(){
-  const el = document.getElementById('userList');
-  el.textContent = 'Laai…';
-  try{
-    const r = await fetch('/api/admin/users');
-    const j = await r.json();
-    if (!j.ok) throw new Error();
-    if (!j.users?.length){ el.textContent='Geen gebruikers'; return; }
-    el.innerHTML = '<table><thead><tr><th>Username</th><th>Role</th></tr></thead><tbody>'+
-      j.users.map(u=>'<tr><td>'+esc(u.username)+'</td><td>'+esc(u.role)+'</td></tr>').join('')+
-      '</tbody></table>';
-  }catch{ el.innerHTML = '<span class="err">Kon nie laai nie</span>'; }
-}
-
-// -------- Settings (WA + Yoco)
-async function loadSettings(){
-  const set = await fetch('/api/admin/settings').then(r=>r.json()).catch(()=>({ok:false, settings:{}}));
-  const S = (set.ok && set.settings) ? set.settings : {};
-
-  // WA
-  $('#s_public_base_url').value = S.PUBLIC_BASE_URL||'';
-  $('#s_verify_token').value    = S.VERIFY_TOKEN||'';
-  $('#s_phone_id').value        = S.PHONE_NUMBER_ID||'';
-  $('#s_wa_token').value        = S.WHATSAPP_TOKEN||'';
-  $('#s_wa_tmpl').value         = S.WHATSAPP_TEMPLATE_NAME||'';
-  $('#s_wa_lang').value         = S.WHATSAPP_TEMPLATE_LANG||'';
-
-  // Yoco
-  $('#y_mode').value            = S.YOCO_MODE||'sandbox';
-  $('#y_client_id').value       = S.YOCO_CLIENT_ID||'';
-  $('#y_redirect_uri').value    = S.YOCO_REDIRECT_URI||location.origin+'/api/admin/yoco/oauth/callback';
-  $('#y_scopes').value          = S.YOCO_SCOPES||'payments:write';
-  $('#y_state').value           = S.YOCO_STATE||'state_'+Math.random().toString(36).slice(2,10);
-  $('#y_access_token').value    = S.YOCO_ACCESS_TOKEN||'';
-
-  // Wire save buttons
-  $('#btnSaveWA').onclick = async ()=>{
-    const body = {
-      PUBLIC_BASE_URL: $('#s_public_base_url').value,
-      VERIFY_TOKEN:    $('#s_verify_token').value,
-      PHONE_NUMBER_ID: $('#s_phone_id').value,
-      WHATSAPP_TOKEN:  $('#s_wa_token').value,
-      WHATSAPP_TEMPLATE_NAME: $('#s_wa_tmpl').value,
-      WHATSAPP_TEMPLATE_LANG: $('#s_wa_lang').value
-    };
-    await saveSettings(body, '#msgWA');
-  };
-
-  $('#btnSaveYoco').onclick = async ()=>{
-    const body = {
-      YOCO_MODE: $('#y_mode').value,
-      YOCO_CLIENT_ID: $('#y_client_id').value,
-      YOCO_REDIRECT_URI: $('#y_redirect_uri').value,
-      YOCO_SCOPES: $('#y_scopes').value,
-      YOCO_STATE: $('#y_state').value
-    };
-    await saveSettings(body, '#msgY');
-  };
-
-  $('#btnConnectYoco').onclick = ()=>{
-    const baseAuth = 'https://secure.yoco.com/oauth/authorize';
-    const client_id = encodeURIComponent($('#y_client_id').value||'');
-    const redirect  = encodeURIComponent($('#y_redirect_uri').value||location.origin+'/api/admin/yoco/oauth/callback');
-    const scopes    = encodeURIComponent(($('#y_scopes').value||'').split(',').map(s=>s.trim()).filter(Boolean).join(' '));
-    const state     = encodeURIComponent($('#y_state').value||'state');
-    const url = baseAuth + '?response_type=code&client_id='+client_id+'&redirect_uri='+redirect+'&scope='+scopes+'&state='+state;
-    location.href = url;
-  };
-
-  $('#btnTestIntent').onclick = async ()=>{
-    const res = await fetch('/api/admin/yoco/payment-intents/create', {
-      method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ amount_cents: 12345, currency: 'ZAR', reference: 'test-'+Date.now() })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (res.ok) alert('Intent ID: '+(res.intent?.id||'(none)'));
-    else alert('Intent failed: '+(res.error||'unknown'));
-  };
-}
-
-async function saveSettings(body, msgSel){
-  const msg = document.querySelector(msgSel);
-  msg.textContent = 'Stoor…';
-  try{
-    const r = await fetch('/api/admin/settings/update', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body) });
-    const j = await r.json().catch(()=>({ok:false}));
-    if (!j.ok) throw new Error(j.error||'failed');
-    msg.textContent = 'Gestoor ✅';
-    msg.className = 'ok';
-  }catch(e){
-    msg.textContent = 'Fout: '+(e.message||'');
-    msg.className = 'err';
+    const j = await fetch("/api/admin/tickets/summary?event_id="+id).then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok){ box.innerHTML = "<div class='muted'>Kon nie laai nie</div>"; return; }
+    box.innerHTML = [
+      "<div class='split'>",
+      "<span class='pill'>Sold: "+(j.summary?.sold||0)+"</span>",
+      "<span class='pill'>Unused: "+(j.summary?.unused||0)+"</span>",
+      "<span class='pill'>In: "+(j.summary?.in||0)+"</span>",
+      "<span class='pill'>Out: "+(j.summary?.out||0)+"</span>",
+      "<span class='pill'>Void: "+(j.summary?.void||0)+"</span>",
+      "</div>"
+    ].join("");
   }
+  sel.onchange = loadSum;
+  loadSum();
 }
 
-// -------- helpers
-function toRand(c){ return ((c||0)/100).toFixed(2); }
-function fmt(ts){ if (!ts) return ''; const d=new Date(ts*1000); return d.toLocaleDateString('af-ZA',{day:'2-digit',month:'short'}); }
-function fmtDT(ts){ if (!ts) return '—'; const d=new Date(ts*1000); return d.toLocaleString(); }
-function esc(s){ return String(s??'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
-function escAttr(s){ return esc(s).replace(/"/g,'&quot;'); }
+// ---- POS Admin
+async function renderPOS(){
+  const el = $("panel-pos");
+  el.innerHTML = "<h2>POS Sessions</h2><div class='muted'>Loading…</div>";
+  const j = await fetch(API.sessions).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ el.innerHTML = "<div class='muted'>Kon nie laai nie</div>"; return; }
+
+  el.innerHTML = [
+    "<h2>POS Sessions</h2>",
+    "<table><thead><tr>",
+    "<th>ID</th><th>Cashier</th><th>Gate</th><th>Opened</th><th>Closed</th>",
+    "<th>Cash</th><th>Card</th><th>Closed by</th>",
+    "</tr></thead><tbody>",
+    ...(j.sessions||[]).map(s=>[
+      "<tr>",
+      "<td>", String(s.id), "</td>",
+      "<td>", esc(s.cashier_name||""), "</td>",
+      "<td>", esc(s.gate_name||s.gate||""), "</td>",
+      "<td>", s.opened_at ? new Date(s.opened_at*1000).toLocaleString() : "", "</td>",
+      "<td>", s.closed_at ? new Date(s.closed_at*1000).toLocaleString() : "", "</td>",
+      "<td>", rands(s.total_cash_cents||0), "</td>",
+      "<td>", rands(s.total_card_cents||0), "</td>",
+      "<td>", esc(s.closing_manager||s.manager_name||""), "</td>",
+      "</tr>"
+    ].join("")),
+    "</tbody></table>"
+  ].join("");
+}
+
+// ---- Vendors (list + very light editor launcher)
+async function renderVendors(){
+  const el = $("panel-vendors");
+  el.innerHTML = "<h2>Vendors</h2><div class='muted'>Kies 'n event om vendors te sien.</div>";
+
+  const evs = await fetch(API.events).then(r=>r.json()).catch(()=>({ok:false,events:[]}));
+  if (!evs.ok || !evs.events?.length) return;
+
+  const picker = document.createElement("div");
+  picker.className = "split";
+  picker.innerHTML = "<label>Event</label>";
+  const sel = document.createElement("select");
+  sel.innerHTML = evs.events.map(ev=>"<option value='"+ev.id+"'>"+esc(ev.name)+"</option>").join("");
+  picker.appendChild(sel);
+  el.appendChild(picker);
+
+  const box = document.createElement("div");
+  box.style.marginTop = "10px";
+  el.appendChild(box);
+
+  async function loadV(){
+    const id = Number(sel.value||0);
+    const j = await fetch(API.vendors(id)).then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok){ box.innerHTML = "<div class='muted'>Kon nie vendors laai nie</div>"; return; }
+    box.innerHTML = [
+      "<table><thead><tr><th>Name</th><th>Contact</th><th>Stand</th></tr></thead><tbody>",
+      ...(j.vendors||[]).map(v=>[
+        "<tr>",
+        "<td>", esc(v.name), "</td>",
+        "<td>", esc(v.contact_name||""), " · ", esc(v.phone||""), "</td>",
+        "<td>", esc(v.stand_number||""), "</td>",
+        "</tr>"
+      ].join("")),
+      "</tbody></table>"
+    ].join("");
+  }
+  sel.onchange = loadV;
+  loadV();
+}
+
+// ---- Users
+async function renderUsers(){
+  const el = $("panel-users");
+  el.innerHTML = "<h2>Users</h2><div class='muted'>Loading…</div>";
+  const j = await fetch(API.users).then(r=>r.json()).catch(()=>({ok:false}));
+  if (!j.ok){ el.innerHTML = "<div class='muted'>Kon nie laai nie</div>"; return; }
+  el.innerHTML = [
+    "<h2>Users</h2>",
+    "<table><thead><tr><th>ID</th><th>Username</th><th>Role</th></tr></thead><tbody>",
+    ...(j.users||[]).map(u=>[
+      "<tr>",
+      "<td>", String(u.id), "</td>",
+      "<td>", esc(u.username), "</td>",
+      "<td>", esc(u.role), "</td>",
+      "</tr>"
+    ].join("")),
+    "</tbody></table>"
+  ].join("");
+}
+
+// ---- Site Settings (WhatsApp + Yoco)
+async function renderSettings(){
+  const el = $("panel-settings");
+  el.innerHTML = "<h2>Site Settings</h2><div class='muted'>Loading…</div>";
+  const j = await fetch(API.settings_get).then(r=>r.json()).catch(()=>({ok:false,settings:{}}));
+  const S = j.settings || {};
+
+  const base = (S.PUBLIC_BASE_URL || "");
+  const callbackUrl = (base || location.origin) + "/api/admin/yoco/oauth/callback";
+
+  el.innerHTML = [
+    "<h2>Site Settings</h2>",
+    "<div class='tabs' style='margin-top:0'>",
+    "<div class='tab active' data-sub='wa'>WhatsApp</div>",
+    "<div class='tab' data-sub='yoco'>Yoco</div>",
+    "</div>",
+
+    // WhatsApp
+    "<div id='sub-wa'>",
+      "<div class='row'>",
+        "<div>",
+          "<label>PUBLIC_BASE_URL</label>",
+          "<input id='PUBLIC_BASE_URL' value='"+esc(S.PUBLIC_BASE_URL||"")+"' />",
+        "</div>",
+        "<div>",
+          "<label>VERIFY_TOKEN</label>",
+          "<input id='VERIFY_TOKEN' value='"+esc(S.VERIFY_TOKEN||"")+"' />",
+        "</div>",
+      "</div>",
+      "<div class='row'>",
+        "<div>",
+          "<label>PHONE_NUMBER_ID</label>",
+          "<input id='PHONE_NUMBER_ID' value='"+esc(S.PHONE_NUMBER_ID||"")+"' />",
+        "</div>",
+        "<div>",
+          "<label>WHATSAPP_TOKEN</label>",
+          "<input id='WHATSAPP_TOKEN' value='"+esc(S.WHATSAPP_TOKEN||"")+"' />",
+        "</div>",
+      "</div>",
+      "<div class='row'>",
+        "<div>",
+          "<label>WHATSAPP_TEMPLATE_NAME</label>",
+          "<input id='WHATSAPP_TEMPLATE_NAME' value='"+esc(S.WHATSAPP_TEMPLATE_NAME||"")+"' />",
+        "</div>",
+        "<div>",
+          "<label>WHATSAPP_TEMPLATE_LANG</label>",
+          "<input id='WHATSAPP_TEMPLATE_LANG' value='"+esc(S.WHATSAPP_TEMPLATE_LANG||"af")+"' />",
+        "</div>",
+      "</div>",
+      "<div style='margin-top:10px'><button class='btn primary' id='saveWA'>Save WhatsApp</button></div>",
+      "<hr style='margin:16px 0'/>",
+    "</div>",
+
+    // Yoco
+    "<div id='sub-yoco' class='hide'>",
+      "<div class='row'>",
+        "<div>",
+          "<label>YOCO_MODE</label>",
+          "<select id='YOCO_MODE'>",
+            "<option value='sandbox' ", (S.YOCO_MODE!=='live'?"selected":""), ">Sandbox</option>",
+            "<option value='live' ",   (S.YOCO_MODE==='live'?"selected":""),   ">Live</option>",
+          "</select>",
+        "</div>",
+        "<div>",
+          "<label>YOCO_PUBLIC_KEY</label>",
+          "<input id='YOCO_PUBLIC_KEY' value='"+esc(S.YOCO_PUBLIC_KEY||"")+"' />",
+        "</div>",
+      "</div>",
+      "<div class='row'>",
+        "<div>",
+          "<label>YOCO_SECRET_KEY</label>",
+          "<input id='YOCO_SECRET_KEY' value='"+esc(S.YOCO_SECRET_KEY||"")+"' />",
+        "</div>",
+        "<div>",
+          "<label>YOCO_CLIENT_ID</label>",
+          "<input id='YOCO_CLIENT_ID' value='"+esc(S.YOCO_CLIENT_ID||"")+"' />",
+        "</div>",
+      "</div>",
+      "<div class='row'>",
+        "<div>",
+          "<label>YOCO_REDIRECT_URI</label>",
+          "<input id='YOCO_REDIRECT_URI' value='"+esc(S.YOCO_REDIRECT_URI||"")+"' />",
+        "</div>",
+        "<div>",
+          "<label>YOCO_REQUIRED_SCOPES</label>",
+          "<input id='YOCO_REQUIRED_SCOPES' value='"+esc(S.YOCO_REQUIRED_SCOPES||"CHECKOUT_PAYMENTS")+"' />",
+        "</div>",
+      "</div>",
+      "<div class='row'>",
+        "<div>",
+          "<label>YOCO_STATE</label>",
+          "<input id='YOCO_STATE' value='"+esc(S.YOCO_STATE||"skou")+"' />",
+        "</div>",
+        "<div>",
+          "<label>OAuth Callback URL</label>",
+          "<input value='"+esc(callbackUrl)+"' readonly />",
+        "</div>",
+      "</div>",
+      "<div class='split' style='margin-top:10px'>",
+        "<button class='btn primary' id='saveYoco'>Save Yoco</button>",
+        "<button class='btn' id='startOAuth'>Start OAuth</button>",
+        "<span class='muted'>Use this callback in your Yoco app settings.</span>",
+      "</div>",
+    "</div>"
+  ].join("");
+
+  // sub-tabs
+  const subTabs = el.querySelectorAll(".tabs .tab");
+  const wa = el.querySelector("#sub-wa");
+  const yo = el.querySelector("#sub-yoco");
+  subTabs.forEach(t=>{
+    t.onclick = ()=>{
+      subTabs.forEach(x=>x.classList.remove("active"));
+      t.classList.add("active");
+      (t.dataset.sub==="wa") ? (wa.classList.remove("hide"), yo.classList.add("hide"))
+                             : (yo.classList.remove("hide"), wa.classList.add("hide"));
+    };
+  });
+
+  $("saveWA").onclick = () => saveSettings({
+    PUBLIC_BASE_URL: $("PUBLIC_BASE_URL").value,
+    VERIFY_TOKEN: $("VERIFY_TOKEN").value,
+    PHONE_NUMBER_ID: $("PHONE_NUMBER_ID").value,
+    WHATSAPP_TOKEN: $("WHATSAPP_TOKEN").value,
+    WHATSAPP_TEMPLATE_NAME: $("WHATSAPP_TEMPLATE_NAME").value,
+    WHATSAPP_TEMPLATE_LANG: $("WHATSAPP_TEMPLATE_LANG").value
+  });
+
+  $("saveYoco").onclick = () => saveSettings({
+    YOCO_MODE: $("YOCO_MODE").value,
+    YOCO_PUBLIC_KEY: $("YOCO_PUBLIC_KEY").value,
+    YOCO_SECRET_KEY: $("YOCO_SECRET_KEY").value,
+    YOCO_CLIENT_ID: $("YOCO_CLIENT_ID").value,
+    YOCO_REDIRECT_URI: $("YOCO_REDIRECT_URI").value,
+    YOCO_REQUIRED_SCOPES: $("YOCO_REQUIRED_SCOPES").value,
+    YOCO_STATE: $("YOCO_STATE").value
+  });
+
+  $("startOAuth").onclick = () => {
+    const cid = $("YOCO_CLIENT_ID").value.trim();
+    const red = $("YOCO_REDIRECT_URI").value.trim() || "${""}".slice(0); // keep template stable
+    const scp = $("YOCO_REQUIRED_SCOPES").value.trim() || "CHECKOUT_PAYMENTS";
+    const st  = $("YOCO_STATE").value.trim() || "skou";
+    if (!cid || !callbackUrl){ alert("Please save Yoco Client ID and Redirect URI first."); return; }
+    // Yoco OAuth authorize URL (docs)
+    const auth = new URL("https://secure.yoco.com/oauth/authorize");
+    auth.searchParams.set("client_id", cid);
+    auth.searchParams.set("redirect_uri", $("YOCO_REDIRECT_URI").value.trim() || callbackUrl);
+    auth.searchParams.set("response_type", "code");
+    auth.searchParams.set("scope", scp);
+    auth.searchParams.set("state", st);
+    location.href = auth.toString();
+  };
+}
+
+async function saveSettings(obj){
+  const r = await fetch(API.settings_set, {
+    method:"POST",
+    headers:{ "content-type":"application/json" },
+    body: JSON.stringify({ updates: obj })
+  });
+  if (!r.ok){ alert("Save failed"); return; }
+  alert("Saved");
+}
+
+// default tab:
+switchTab("events");
+// deep-link support for settings subtab (e.g. #site-settings-yoco)
+if (location.hash === "#site-settings-yoco"){
+  switchTab("settings");
+  setTimeout(()=>{
+    const tabs = document.querySelectorAll(".tabs .tab");
+    tabs.forEach(t => { if (t.textContent.trim()==="Yoco") t.click(); });
+  }, 0);
+}
 </script>
 </body></html>`;
-}
