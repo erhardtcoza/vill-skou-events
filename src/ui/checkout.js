@@ -93,7 +93,7 @@ const $ = (id)=>document.getElementById(id);
 function rands(cents){ return 'R' + ((cents||0)/100).toFixed(2); }
 function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
 
-// Normalize ZA phone: if 10 digits starting with 0 => replace 0 with 27
+// ZA phone normalizer
 function normPhone(raw){
   const s = String(raw||'').replace(/\\D+/g,'');
   if (s.length===10 && s.startsWith('0')) return '27'+s.slice(1);
@@ -103,7 +103,6 @@ function normPhone(raw){
 let catalog = null;      // { event, ticket_types }
 let cart = null;         // { event_id, items:[{ticket_type_id,qty}] }
 
-// Build attendee forms based on cart
 function buildAttendeeForms(){
   const wrap = $('attWrap');
   wrap.innerHTML = '';
@@ -152,7 +151,6 @@ function buildAttendeeForms(){
   });
 }
 
-// Update summary
 function renderSummary(){
   const list = $('cartList');
   if (!cart || !(cart.items||[]).length){ list.textContent = 'Geen items'; $('total').textContent='R0.00'; return; }
@@ -167,7 +165,6 @@ function renderSummary(){
   $('total').textContent = rands(total);
 }
 
-// Collect payload
 function collectPayload(){
   const buyer = {
     first: String($('buyer_first').value||'').trim(),
@@ -227,8 +224,7 @@ async function submit(){
   if (err){ showMsg('err', err); return; }
 
   try{
-    // 1) Create order in our system
-    showMsg('','Skep bestelling…');
+    // 1) Create order
     const payload = {
       event_id: cart.event_id,
       items: cart.items,
@@ -245,34 +241,23 @@ async function submit(){
     const j = await r.json().catch(()=>({ok:false,error:'network'}));
     if (!j.ok) throw new Error(j.error||'Kon nie bestelling skep nie');
 
-    const code = j.order?.short_code || 'THANKS';
+    const code = j.order?.short_code;
 
-    // 2) If pay at event → straight to thank-you
-    if (methodSel === 'pay_at_event'){
-      location.href = '/thanks/' + encodeURIComponent(code);
+    // 2) If pay-now, create Yoco checkout + redirect to Yoco
+    if (methodSel === 'pay_now') {
+      const ir = await fetch('/api/payments/yoco/intent', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({ code })
+      });
+      const iy = await ir.json().catch(()=>({ok:false,error:'network'}));
+      if (!iy.ok) throw new Error(iy.error || 'Kon nie Yoco betaal skep nie');
+      location.href = iy.redirect_url;
       return;
     }
 
-    // 3) pay_now → create Yoco checkout then redirect to Yoco
-    showMsg('','Skakel na betaalblad…');
-    const successUrl = location.origin + '/thanks/' + encodeURIComponent(code);
-    const cancelUrl  = location.origin + '/shop/' + encodeURIComponent(slug) + '/checkout';
-    const yc = await fetch('/api/payments/yoco/create-checkout', {
-      method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({
-        order_id: j.order.id,
-        short_code: code,
-        amount_cents: j.order.total_cents || 0,
-        success_url: successUrl,
-        cancel_url: cancelUrl
-      })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!yc.ok || !yc.url) throw new Error(yc.error || 'Kon nie Yoco betaal skep nie');
-
-    // Preserve for potential cancel return
-    sessionStorage.setItem('last_order_code', code);
-
-    location.href = yc.url; // → Yoco hosted checkout
+    // 3) Otherwise go to thank-you (will poll for payment if needed)
+    location.href = '/thanks/' + encodeURIComponent(code || 'THANKS');
   }catch(e){
     showMsg('err', e.message||'Fout');
   }
@@ -314,7 +299,6 @@ async function load(){
 
   $('submitBtn').onclick = submit;
 }
-
 load();
 </script>
 </body></html>`;
