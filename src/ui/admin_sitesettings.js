@@ -1,18 +1,17 @@
 // /src/ui/admin_sitesettings.js
 export const adminSiteSettingsJS = `
 (()=>{
-
-  // --- tiny helpers --------------------------------------------------------
   const $ = (sel,root=document)=>root.querySelector(sel);
-  const esc = (s='')=>String(s).replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
+  const esc = (s='')=>String(s).replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+  const msisdn = (raw)=>{ const s=String(raw||'').replace(/\\D+/g,''); return (s.length===10&&s.startsWith('0'))?('27'+s.slice(1)):s; };
 
-  // --- render --------------------------------------------------------------
   const root = document.getElementById('panel-settings');
   root.innerHTML = \`
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
       <button class="tab-btn active" data-tab="gen">General</button>
       <button class="tab-btn" data-tab="wa">WhatsApp</button>
       <button class="tab-btn" data-tab="yoco">Yoco</button>
+      <button class="tab-btn" data-tab="past">Past Visitors</button>
     </div>
 
     <style>
@@ -30,8 +29,11 @@ export const adminSiteSettingsJS = `
       #panel-settings .btn{padding:10px 14px;border-radius:10px;border:0;background:var(--green,#0a7d2b);color:#fff;font-weight:700;cursor:pointer}
       #panel-settings .btn.outline{background:#fff;color:#111;border:1px solid #e5e7eb}
       #panel-settings .muted{color:#667085}
-      #wa-templates table, #wa-inbox table{width:100%;border-collapse:collapse}
-      #wa-templates th,#wa-templates td, #wa-inbox th, #wa-inbox td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
+      #wa-templates table{width:100%;border-collapse:collapse}
+      #wa-templates th,#wa-templates td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
+      #pv-list table{width:100%;border-collapse:collapse}
+      #pv-list th,#pv-list td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
+      #pv-list tbody tr:hover{background:#fafafa}
     </style>
 
     <!-- GENERAL -->
@@ -56,6 +58,8 @@ export const adminSiteSettingsJS = `
         <div><label>Access Token</label><input id="WHATSAPP_TOKEN"/></div>
         <div><label>Phone Number ID</label><input id="PHONE_NUMBER_ID"/></div>
         <div><label>Business (WABA) ID</label><input id="BUSINESS_ID"/></div>
+        <div><label>Auto-reply enabled (1/0)</label><input id="WA_AUTOREPLY_ENABLED" placeholder="0 or 1"/></div>
+        <div style="grid-column:1/-1"><label>Auto-reply text</label><input id="WA_AUTOREPLY_TEXT" placeholder="Thank you, we will get back to you soon."/></div>
       </div>
 
       <h3 style="margin-top:14px">Template selectors</h3>
@@ -71,21 +75,6 @@ export const adminSiteSettingsJS = `
         <button id="saveWA" class="btn">Save WhatsApp</button>
         <button id="syncWA" class="btn outline">Sync templates</button>
         <span id="msgWA" class="muted"></span>
-      </div>
-
-      <div class="hr"></div>
-
-      <!-- Auto-reply controls -->
-      <h3>Auto-reply</h3>
-      <div class="grid">
-        <div>
-          <label><input type="checkbox" id="WA_AUTO_REPLY_ENABLED" style="width:auto;vertical-align:middle;margin-right:6px"/> Enable auto-reply</label>
-        </div>
-        <div></div>
-        <div style="grid-column:1/-1">
-          <label>Auto-reply message</label>
-          <textarea id="WA_AUTO_REPLY_TEXT" rows="3" placeholder="Dankie! Ons sal gou weer terugkom na jou met meer inligting."></textarea>
-        </div>
       </div>
 
       <div class="hr"></div>
@@ -111,11 +100,6 @@ export const adminSiteSettingsJS = `
 
       <h3 style="margin-top:18px">Templates</h3>
       <div id="wa-templates" class="muted">Loading templates…</div>
-
-      <div class="hr"></div>
-
-      <h3>Inbox</h3>
-      <div id="wa-inbox" class="muted">Loading…</div>
     </section>
 
     <!-- YOCO -->
@@ -140,25 +124,101 @@ export const adminSiteSettingsJS = `
         <span id="msgYoco" class="muted"></span>
       </div>
     </section>
+
+    <!-- PAST VISITORS -->
+    <section id="tab-past" style="display:none">
+      <h2 style="margin:0 0 8px">Past Visitors</h2>
+
+      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
+        <h3 style="margin:0 0 8px">CSV Import</h3>
+        <p class="muted">Paste CSV (name, phone) — one row per line. Example:<br/>Piet Botha, 0821234567</p>
+        <textarea id="pv-csv" rows="6" placeholder="Name, Phone"></textarea>
+        <div class="grid">
+          <div><label>Filename (for reference)</label><input id="pv-filename" placeholder="past_2025.csv"/></div>
+          <div><label>Overwrite names if already present?</label>
+            <select id="pv-overwrite"><option value="0">No</option><option value="1">Yes</option></select>
+          </div>
+        </div>
+        <div class="row-actions">
+          <button id="pv-import" class="btn">Import</button>
+          <span id="pv-import-msg" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
+        <h3 style="margin:0 0 8px">Sync from Existing</h3>
+        <div class="grid">
+          <div>
+            <label>Source</label>
+            <select id="pv-sync-from">
+              <option value="orders">Orders (online)</option>
+              <option value="pos">POS sales</option>
+              <option value="attendees">Ticket attendees</option>
+            </select>
+          </div>
+          <div><label>Event ID (optional)</label><input id="pv-sync-event" placeholder="e.g. 3"/></div>
+          <div><label>Tag (e.g. year)</label><input id="pv-sync-tag" value="2025"/></div>
+        </div>
+        <div class="row-actions">
+          <button id="pv-sync" class="btn">Run Sync</button>
+          <span id="pv-sync-msg" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
+        <h3 style="margin:0 0 8px">List / Send</h3>
+        <div class="grid">
+          <div><label>Search</label><input id="pv-q" placeholder="name or phone"/></div>
+          <div><label>Tag contains</label><input id="pv-tag" placeholder="2025"/></div>
+          <div>
+            <label>Opt-out</label>
+            <select id="pv-optout">
+              <option value="">All</option>
+              <option value="0">Only opted-in</option>
+              <option value="1">Only opted-out</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:flex-end"><button id="pv-refresh" class="btn">Refresh</button></div>
+        </div>
+
+        <div id="pv-list" style="margin-top:10px" class="muted">No results yet.</div>
+
+        <div class="grid" style="margin-top:10px">
+          <div>
+            <label>Template</label>
+            <select id="pv-tpl-key">
+              <option value="WA_TMP_SKOU_SALES">Skou reminders (recommended)</option>
+              <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
+              <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
+              <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
+            </select>
+          </div>
+          <div style="grid-column:1/-1">
+            <label>Body variables (comma separated, optional)</label>
+            <input id="pv-vars" placeholder="e.g. Villiersdorp Skou, 5–7 Sept"/>
+          </div>
+        </div>
+        <div class="row-actions">
+          <button id="pv-send" class="btn">Send to selected (max 50)</button>
+          <span id="pv-send-msg" class="muted"></span>
+        </div>
+      </div>
+    </section>
   \`;
 
-  // tab switch
   function showTab(name){
     root.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-    ['gen','wa','yoco'].forEach(x => {
+    ['gen','wa','yoco','past'].forEach(x => {
       const sec = document.getElementById('tab-'+x);
       if (sec) sec.style.display = (x===name ? 'block' : 'none');
     });
   }
   root.querySelectorAll('.tab-btn').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
-
-  // expose deep-link switcher for #settings:wa etc.
   window.AdminPanels.settingsSwitch = (sub)=>{
-    const map = { general:'gen', whatsapp:'wa', yoco:'yoco' };
+    const map = { general:'gen', whatsapp:'wa', yoco:'yoco', past:'past' };
     showTab(map[sub] || 'gen');
   };
 
-  // --- IO helpers ----------------------------------------------------------
   async function save(updates, msgEl){
     msgEl.textContent = 'Saving…';
     const r = await fetch('/api/admin/settings/update', {
@@ -168,33 +228,29 @@ export const adminSiteSettingsJS = `
     msgEl.textContent = r.ok ? 'Saved.' : ('Failed. ' + (r.error||''));
   }
 
-  // --- populate settings ---------------------------------------------------
+  // ---------- Settings load (adds extra WA auto-reply fields) ----------
   async function loadSettings(){
-    const j = await fetch('/api/admin/settings', { credentials:'include' })
-      .then(r=>r.json()).catch(()=>({ok:false}));
+    const j = await fetch('/api/admin/settings', { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
     if (!j.ok) return;
-
     const s = j.settings||{};
-    // General
-    ['SITE_NAME','SITE_LOGO_URL','PUBLIC_BASE_URL','VERIFY_TOKEN']
-      .forEach(k=>{ const el=document.getElementById(k); if (el && s[k]!=null) el.value = s[k]; });
 
-    // WA creds
+    ['SITE_NAME','SITE_LOGO_URL','PUBLIC_BASE_URL','VERIFY_TOKEN'].forEach(k=>{
+      const el = document.getElementById(k); if (el && s[k]!=null) el.value = s[k];
+    });
+
     $('#WHATSAPP_TOKEN').value = s.WHATSAPP_TOKEN || '';
     $('#PHONE_NUMBER_ID').value = s.PHONE_NUMBER_ID || '';
     $('#BUSINESS_ID').value = s.BUSINESS_ID || '';
+    $('#WA_AUTOREPLY_ENABLED').value = s.WA_AUTOREPLY_ENABLED || '0';
+    $('#WA_AUTOREPLY_TEXT').value = s.WA_AUTOREPLY_TEXT || '';
 
-    // Auto-reply
-    $('#WA_AUTO_REPLY_ENABLED').checked = /^(1|true|yes|on)$/i.test(s.WA_AUTO_REPLY_ENABLED || '');
-    $('#WA_AUTO_REPLY_TEXT').value = s.WA_AUTO_REPLY_TEXT || '';
-
-    // Stash current selector values so we can re-apply after loading options
+    // stash template selector values
     $('#WA_TMP_ORDER_CONFIRM').dataset.value   = s.WA_TMP_ORDER_CONFIRM || '';
     $('#WA_TMP_PAYMENT_CONFIRM').dataset.value = s.WA_TMP_PAYMENT_CONFIRM || '';
     $('#WA_TMP_TICKET_DELIVERY').dataset.value = s.WA_TMP_TICKET_DELIVERY || '';
     $('#WA_TMP_SKOU_SALES').dataset.value      = s.WA_TMP_SKOU_SALES || '';
 
-    // Yoco
+    // yoco
     $('#YOCO_MODE').value = (s.YOCO_MODE||'sandbox').toLowerCase();
     $('#YOCO_TEST_PUBLIC_KEY').value = s.YOCO_TEST_PUBLIC_KEY || '';
     $('#YOCO_TEST_SECRET_KEY').value = s.YOCO_TEST_SECRET_KEY || '';
@@ -202,9 +258,8 @@ export const adminSiteSettingsJS = `
     $('#YOCO_LIVE_SECRET_KEY').value = s.YOCO_LIVE_SECRET_KEY || '';
   }
 
-  // --- WA templates list + selectors --------------------------------------
+  // ---------- WA templates list + selectors ----------
   function optionLabel(t){ return \`\${t.name} (\${(t.language||'').replace('_','-')})\`; }
-
   function fillSelectors(rows){
     const opts = ['<option value="">—</option>'].concat(
       rows.map(t=>\`<option value="\${t.name}:\${t.language}">\${optionLabel(t)}</option>\`)
@@ -217,17 +272,14 @@ export const adminSiteSettingsJS = `
       if (prev) sel.value = prev;
     });
   }
-
   async function loadTemplates(){
     const box = document.getElementById('wa-templates');
     box.textContent = 'Loading templates…';
-    const j = await fetch('/api/admin/whatsapp/templates', { credentials:'include' })
-      .then(r=>r.json()).catch(()=>({ok:false}));
+    const j = await fetch('/api/admin/whatsapp/templates', { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
     if (!j.ok){ box.textContent='Failed to load.'; fillSelectors([]); return; }
     const rows = j.templates || [];
     fillSelectors(rows);
     if (!rows.length){ box.textContent='No templates in database.'; return; }
-
     box.innerHTML = \`
       <table>
         <thead><tr><th>Name</th><th>Language</th><th>Status</th><th>Category</th></tr></thead>
@@ -241,64 +293,7 @@ export const adminSiteSettingsJS = `
       </table>\`;
   }
 
-  // --- Inbox ---------------------------------------------------------------
-  async function loadInbox(){
-    const box = document.getElementById('wa-inbox');
-    box.textContent = 'Loading…';
-    const j = await fetch('/api/admin/whatsapp/inbox', { credentials:'include' })
-      .then(r=>r.json()).catch(()=>({ok:false}));
-    if (!j.ok){ box.textContent='Failed to load.'; return; }
-
-    const rows = j.inbox || [];
-    if (!rows.length){ box.textContent='No messages yet.'; return; }
-
-    function ts(s){ try{ return new Date((s||0)*1000).toLocaleString(); }catch{ return s; } }
-
-    box.innerHTML = \`
-      <table>
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>From</th>
-            <th>Text</th>
-            <th>Status</th>
-            <th>Quick reply</th>
-          </tr>
-        </thead>
-        <tbody>\${rows.map(r=>\`
-          <tr>
-            <td>\${esc(ts(r.timestamp))}</td>
-            <td>\${esc(r.wa_from||'')}</td>
-            <td>\${esc(r.text||'')}</td>
-            <td>\${r.auto_replied ? '✓ auto' : ''} \${r.manual_replied ? '✓ manual' : ''}</td>
-            <td>
-              <div style="display:flex;gap:6px">
-                <input data-reply="\${r.id}" placeholder="Type reply…" style="flex:1;padding:6px 8px;border:1px solid #e5e7eb;border-radius:8px"/>
-                <button data-send="\${r.id}" class="btn">Send</button>
-              </div>
-            </td>
-          </tr>\`).join('')}</tbody>
-      </table>
-    \`;
-
-    box.querySelectorAll('[data-send]').forEach(btn=>{
-      btn.onclick = async ()=>{
-        const id = Number(btn.dataset.send||0);
-        const input = box.querySelector(\`[data-reply="\${id}"]\`);
-        const text = String(input?.value||'').trim();
-        if (!text) return;
-        btn.disabled = true; btn.textContent = 'Sending…';
-        const res = await fetch('/api/admin/whatsapp/reply', {
-          method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-          body: JSON.stringify({ inbox_id: id, text })
-        }).then(r=>r.json()).catch(()=>({ok:false}));
-        btn.disabled = false; btn.textContent = 'Send';
-        if (res.ok){ input.value=''; loadInbox(); } else { alert('Reply failed: ' + (res.error||'unknown')); }
-      };
-    });
-  }
-
-  // --- actions -------------------------------------------------------------
+  // ---------- Actions: save sections ----------
   $('#saveGen').onclick = ()=>save({
     SITE_NAME: $('#SITE_NAME').value,
     SITE_LOGO_URL: $('#SITE_LOGO_URL').value,
@@ -318,10 +313,8 @@ export const adminSiteSettingsJS = `
     WHATSAPP_TOKEN: $('#WHATSAPP_TOKEN').value,
     PHONE_NUMBER_ID: $('#PHONE_NUMBER_ID').value,
     BUSINESS_ID: $('#BUSINESS_ID').value,
-    // auto-reply settings
-    WA_AUTO_REPLY_ENABLED: $('#WA_AUTO_REPLY_ENABLED').checked ? '1' : '0',
-    WA_AUTO_REPLY_TEXT: $('#WA_AUTO_REPLY_TEXT').value,
-    // template selectors
+    WA_AUTOREPLY_ENABLED: $('#WA_AUTOREPLY_ENABLED').value,
+    WA_AUTOREPLY_TEXT: $('#WA_AUTOREPLY_TEXT').value,
     WA_TMP_ORDER_CONFIRM: $('#WA_TMP_ORDER_CONFIRM').value,
     WA_TMP_PAYMENT_CONFIRM: $('#WA_TMP_PAYMENT_CONFIRM').value,
     WA_TMP_TICKET_DELIVERY: $('#WA_TMP_TICKET_DELIVERY').value,
@@ -342,12 +335,109 @@ export const adminSiteSettingsJS = `
     loadTemplates();
   };
 
-  function parseVars(raw){
-    const s = String(raw||'').trim();
-    return s ? s.split(',').map(x=>x.trim()).filter(Boolean) : [];
+  // ---------- Past visitors: helpers ----------
+  function parseCSV(text) {
+    const lines = String(text || "").split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
+    const rows = [];
+    for (const line of lines) {
+      const parts = line.split(","); // simple CSV: name, phone
+      if (!parts.length) continue;
+      const name = (parts[0] || "").trim();
+      const phone = msisdn(parts.slice(1).join(",").trim());
+      rows.push({ name, phone });
+    }
+    return rows;
   }
-  function msisdn(raw){ return String(raw||'').replace(/\\D+/g,''); }
 
+  async function refreshList() {
+    const q = $('#pv-q').value.trim();
+    const tag = $('#pv-tag').value.trim();
+    const opt = $('#pv-optout').value;
+    const url = new URL('/api/admin/past/list', location.origin);
+    if (q) url.searchParams.set('query', q);
+    if (tag) url.searchParams.set('tag', tag);
+    if (opt) url.searchParams.set('optout', opt);
+    url.searchParams.set('limit', '50');
+    const j = await fetch(url, { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
+    const box = $('#pv-list');
+    if (!j.ok){ box.textContent='Failed to load.'; return; }
+    const rows = j.visitors || [];
+    if (!rows.length){ box.textContent='No results.'; return; }
+
+    box.innerHTML = \`
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="pv-all"/></th>
+          <th>Name</th><th>Phone</th><th>Tags</th><th>Opt-out</th><th>Last send</th><th>Status</th>
+        </tr></thead>
+        <tbody>\${rows.map(r=>\`
+          <tr>
+            <td><input type="checkbox" class="pv-chk" data-id="\${r.id}"/></td>
+            <td>\${esc(r.name||'')}</td>
+            <td>\${esc(r.phone||'')}</td>
+            <td>\${esc(r.tags||'')}</td>
+            <td>\${r.opt_out? 'Yes':'No'}</td>
+            <td>\${r.last_contacted_at? new Date(r.last_contacted_at*1000).toLocaleString() : ''}</td>
+            <td>\${esc(r.last_send_status||'')}</td>
+          </tr>\`).join('')}</tbody>
+      </table>\`;
+
+    $('#pv-all').onclick = (e)=>{
+      const on = e.target.checked;
+      box.querySelectorAll('.pv-chk').forEach(c=>c.checked = on);
+    };
+  }
+
+  // ---------- Past visitors: wire buttons ----------
+  $('#pv-import').onclick = async ()=>{
+    const rows = parseCSV($('#pv-csv').value);
+    const overwrite = $('#pv-overwrite').value === '1';
+    const filename = $('#pv-filename').value.trim() || null;
+    $('#pv-import-msg').textContent = 'Importing…';
+    const j = await fetch('/api/admin/past/import', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ rows, filename, overwrite_names: overwrite })
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+    $('#pv-import-msg').textContent = j.ok
+      ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
+      : ('Failed: '+(j.error||''));
+    refreshList();
+  };
+
+  $('#pv-sync').onclick = async ()=>{
+    const from = $('#pv-sync-from').value;
+    const event_id = Number($('#pv-sync-event').value || 0) || null;
+    const tag = $('#pv-sync-tag').value || '2025';
+    $('#pv-sync-msg').textContent = 'Syncing…';
+    const j = await fetch('/api/admin/past/sync', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ from, event_id, tag })
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+    $('#pv-sync-msg').textContent = j.ok
+      ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
+      : ('Failed: '+(j.error||''));
+    refreshList();
+  };
+
+  $('#pv-refresh').onclick = refreshList;
+
+  $('#pv-send').onclick = async ()=>{
+    const ids = Array.from(document.querySelectorAll('.pv-chk'))
+      .filter(c=>c.checked).map(c=>Number(c.dataset.id)).slice(0,50);
+    if (!ids.length){ $('#pv-send-msg').textContent='Select up to 50.'; return; }
+    const template_key = $('#pv-tpl-key').value;
+    const vars = ($('#pv-vars').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    $('#pv-send-msg').textContent = 'Sending…';
+    const j = await fetch('/api/admin/past/send', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ visitor_ids: ids, template_key, vars })
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+    $('#pv-send-msg').textContent = j.ok ? 'Done.' : ('Failed: '+(j.error||'')); 
+    refreshList();
+  };
+
+  // ---------- WA test send ----------
+  function parseVars(raw){ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; }
   $('#sendWATest').onclick = async ()=>{
     const to = msisdn($('#TEST_PHONE').value);
     const template_key = $('#TEST_TEMPLATE_KEY').value;
@@ -362,13 +452,13 @@ export const adminSiteSettingsJS = `
     msg.textContent = res.ok ? ('Sent ✔ ' + (res.message_id?('id: '+res.message_id):'')) : ('Failed: ' + (res.error||'unknown'));
   };
 
-  // initial load
-  loadSettings().then(loadTemplates).then(loadInbox);
-
-  // register panel activator
+  // init
+  loadSettings().then(loadTemplates);
+  // auto-open tab from deep link if present
+  const hash = (location.hash||"").replace(/^#settings:/,"");
+  if (hash === "past") showTab("past");
+  // expose launcher
   window.AdminPanels.settings = ()=>showTab('gen');
-
 })();
 `;
-
 export default adminSiteSettingsJS;
