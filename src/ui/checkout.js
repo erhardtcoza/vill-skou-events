@@ -242,19 +242,23 @@ async function submit(){
 
     const code = j.order?.short_code || 'THANKS';
 
-    // 2) Branch: Pay now → request Yoco checkout and redirect to it
+    // 2) Pay now → request Yoco checkout and follow its redirect
     if (methodSel === 'pay_now'){
       const y = await fetch('/api/payments/yoco/intent', {
         method:'POST', headers:{'content-type':'application/json'},
         body: JSON.stringify({ code })
       }).then(x=>x.json()).catch(()=>({ok:false,error:'network'}));
 
-      if (!y.ok || !y.redirect_url){
-        // fall back to thanks with explanatory message
-        location.href = '/thanks/' + encodeURIComponent(code) + '?pay=err';
+      // Accept either our canonical redirect_url or Yoco's redirectUrl
+      const go =
+        (y && (y.redirect_url || (y.yoco && (y.yoco.redirectUrl || y.yoco.redirect_url)))) || null;
+
+      if (y.ok && go){
+        location.href = go;                 // ✅ Go to Yoco hosted checkout
         return;
       }
-      location.href = y.redirect_url;   // ✅ Go to Yoco
+      // fallback to thanks (will poll for webhook)
+      location.href = '/thanks/' + encodeURIComponent(code) + '?pay=err';
       return;
     }
 
