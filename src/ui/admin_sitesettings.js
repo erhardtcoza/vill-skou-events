@@ -31,6 +31,16 @@ export const adminSiteSettingsJS = `
       #panel-settings .muted{color:#667085}
       #wa-templates table{width:100%;border-collapse:collapse}
       #wa-templates th,#wa-templates td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
+
+      /* Inbox */
+      #wa-inbox table{width:100%;border-collapse:collapse}
+      #wa-inbox th,#wa-inbox td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left;vertical-align:top}
+      #wa-inbox tbody tr:hover{background:#fafafa}
+      .badge{display:inline-block;border:1px solid #e5e7eb;border-radius:999px;padding:2px 8px;font-size:12px}
+      .badge.ok{border-color:#cdebd9;color:#0a5c28;background:#e9f7ef}
+      .badge.warn{border-color:#ffe8b3;color:#8a5b00;background:#fff7d6}
+
+      /* Past visitors */
       #pv-list table{width:100%;border-collapse:collapse}
       #pv-list th,#pv-list td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
       #pv-list tbody tr:hover{background:#fafafa}
@@ -96,6 +106,47 @@ export const adminSiteSettingsJS = `
       <div class="row-actions">
         <button id="sendWATest" class="btn">Send test</button>
         <span id="msgWATest" class="muted"></span>
+      </div>
+
+      <div class="hr"></div>
+
+      <!-- Inbox -->
+      <h3>Inbox</h3>
+      <div class="grid">
+        <div>
+          <label>Show</label>
+          <select id="wa-inbox-filter">
+            <option value="unread">Unread only</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+        <div>
+          <label>Auto-refresh</label>
+          <select id="wa-inbox-autorefresh">
+            <option value="off">Off</option>
+            <option value="5">Every 5s</option>
+            <option value="10">Every 10s</option>
+            <option value="30">Every 30s</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end"><button id="wa-inbox-refresh" class="btn">Refresh</button></div>
+      </div>
+
+      <div id="wa-inbox" class="muted" style="margin-top:10px">Loading…</div>
+
+      <div class="grid" style="margin-top:10px">
+        <div>
+          <label>Reply to</label>
+          <input id="wa-reply-to" placeholder="27… (auto filled)" />
+        </div>
+        <div style="grid-column:1/-1">
+          <label>Message</label>
+          <textarea id="wa-reply-text" rows="3" placeholder="Type a quick reply…"></textarea>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button id="wa-send-reply" class="btn">Send reply</button>
+        <span id="wa-reply-msg" class="muted"></span>
       </div>
 
       <h3 style="margin-top:18px">Templates</h3>
@@ -215,8 +266,9 @@ export const adminSiteSettingsJS = `
   }
   root.querySelectorAll('.tab-btn').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
   window.AdminPanels.settingsSwitch = (sub)=>{
-    const map = { general:'gen', whatsapp:'wa', yoco:'yoco', past:'past' };
+    const map = { general:'gen', whatsapp:'wa', 'whatsapp-inbox':'wa', yoco:'yoco', past:'past' };
     showTab(map[sub] || 'gen');
+    if (sub==='whatsapp-inbox') { setTimeout(()=>document.getElementById('wa-inbox')?.scrollIntoView({behavior:'smooth'}), 50); }
   };
 
   async function save(updates, msgEl){
@@ -228,7 +280,7 @@ export const adminSiteSettingsJS = `
     msgEl.textContent = r.ok ? 'Saved.' : ('Failed. ' + (r.error||''));
   }
 
-  // ---------- Settings load (adds extra WA auto-reply fields) ----------
+  // ---------- Settings load ----------
   async function loadSettings(){
     const j = await fetch('/api/admin/settings', { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
     if (!j.ok) return;
@@ -293,6 +345,103 @@ export const adminSiteSettingsJS = `
       </table>\`;
   }
 
+  // ---------- WhatsApp Inbox ----------
+  let inboxCursor = null;
+  let inboxAutoTimer = null;
+  let selectedMessage = null; // {id, from}
+
+  function formatTs(ts){
+    if (!ts) return '';
+    const d = new Date((/^[0-9]+$/.test(String(ts)) ? Number(ts)*1000 : Date.parse(ts)));
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString();
+  }
+
+  async function loadInbox(reset=true){
+    if (reset) inboxCursor = null;
+    const filter = $('#wa-inbox-filter').value || 'unread';
+    const params = new URLSearchParams({ limit:'50' });
+    if (filter==='unread') params.set('only_unread','1');
+    if (inboxCursor) params.set('cursor', inboxCursor);
+    const box = $('#wa-inbox');
+    box.textContent = 'Loading…';
+    const j = await fetch('/api/admin/whatsapp/inbox?'+params.toString(), { credentials:'include' })
+      .then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok){ box.textContent = 'Failed to load inbox.'; return; }
+    const rows = j.messages || j.items || [];
+    inboxCursor = j.next_cursor || null;
+    if (!rows.length){ box.textContent = 'No messages.'; return; }
+
+    box.innerHTML = \`
+      <table>
+        <thead><tr>
+          <th>When</th><th>From</th><th>Text</th><th>Status</th>
+        </tr></thead>
+        <tbody>
+        \${rows.map(m=>{
+          const auto = (m.auto_replied||m.auto_reply_sent)?'<span class="badge ok">Auto</span>':'';
+          const manual = (m.manual_replied||m.replied_via==='manual')?'<span class="badge warn">Manual</span>':'';
+          const unread = (m.read_at? '' : '<span class="pill">Unread</span>');
+          const who = esc(m.from_name||'') + (m.from_phone? (' · '+esc(m.from_phone)) : '');
+          const txt = esc(m.text||m.body||'');
+          return \`<tr data-id="\${m.id}" data-phone="\${esc(m.from_phone||'')}">
+            <td>\${formatTs(m.received_at||m.created_at)}</td>
+            <td>\${who}</td>
+            <td>\${txt}</td>
+            <td>\${unread} \${auto} \${manual}</td>
+          </tr>\`;
+        }).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button id="wa-inbox-more" class="btn outline" \${inboxCursor?'':'disabled'}>Load more</button>
+        <span class="muted">\${rows.length} shown</span>
+      </div>
+    \`;
+
+    // row click -> prefill reply target
+    box.querySelectorAll('tbody tr').forEach(tr=>{
+      tr.addEventListener('click', ()=>{
+        const id = tr.getAttribute('data-id');
+        const phone = tr.getAttribute('data-phone')||'';
+        selectedMessage = { id, phone };
+        $('#wa-reply-to').value = phone || '';
+        $('#wa-reply-text').focus();
+      });
+    });
+
+    const moreBtn = $('#wa-inbox-more');
+    if (moreBtn) moreBtn.onclick = ()=> loadInbox(false);
+  }
+
+  function setAutoRefresh(){
+    if (inboxAutoTimer) { clearInterval(inboxAutoTimer); inboxAutoTimer=null; }
+    const v = $('#wa-inbox-autorefresh').value;
+    if (v==='off') return;
+    const ms = Math.max(3, Number(v)||10) * 1000;
+    inboxAutoTimer = setInterval(()=>loadInbox(true), ms);
+  }
+
+  $('#wa-inbox-refresh').onclick = ()=>loadInbox(true);
+  $('#wa-inbox-filter').onchange = ()=>loadInbox(true);
+  $('#wa-inbox-autorefresh').onchange = setAutoRefresh;
+
+  $('#wa-send-reply').onclick = async ()=>{
+    const to = msisdn($('#wa-reply-to').value||'');
+    const text = String($('#wa-reply-text').value||'').trim();
+    const msg = $('#wa-reply-msg');
+    if (!to){ msg.textContent='Enter phone like 27…'; return; }
+    if (!text){ msg.textContent='Type a message.'; return; }
+    msg.textContent='Sending…';
+    const payload = selectedMessage?.id ? { message_id: selectedMessage.id, text } : { to, text };
+    const j = await fetch('/api/admin/whatsapp/reply', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify(payload)
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+    msg.textContent = j.ok ? 'Sent.' : ('Failed: ' + (j.error||''));
+    if (j.ok){ $('#wa-reply-text').value=''; loadInbox(true); }
+  };
+
   // ---------- Actions: save sections ----------
   $('#saveGen').onclick = ()=>save({
     SITE_NAME: $('#SITE_NAME').value,
@@ -340,7 +489,7 @@ export const adminSiteSettingsJS = `
     const lines = String(text || "").split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
     const rows = [];
     for (const line of lines) {
-      const parts = line.split(","); // simple CSV: name, phone
+      const parts = line.split(",");
       if (!parts.length) continue;
       const name = (parts[0] || "").trim();
       const phone = msisdn(parts.slice(1).join(",").trim());
@@ -453,10 +602,11 @@ export const adminSiteSettingsJS = `
   };
 
   // init
-  loadSettings().then(loadTemplates);
+  loadSettings().then(loadTemplates).then(()=>{ if ($('#tab-wa').style.display!=='none'){ loadInbox(true); setAutoRefresh(); }});
   // auto-open tab from deep link if present
   const hash = (location.hash||"").replace(/^#settings:/,"");
   if (hash === "past") showTab("past");
+  if (hash === "wa:inbox") { showTab("wa"); setTimeout(()=>document.getElementById('wa-inbox')?.scrollIntoView({behavior:'smooth'}), 50); loadInbox(true); }
   // expose launcher
   window.AdminPanels.settings = ()=>showTab('gen');
 })();
