@@ -51,8 +51,6 @@ function renderHTML(mod, ...args) {
 mountAuth(router);       // /api/auth/login, /api/auth/logout
 mountPublic(router);     // /api/public/*
 mountAdmin(router);      // /api/admin/*
-mountPOS(router);        // /api/pos/*
-mountScan(router);       // /api/scan/*
 mountSync(router);       // /api/sync/*
 mountWhatsApp(router);   // /api/whatsapp/*
 mountWATest(router);
