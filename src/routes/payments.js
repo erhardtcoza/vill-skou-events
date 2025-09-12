@@ -49,16 +49,19 @@ export function mountPayments(router) {
       if (ev?.slug) cancel_url = PUBLIC_BASE_URL + "/shop/" + encodeURIComponent(ev.slug);
     } catch {}
 
-    const redirect_url = PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code);
+    // Use thank-you as landing, but hint where to go next
+    const next = "/t/" + encodeURIComponent(code);
+    const redirect_url =
+      PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code) +
+      "?next=" + encodeURIComponent(next);
 
     const payload = {
       amount: Number(o.total_cents || 0),
       currency: "ZAR",
-      reference: String(o.short_code),         // some webhooks send this, some don’t
+      reference: String(o.short_code),
       description: "Villiersdorp Skou tickets",
       redirect_url,
       cancel_url,
-      // Belt-and-braces so the webhook can recover the order even if reference is blank:
       metadata: { reference: String(o.short_code), order_id: String(o.id) }
     };
 
@@ -104,7 +107,6 @@ export function mountPayments(router) {
 
     return json({
       ok: true,
-      // we’ll also include canonical key the UI already reads:
       redirect_url: yocoRedirect || redirect_url,
       yoco: y || null
     });
@@ -127,8 +129,8 @@ export function mountPayments(router) {
 
     const checkoutId = obj?.checkoutId || obj?.metadata?.checkoutId || obj?.id || null;
     const paymentId  = obj?.paymentId  || obj?.metadata?.paymentId  || null;
-
     const idForLookup = checkoutId || paymentId || null;
+    const extId = idForLookup ? String(idForLookup) : null;
 
     const paidLike   = rawStatus === "paid" || rawStatus === "succeeded" ||
                        type.includes("checkout.completed") || type.includes("payment.succeeded");
@@ -161,6 +163,15 @@ export function mountPayments(router) {
                   updated_at=strftime('%s','now')
             WHERE ${where}`
         ).bind(...bindA).run();
+
+        // If matched by reference and we have an ext id, stash it
+        if (reference && extId) {
+          try {
+            await env.DB.prepare(
+              `UPDATE orders SET payment_ext_id=COALESCE(payment_ext_id, ?2) WHERE ${where}`
+            ).bind(...bindB, extId).run();
+          } catch {}
+        }
       } else if (failedLike) {
         await env.DB.prepare(
           `UPDATE orders
@@ -169,11 +180,27 @@ export function mountPayments(router) {
                   updated_at=strftime('%s','now')
             WHERE ${where}`
         ).bind(...bindA).run();
+
+        if (reference && extId) {
+          try {
+            await env.DB.prepare(
+              `UPDATE orders SET payment_ext_id=COALESCE(payment_ext_id, ?2) WHERE ${where}`
+            ).bind(...bindB, extId).run();
+          } catch {}
+        }
       } else {
         // store last status string for debugging
         await env.DB.prepare(
           `UPDATE orders SET payment_note=?2 WHERE ${where}`
         ).bind(...bindB, `yoco_status:${safe(rawStatus)}`).run();
+
+        if (reference && extId) {
+          try {
+            await env.DB.prepare(
+              `UPDATE orders SET payment_ext_id=COALESCE(payment_ext_id, ?2) WHERE ${where}`
+            ).bind(...bindB, extId).run();
+          } catch {}
+        }
       }
     } catch { /* keep webhook idempotent */ }
 
@@ -188,7 +215,7 @@ export function mountPayments(router) {
       ok: true,
       mode, hasSecret: !!secret,
       publicBaseUrl: base || null,
-      redirectExample: (base ? base + "/thanks/EXAMPLE" : null),
+      redirectExample: (base ? base + "/thanks/EXAMPLE?next=%2Ft%2FEXAMPLE" : null),
       cancelExample: (base ? base + "/shop/{event-slug}" : null)
     });
   });
