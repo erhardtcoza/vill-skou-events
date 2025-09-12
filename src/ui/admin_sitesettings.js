@@ -286,3 +286,7 @@ loadSettings().then(loadTemplates);
 </body>
 </html>`;
 }
+
+/* ✅ compatibility exports */
+export const adminSiteSettingsJS = adminSiteSettingsHTML;
+export default adminSiteSettingsHTML;
