@@ -8,6 +8,7 @@ import { registerAddonRoutes } from "./addons/api.js";
 import { mountPayments } from "./routes/payments.js";
 import { mountPOS } from "./routes/pos.js";
 import { mountScan } from "./routes/scan.js";
+import { mountPastVisitors } from "./routes/past_visitors.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -56,9 +57,9 @@ function initWithEnv(env) {
   mountWhatsApp(router);   // /api/whatsapp/*
   mountWATest(router);
   mountPayments(router);
-  // these were failing before because env wasn't defined:
   mountPOS(router, env);   // /api/pos/*
   mountScan(router, env);  // /api/scan/*
+  mountPastVisitors(router);
 
   /* ------------------- UI ROUTES --------------------- */
   // Landing
