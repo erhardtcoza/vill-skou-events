@@ -17,17 +17,14 @@ function createRouter() {
   const add = (method, pattern, handler) => {
     routes.push({ method: (method || "ANY").toUpperCase(), pattern, handler });
   };
-
   const get = (pattern, handler) => add("GET", pattern, handler);
   const post = (pattern, handler) => add("POST", pattern, handler);
   const any = (pattern, handler) => add("ANY", pattern, handler);
 
-  // Mount sub-router under a prefix
+  // Mount a sub-router under a prefix
   const mount = (prefix, sub) => {
     const base = normalize(prefix);
-    if (!sub || !Array.isArray(sub.routes)) {
-      throw new Error("mount(prefix, subRouter): subRouter.routes missing");
-    }
+    if (!sub || !Array.isArray(sub.routes)) throw new Error("mount(prefix, sub): sub.routes missing");
     for (const r of sub.routes) {
       const child = r.pattern === "/" ? "" : (r.pattern.startsWith("/") ? r.pattern : "/" + r.pattern);
       const full = normalize(base + child);
@@ -49,10 +46,9 @@ function createRouter() {
   return { add, get, post, any, mount, handle, routes };
 }
 
-// Named export (preferred)
+// Named export
 export function Router() {
   return createRouter();
 }
-
-// Default export (for files doing: import Router from "./router.js")
+// Default export (in case some files do: import Router from "./router.js")
 export default Router;
