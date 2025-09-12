@@ -8,6 +8,7 @@ export function mountScan(router, env) {
   r.get("/diag", async () => Response.json({ ok: true, scanner: "ready" }));
 
   // Lookup by QR
+  // Body: { qr }
   r.post("/lookup", async (req) => {
     try {
       const { qr } = await req.json();
@@ -31,6 +32,7 @@ export function mountScan(router, env) {
   });
 
   // Enter (gate-in)
+  // Body: { qr }
   r.post("/enter", async (req) => {
     try {
       const { qr } = await req.json();
@@ -54,6 +56,7 @@ export function mountScan(router, env) {
   });
 
   // Exit (gate-out)
+  // Body: { qr }
   r.post("/exit", async (req) => {
     try {
       const { qr } = await req.json();
@@ -73,7 +76,8 @@ export function mountScan(router, env) {
     }
   });
 
-  // Toggle: if in -> out; if unused/out -> in
+  // Toggle (smart scan)
+  // Body: { qr }
   r.post("/toggle", async (req) => {
     try {
       const { qr } = await req.json();
@@ -85,20 +89,4 @@ export function mountScan(router, env) {
 
       const ts = nowTs();
       if (t.state === "in") {
-        await env.DB.prepare(`UPDATE tickets SET state='out', last_out_at=? WHERE id=?`).bind(ts, t.id).run();
-        return Response.json({ ok: true, action: "exit", state: "out", last_out_at: ts });
-      } else {
-        await env.DB.prepare(`
-          UPDATE tickets SET state='in', first_in_at = COALESCE(first_in_at, ?)
-          WHERE id=?
-        `).bind(ts, t.id).run();
-        return Response.json({ ok: true, action: "enter", state: "in", first_in_at: t.first_in_at ?? ts });
-      }
-    } catch (err) {
-      console.error("SCAN /toggle error:", err);
-      return Response.json({ ok: false, error: err.message }, { status: 500 });
-    }
-  });
-
-  router.mount("/api/scan", r);
-}
+        await env.DB.prepare(`UPDATE tickets SET state='out', last_out_at=? WHERE
