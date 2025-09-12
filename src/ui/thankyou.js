@@ -33,7 +33,7 @@ export function thankYouHTML(code) {
     <div id="paidBanner" class="success">Betaling bevestig! Jou kaartjies word nou via WhatsApp en e-pos gestuur.</div>
 
     <div class="row" style="margin-top:14px">
-      <a id="ticketsBtn" class="btn primary" href="/t/${safe}" style="">Wys my kaartjies</a>
+      <a id="ticketsBtn" class="btn primary" href="/t/${safe}">Wys my kaartjies</a>
       <a class="btn" href="/">Terug na tuisblad</a>
     </div>
   </div>
@@ -43,7 +43,7 @@ export function thankYouHTML(code) {
 (async function(){
   const code = ${JSON.stringify(safe)};
   const params = new URLSearchParams(location.search);
-  const next = params.get("next");
+  const next = params.get("next"); // set by payments redirect
   const statusUrl = "/api/public/orders/status/" + encodeURIComponent(code);
   const btn = document.getElementById("ticketsBtn");
   const wait = document.getElementById("waiting");
@@ -61,7 +61,10 @@ export function thankYouHTML(code) {
   function onPaid(){
     wait.style.display = "none";
     banner.style.display = "block";
-    if (next) location.href = next; // auto-forward to ticket page
+    // If Yoco showed their "click here if not redirected" link → this page loads,
+    // we automatically forward to the ticket page so the user lands on their tickets.
+    if (next) location.href = next;
+    else btn.style.display = "inline-block";
   }
 
   // First check
