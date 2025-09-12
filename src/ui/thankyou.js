@@ -33,7 +33,7 @@ export function thankYouHTML(code) {
     <div id="paidBanner" class="success">Betaling bevestig! Jou kaartjies word nou via WhatsApp en e-pos gestuur.</div>
 
     <div class="row" style="margin-top:14px">
-      <a id="ticketsBtn" class="btn primary" href="/t/${safe}" style="display:none">Wys my kaartjies</a>
+      <a id="ticketsBtn" class="btn primary" href="/t/${safe}" style="">Wys my kaartjies</a>
       <a class="btn" href="/">Terug na tuisblad</a>
     </div>
   </div>
@@ -42,6 +42,8 @@ export function thankYouHTML(code) {
 <script>
 (async function(){
   const code = ${JSON.stringify(safe)};
+  const params = new URLSearchParams(location.search);
+  const next = params.get("next");
   const statusUrl = "/api/public/orders/status/" + encodeURIComponent(code);
   const btn = document.getElementById("ticketsBtn");
   const wait = document.getElementById("waiting");
@@ -59,7 +61,7 @@ export function thankYouHTML(code) {
   function onPaid(){
     wait.style.display = "none";
     banner.style.display = "block";
-    btn.style.display = "inline-block";
+    if (next) location.href = next; // auto-forward to ticket page
   }
 
   // First check
