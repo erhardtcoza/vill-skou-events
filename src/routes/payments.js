@@ -49,7 +49,7 @@ export function mountPayments(router) {
       if (ev?.slug) cancel_url = PUBLIC_BASE_URL + "/shop/" + encodeURIComponent(ev.slug);
     } catch {}
 
-    // Use thank-you as landing, but hint where to go next
+    // Use thank-you as landing, with a "next" to the ticket page (works with Yoco fallback link)
     const next = "/t/" + encodeURIComponent(code);
     const redirect_url =
       PUBLIC_BASE_URL + "/thanks/" + encodeURIComponent(code) +
@@ -58,10 +58,11 @@ export function mountPayments(router) {
     const payload = {
       amount: Number(o.total_cents || 0),
       currency: "ZAR",
-      reference: String(o.short_code),
+      reference: String(o.short_code),         // some webhooks send this, some don’t
       description: "Villiersdorp Skou tickets",
       redirect_url,
       cancel_url,
+      // Belt-and-braces so the webhook can recover the order even if reference is blank:
       metadata: { reference: String(o.short_code), order_id: String(o.id) }
     };
 
@@ -107,6 +108,7 @@ export function mountPayments(router) {
 
     return json({
       ok: true,
+      // we’ll also include canonical key the UI already reads:
       redirect_url: yocoRedirect || redirect_url,
       yoco: y || null
     });
@@ -202,7 +204,9 @@ export function mountPayments(router) {
           } catch {}
         }
       }
-    } catch { /* keep webhook idempotent */ }
+    } catch {
+      // keep webhook idempotent
+    }
 
     return json({ ok: true });
   });
