@@ -1,264 +1,357 @@
 // /src/ui/admin_sitesettings.js
-// Export a JS source string that admin.js will inject into its <script> tag.
-export const adminSiteSettingsJS = `
-(function(){
-  const API = {
-    settings_get: "/api/admin/settings",
-    settings_set: "/api/admin/settings/update",
-    wa_templates: "/api/admin/whatsapp/templates",
-    wa_sync: "/api/admin/whatsapp/sync",
-    wa_diag: "/api/admin/whatsapp/diag"
-  };
+export function adminSiteSettingsHTML() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Site Settings</title>
+<style>
+  :root{ --green:#0a7d2b; --muted:#6b7280; --card:#fff; --bg:#f6f7f8 }
+  body{margin:0;background:var(--bg);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0b1320}
+  .wrap{max-width:1000px;margin:20px auto;padding:0 14px}
+  h1{margin:0 0 12px}
+  .tabs{display:flex;gap:8px;margin:8px 0 16px}
+  .tab{background:#e7ecef;border-radius:999px;padding:8px 12px;cursor:pointer}
+  .tab.active{background:#d9f2df;color:#06451c;font-weight:700}
+  .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 10px 22px rgba(0,0,0,.06)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  label{display:block;font-size:12px;color:#374151;margin:8px 0 6px}
+  input,select,textarea{width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
+  .btn.outline{background:#fff;color:#111;border:1px solid #e5e7eb}
+  .muted{color:var(--muted)}
+  table{width:100%;border-collapse:collapse;margin-top:10px}
+  th,td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left;font-size:14px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #e5e7eb;font-size:12px}
+  .row-actions{display:flex;gap:8px;margin-top:10px}
+  .hint{font-size:12px;color:#6b7280}
+  .hr{height:1px;background:#eef1f3;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Site Settings</h1>
 
-  const esc = window.esc || (s=>String(s||"").replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])));
-  const $  = window.$;
+  <div class="tabs">
+    <div class="tab active" data-tab="gen">General</div>
+    <div class="tab" data-tab="wa">WhatsApp</div>
+    <div class="tab" data-tab="yoco">Yoco</div>
+  </div>
 
-  function el(html){
-    const d = document.createElement("div");
-    d.innerHTML = html.trim();
-    return d.firstElementChild;
+  <!-- General -->
+  <div id="panel-gen" class="card">
+    <div class="grid">
+      <div>
+        <label>Site Name</label>
+        <input id="SITE_NAME"/>
+      </div>
+      <div>
+        <label>Logo URL</label>
+        <input id="SITE_LOGO_URL"/>
+      </div>
+      <div>
+        <label>Public Base URL (https)</label>
+        <input id="PUBLIC_BASE_URL" placeholder="https://tickets.example.com"/>
+      </div>
+      <div>
+        <label>VERIFY_TOKEN (Webhook verify)</label>
+        <input id="VERIFY_TOKEN" placeholder="vs-verify-2025"/>
+      </div>
+    </div>
+    <div class="row-actions">
+      <button id="saveGen" class="btn">Save General</button>
+      <span id="msgGen" class="muted"></span>
+    </div>
+  </div>
+
+  <!-- WhatsApp -->
+  <div id="panel-wa" class="card" style="display:none">
+    <h3>WhatsApp Settings</h3>
+    <div class="grid">
+      <div>
+        <label>Access Token</label>
+        <input id="WHATSAPP_TOKEN"/>
+      </div>
+      <div>
+        <label>Phone Number ID</label>
+        <input id="PHONE_NUMBER_ID"/>
+      </div>
+      <div>
+        <label>Business (WABA) ID</label>
+        <input id="BUSINESS_ID"/>
+      </div>
+    </div>
+
+    <h4 style="margin-top:14px">Template selectors</h4>
+    <p class="hint">Choose which approved template to use for each message flow. Values saved as <code>name:language</code>.</p>
+    <div class="grid">
+      <div>
+        <label>Order confirmation</label>
+        <select id="WA_TMP_ORDER_CONFIRM"></select>
+      </div>
+      <div>
+        <label>Payment confirmation</label>
+        <select id="WA_TMP_PAYMENT_CONFIRM"></select>
+      </div>
+      <div>
+        <label>Ticket delivery</label>
+        <select id="WA_TMP_TICKET_DELIVERY"></select>
+      </div>
+      <div>
+        <label>Skou reminders</label>
+        <select id="WA_TMP_SKOU_SALES"></select>
+      </div>
+    </div>
+
+    <div class="row-actions">
+      <button id="saveWA" class="btn">Save WhatsApp</button>
+      <button id="syncWA" class="btn outline">Sync templates</button>
+      <span id="msgWA" class="muted"></span>
+    </div>
+
+    <div class="hr"></div>
+
+    <!-- Test sender -->
+    <h3>Send test</h3>
+    <p class="hint">Send a template message to a phone to verify delivery. Uses one of the configured selectors above.</p>
+    <div class="grid">
+      <div>
+        <label>Phone (MSISDN, e.g. 27XXXXXXXXX)</label>
+        <input id="TEST_PHONE" placeholder="27…"/>
+      </div>
+      <div>
+        <label>Which template</label>
+        <select id="TEST_TEMPLATE_KEY">
+          <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
+          <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
+          <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
+          <option value="WA_TMP_SKOU_SALES">Skou reminders</option>
+        </select>
+      </div>
+      <div style="grid-column:1/-1">
+        <label>Variables (comma separated, optional)</label>
+        <input id="TEST_VARS" placeholder="e.g. Piet, CAXHIEG"/>
+      </div>
+    </div>
+    <div class="row-actions">
+      <button id="sendWATest" class="btn">Send test</button>
+      <span id="msgWATest" class="muted"></span>
+    </div>
+
+    <h3 style="margin-top:18px">Templates</h3>
+    <div id="waTable" class="muted">Loading templates…</div>
+  </div>
+
+  <!-- Yoco -->
+  <div id="panel-yoco" class="card" style="display:none">
+    <div class="grid">
+      <div>
+        <label>Mode</label>
+        <select id="YOCO_MODE">
+          <option value="sandbox">Sandbox</option>
+          <option value="live">Live</option>
+        </select>
+      </div>
+      <div></div>
+      <div>
+        <label>Sandbox (Test) Public Key</label>
+        <input id="YOCO_TEST_PUBLIC_KEY"/>
+      </div>
+      <div>
+        <label>Sandbox (Test) Secret Key</label>
+        <input id="YOCO_TEST_SECRET_KEY"/>
+      </div>
+      <div>
+        <label>Live Public Key</label>
+        <input id="YOCO_LIVE_PUBLIC_KEY"/>
+      </div>
+      <div>
+        <label>Live Secret Key</label>
+        <input id="YOCO_LIVE_SECRET_KEY"/>
+      </div>
+    </div>
+    <div class="row-actions">
+      <button id="saveYoco" class="btn">Save Yoco</button>
+      <span id="msgYoco" class="muted"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+function showTab(which){
+  for (const t of document.querySelectorAll('.tab')) t.classList.toggle('active', t.dataset.tab===which);
+  for (const id of ['gen','wa','yoco']) $('panel-'+id).style.display = (id===which?'block':'none');
+}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showTab(t.dataset.tab));
+
+// --- Settings IO -----------------------------------------------------------
+async function loadSettings(){
+  const r = await fetch('/api/admin/settings', { credentials:'include' });
+  const j = await r.json().catch(()=>({ok:false}));
+  if (!j.ok){ $('msgGen').textContent='Failed to load settings'; return; }
+  const s = j.settings||{};
+  // General
+  ['SITE_NAME','SITE_LOGO_URL','PUBLIC_BASE_URL','VERIFY_TOKEN']
+    .forEach(k=>{ if (s[k]!=null) $(k).value = s[k]; });
+
+  // WhatsApp basics
+  $('WHATSAPP_TOKEN').value   = s.WHATSAPP_TOKEN || '';
+  $('PHONE_NUMBER_ID').value  = s.PHONE_NUMBER_ID || '';
+  $('BUSINESS_ID').value      = s.BUSINESS_ID || '';
+
+  // Template selectors: stash current values to re-select after syncing
+  $('WA_TMP_ORDER_CONFIRM').dataset.value   = s.WA_TMP_ORDER_CONFIRM || '';
+  $('WA_TMP_PAYMENT_CONFIRM').dataset.value = s.WA_TMP_PAYMENT_CONFIRM || '';
+  $('WA_TMP_TICKET_DELIVERY').dataset.value = s.WA_TMP_TICKET_DELIVERY || '';
+  $('WA_TMP_SKOU_SALES').dataset.value      = s.WA_TMP_SKOU_SALES || '';
+
+  // Yoco
+  $('YOCO_MODE').value              = (s.YOCO_MODE||'sandbox').toLowerCase();
+  $('YOCO_TEST_PUBLIC_KEY').value   = s.YOCO_TEST_PUBLIC_KEY || '';
+  $('YOCO_TEST_SECRET_KEY').value   = s.YOCO_TEST_SECRET_KEY || '';
+  $('YOCO_LIVE_PUBLIC_KEY').value   = s.YOCO_LIVE_PUBLIC_KEY || '';
+  $('YOCO_LIVE_SECRET_KEY').value   = s.YOCO_LIVE_SECRET_KEY || '';
+}
+
+async function save(updates, msgEl){
+  msgEl.textContent='Saving…';
+  const r = await fetch('/api/admin/settings/update', {
+    method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+    body: JSON.stringify({ updates })
+  });
+  const j = await r.json().catch(()=>({ok:false}));
+  msgEl.textContent = j.ok ? 'Saved.' : ('Failed.' + (j.error?(' '+j.error):''));
+}
+
+$('saveGen').onclick = ()=>save({
+  SITE_NAME: $('SITE_NAME').value,
+  SITE_LOGO_URL: $('SITE_LOGO_URL').value,
+  PUBLIC_BASE_URL: $('PUBLIC_BASE_URL').value,
+  VERIFY_TOKEN: $('VERIFY_TOKEN').value,
+}, $('msgGen'));
+
+$('saveYoco').onclick = ()=>save({
+  YOCO_MODE: $('YOCO_MODE').value,
+  YOCO_TEST_PUBLIC_KEY: $('YOCO_TEST_PUBLIC_KEY').value,
+  YOCO_TEST_SECRET_KEY: $('YOCO_TEST_SECRET_KEY').value,
+  YOCO_LIVE_PUBLIC_KEY: $('YOCO_LIVE_PUBLIC_KEY').value,
+  YOCO_LIVE_SECRET_KEY: $('YOCO_LIVE_SECRET_KEY').value,
+}, $('msgYoco'));
+
+$('saveWA').onclick = ()=>save({
+  WHATSAPP_TOKEN: $('WHATSAPP_TOKEN').value,
+  PHONE_NUMBER_ID: $('PHONE_NUMBER_ID').value,
+  BUSINESS_ID: $('BUSINESS_ID').value,
+  WA_TMP_ORDER_CONFIRM: $('WA_TMP_ORDER_CONFIRM').value,
+  WA_TMP_PAYMENT_CONFIRM: $('WA_TMP_PAYMENT_CONFIRM').value,
+  WA_TMP_TICKET_DELIVERY: $('WA_TMP_TICKET_DELIVERY').value,
+  WA_TMP_SKOU_SALES: $('WA_TMP_SKOU_SALES').value,
+}, $('msgWA'));
+
+// --- Templates table + sync -----------------------------------------------
+function optionLabel(t){
+  const lang = (t.language||'').replace('_','-');
+  return \`\${t.name} (\${lang})\`;
+}
+
+function fillSelectors(templates){
+  const opts = ['<option value="">—</option>'].concat(
+    templates.map(t=>\`<option value="\${t.name}:\${t.language}">\${optionLabel(t)}</option>\`)
+  ).join('');
+
+  for (const id of ['WA_TMP_ORDER_CONFIRM','WA_TMP_PAYMENT_CONFIRM','WA_TMP_TICKET_DELIVERY','WA_TMP_SKOU_SALES']){
+    const sel = $(id);
+    const prev = sel.dataset.value || '';
+    sel.innerHTML = opts;
+    if (prev) sel.value = prev;
   }
+}
 
-  function pills(){ return \`<span class="pill" style="display:inline-block;padding:4px 8px;border:1px solid #e5e7eb;border-radius:999px;font-size:12px;color:#444"></span>\`; }
+async function loadTemplates(){
+  const box = $('waTable');
+  box.textContent = 'Loading templates…';
+  const r = await fetch('/api/admin/whatsapp/templates', { credentials:'include' });
+  const j = await r.json().catch(()=>({ok:false}));
+  if (!j.ok){ box.textContent='Failed to load.'; return; }
+  const rows = j.templates || [];
+  if (!rows.length){ box.textContent = 'No templates in database.'; fillSelectors([]); return; }
 
-  function subTabsHTML(active){
-    return [
-      "<div class='tabs' style='gap:8px;margin:0 0 12px'>",
-        "<button class='tab", (active==="gen"?" active":""), "' data-sub='gen'>General</button>",
-        "<button class='tab", (active==="wa" ?" active":""), "' data-sub='wa'>WhatsApp</button>",
-        "<button class='tab", (active==="yoco"?" active":""), "' data-sub='yoco'>Yoco</button>",
-      "</div>"
-    ].join("");
+  fillSelectors(rows);
+
+  box.innerHTML = \`
+    <table>
+      <thead><tr><th>Name</th><th>Language</th><th>Status</th><th>Category</th></tr></thead>
+      <tbody>
+        \${rows.map(t=>\`
+          <tr>
+            <td>\${t.name}</td>
+            <td><span class="pill">\${t.language}</span></td>
+            <td>\${t.status||''}</td>
+            <td>\${t.category||''}</td>
+          </tr>\`).join('')}
+      </tbody>
+    </table>\`;
+}
+
+$('syncWA').onclick = async ()=>{
+  $('msgWA').textContent = 'Syncing…';
+  const r = await fetch('/api/admin/whatsapp/sync', { method:'POST', credentials:'include' });
+  const j = await r.json().catch(()=>({ok:false}));
+  if (!j.ok){
+    const d = await fetch('/api/admin/whatsapp/diag', { credentials:'include' })
+      .then(x=>x.json()).catch(()=>({}));
+    const extra = d?.metaError?.message || d?.error || '';
+    alert('Sync failed: ' + (j.error || 'unknown') + (extra ? ('\\n' + extra) : ''));
+  }else{
+    alert('Templates synced. Added/updated: ' + (j.fetched||0) + '. In DB: ' + (j.total||0));
   }
+  $('msgWA').textContent='';
+  loadTemplates();
+};
 
-  function panelHTML(){
-    return [
-      "<style>",
-      ".tab{padding:8px 12px;border:1px solid #e5e7eb;border-radius:999px;background:#fff;cursor:pointer}",
-      ".tab.active{background:#0a7d2b;color:#fff;border-color:transparent}",
-      ".row{display:grid;grid-template-columns:1fr 1fr;gap:12px}",
-      "@media (max-width:900px){.row{grid-template-columns:1fr}}",
-      "label{display:block;font-size:13px;color:#444;margin:8px 0 6px}",
-      "input,select,textarea{width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;font:inherit;background:#fff}",
-      ".split{display:flex;gap:10px;align-items:center;flex-wrap:wrap}",
-      ".pill{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #e5e7eb;color:#444}",
-      ".hide{display:none}",
-      "</style>",
+// --- Test sender -----------------------------------------------------------
+function parseVars(raw){
+  const s = String(raw||'').trim();
+  if (!s) return [];
+  return s.split(',').map(x=>x.trim()).filter(Boolean);
+}
+function msisdn(raw){
+  return String(raw||'').replace(/\\D+/g,'');
+}
 
-      subTabsHTML("gen"),
+$('sendWATest').onclick = async ()=>{
+  const to = msisdn($('TEST_PHONE').value);
+  const template_key = $('TEST_TEMPLATE_KEY').value;
+  const vars = parseVars($('TEST_VARS').value);
+  const msg = $('msgWATest');
 
-      "<div id='settings-gen'>",
-        "<div class='row'>",
-          "<div><label>Site Name</label><input id='SITE_NAME'></div>",
-          "<div><label>Logo URL</label><input id='SITE_LOGO_URL'></div>",
-        "</div>",
-        "<div class='row'>",
-          "<div><label>Public Base URL (https)</label><input id='PUBLIC_BASE_URL' placeholder='https://tickets.example.com'></div>",
-          "<div><label>VERIFY_TOKEN (Webhook verify)</label><input id='VERIFY_TOKEN' placeholder='vs-verify-2025'></div>",
-        "</div>",
-        "<div class='split' style='margin-top:10px'><button class='btn primary' id='saveGen'>Save General</button><span id='msgGen' class='muted'></span></div>",
-        "<hr style='margin:16px 0'/>",
-      "</div>",
+  if (!to){ msg.textContent='Enter phone like 27XXXXXXXXX'; return; }
+  msg.textContent = 'Sending…';
 
-      "<div id='settings-wa' class='hide'>",
-        "<h3>WhatsApp Settings</h3>",
-        "<div class='row'>",
-          "<div><label>Access Token</label><input id='WHATSAPP_TOKEN'></div>",
-          "<div><label>Phone Number ID</label><input id='PHONE_NUMBER_ID'></div>",
-        "</div>",
-        "<div class='row'>",
-          "<div><label>Business (WABA) ID</label><input id='BUSINESS_ID'></div>",
-          "<div></div>",
-        "</div>",
-
-        "<h4 style='margin-top:14px'>Template selectors</h4>",
-        "<div class='row'>",
-          "<div><label>Order confirmation</label><select id='WA_TMP_ORDER_CONFIRM'></select></div>",
-          "<div><label>Payment confirmation</label><select id='WA_TMP_PAYMENT_CONFIRM'></select></div>",
-        "</div>",
-        "<div class='row'>",
-          "<div><label>Ticket delivery</label><select id='WA_TMP_TICKET_DELIVERY'></select></div>",
-          "<div><label>Skou reminders</label><select id='WA_TMP_SKOU_SALES'></select></div>",
-        "</div>",
-        "<div class='split' style='margin-top:10px'>",
-          "<button class='btn primary' id='saveWA'>Save WhatsApp</button>",
-          "<button class='btn' id='syncWA'>Sync templates</button>",
-          "<span id='msgWA' class='muted'></span>",
-        "</div>",
-        "<h3 style='margin-top:16px'>Templates</h3>",
-        "<div id='waTable' class='muted'>Loading templates…</div>",
-        "<hr style='margin:16px 0'/>",
-      "</div>",
-
-      "<div id='settings-yoco' class='hide'>",
-        "<div class='row'>",
-          "<div>",
-            "<label>Mode</label>",
-            "<select id='YOCO_MODE'>",
-              "<option value='sandbox'>Sandbox</option>",
-              "<option value='live'>Live</option>",
-            "</select>",
-          "</div>",
-          "<div></div>",
-        "</div>",
-        "<div class='row'>",
-          "<div><label>Sandbox (Test) Public Key</label><input id='YOCO_TEST_PUBLIC_KEY'></div>",
-          "<div><label>Sandbox (Test) Secret Key</label><input id='YOCO_TEST_SECRET_KEY'></div>",
-        "</div>",
-        "<div class='row'>",
-          "<div><label>Live Public Key</label><input id='YOCO_LIVE_PUBLIC_KEY'></div>",
-          "<div><label>Live Secret Key</label><input id='YOCO_LIVE_SECRET_KEY'></div>",
-        "</div>",
-        "<div class='split' style='margin-top:10px'><button class='btn primary' id='saveYoco'>Save Yoco</button><span id='msgYoco' class='muted'></span></div>",
-      "</div>"
-    ].join("");
+  const r = await fetch('/api/admin/whatsapp/test', {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    credentials:'include',
+    body: JSON.stringify({ to, template_key, vars })
+  });
+  const j = await r.json().catch(()=>({ok:false}));
+  if (j.ok){
+    msg.textContent = 'Sent ✔ ' + (j.message_id ? ('id: '+j.message_id) : '');
+  }else{
+    msg.textContent = 'Failed: ' + (j.error || 'unknown');
   }
+};
 
-  async function saveSettings(updates, msgEl){
-    if (msgEl) msgEl.textContent = "Saving…";
-    const r = await fetch(API.settings_set, {
-      method:"POST",
-      headers:{ "content-type":"application/json" },
-      body: JSON.stringify({ updates })
-    });
-    const j = await r.json().catch(()=>({ok:false}));
-    if (msgEl) msgEl.textContent = j.ok ? "Saved." : "Failed.";
-    if (!j.ok) alert("Save failed");
-  }
+// init
+loadSettings().then(loadTemplates);
+</script>
+</body>
+</html>`;
+}
 
-  function fillSelectors(templates){
-    const opts = ["<option value=''>—</option>"]
-      .concat((templates||[]).map(t=>\`<option value="\${esc(t.name)}:\${esc(t.language)}">\${esc(t.name)} (\${esc((t.language||'').replace('_','-'))})</option>\`))
-      .join("");
-    ["WA_TMP_ORDER_CONFIRM","WA_TMP_PAYMENT_CONFIRM","WA_TMP_TICKET_DELIVERY","WA_TMP_SKOU_SALES"].forEach(id=>{
-      const sel = document.getElementById(id);
-      const prev = sel?.dataset?.value || "";
-      if (sel){ sel.innerHTML = opts; if (prev) sel.value = prev; }
-    });
-  }
-
-  async function loadTemplates(){
-    const box = document.getElementById("waTable");
-    if (!box) return;
-    box.textContent = "Loading templates…";
-    const r = await fetch(API.wa_templates).catch(()=>null);
-    const j = r ? await r.json().catch(()=>({ok:false})) : {ok:false};
-    if (!j.ok){ box.textContent = "Failed to load."; return; }
-    const rows = j.templates || [];
-    fillSelectors(rows);
-    if (!rows.length){ box.textContent = "No templates in database."; return; }
-    box.innerHTML = [
-      "<table><thead><tr><th>Name</th><th>Language</th><th>Status</th><th>Category</th></tr></thead><tbody>",
-      ...rows.map(t=>[
-        "<tr>",
-          "<td>", esc(t.name), "</td>",
-          "<td><span class='pill'>", esc(t.language||""), "</span></td>",
-          "<td>", esc(t.status||""), "</td>",
-          "<td>", esc(t.category||""), "</td>",
-        "</tr>"
-      ].join("")),
-      "</tbody></table>"
-    ].join("");
-  }
-
-  // Render function the admin shell calls when "Site Settings" tab is selected
-  window.AdminPanels.settings = async function(){
-    const host = document.getElementById("panel-settings");
-    if (!host) return;
-    host.innerHTML = panelHTML();
-
-    // Sub-tab wiring
-    const subBtns = host.querySelectorAll(".tabs .tab");
-    const gen = host.querySelector("#settings-gen");
-    const wa  = host.querySelector("#settings-wa");
-    const yo  = host.querySelector("#settings-yoco");
-    function show(which){
-      subBtns.forEach(b=>b.classList.toggle("active", b.dataset.sub===which));
-      gen.classList.toggle("hide", which!=="gen");
-      wa .classList.toggle("hide", which!=="wa");
-      yo .classList.toggle("hide", which!=="yoco");
-    }
-    subBtns.forEach(b=> b.onclick = ()=> show(b.dataset.sub));
-
-    // Save handlers
-    host.querySelector("#saveGen").onclick = ()=> saveSettings({
-      SITE_NAME:        host.querySelector("#SITE_NAME").value,
-      SITE_LOGO_URL:    host.querySelector("#SITE_LOGO_URL").value,
-      PUBLIC_BASE_URL:  host.querySelector("#PUBLIC_BASE_URL").value,
-      VERIFY_TOKEN:     host.querySelector("#VERIFY_TOKEN").value
-    }, host.querySelector("#msgGen"));
-
-    host.querySelector("#saveYoco").onclick = ()=> saveSettings({
-      YOCO_MODE:              host.querySelector("#YOCO_MODE").value,
-      YOCO_TEST_PUBLIC_KEY:   host.querySelector("#YOCO_TEST_PUBLIC_KEY").value,
-      YOCO_TEST_SECRET_KEY:   host.querySelector("#YOCO_TEST_SECRET_KEY").value,
-      YOCO_LIVE_PUBLIC_KEY:   host.querySelector("#YOCO_LIVE_PUBLIC_KEY").value,
-      YOCO_LIVE_SECRET_KEY:   host.querySelector("#YOCO_LIVE_SECRET_KEY").value
-    }, host.querySelector("#msgYoco"));
-
-    host.querySelector("#saveWA").onclick = ()=> saveSettings({
-      WHATSAPP_TOKEN:         host.querySelector("#WHATSAPP_TOKEN").value,
-      PHONE_NUMBER_ID:        host.querySelector("#PHONE_NUMBER_ID").value,
-      BUSINESS_ID:            host.querySelector("#BUSINESS_ID").value,
-      WA_TMP_ORDER_CONFIRM:   host.querySelector("#WA_TMP_ORDER_CONFIRM").value,
-      WA_TMP_PAYMENT_CONFIRM: host.querySelector("#WA_TMP_PAYMENT_CONFIRM").value,
-      WA_TMP_TICKET_DELIVERY: host.querySelector("#WA_TMP_TICKET_DELIVERY").value,
-      WA_TMP_SKOU_SALES:      host.querySelector("#WA_TMP_SKOU_SALES").value
-    }, host.querySelector("#msgWA"));
-
-    host.querySelector("#syncWA").onclick = async ()=>{
-      host.querySelector("#msgWA").textContent = "Syncing…";
-      const r = await fetch(API.wa_sync, { method:"POST" }).catch(()=>null);
-      const j = r ? await r.json().catch(()=>({ok:false})) : {ok:false};
-      if (!j.ok){
-        const dR = await fetch(API.wa_diag).catch(()=>null);
-        const d  = dR ? await dR.json().catch(()=>({})) : {};
-        const extra = d?.metaError?.message || d?.error || "";
-        alert("Sync failed: " + (j.error||"unknown") + (extra?("\\n"+extra):""));
-      } else {
-        alert("Templates synced. Added/updated: " + (j.fetched||0) + " · In DB: " + (j.total||0));
-      }
-      host.querySelector("#msgWA").textContent = "";
-      loadTemplates();
-    };
-
-    // Load settings values
-    const r = await fetch(API.settings_get).catch(()=>null);
-    const j = r ? await r.json().catch(()=>({ok:false})) : {ok:false};
-    const s = j.ok ? (j.settings||{}) : {};
-
-    // Populate fields
-    ["SITE_NAME","SITE_LOGO_URL","PUBLIC_BASE_URL","VERIFY_TOKEN"].forEach(k=>{
-      const n = host.querySelector("#"+k); if (n && s[k]!=null) n.value = s[k];
-    });
-
-    host.querySelector("#WHATSAPP_TOKEN").value  = s.WHATSAPP_TOKEN || "";
-    host.querySelector("#PHONE_NUMBER_ID").value = s.PHONE_NUMBER_ID || "";
-    host.querySelector("#BUSINESS_ID").value     = s.BUSINESS_ID || "";
-
-    ["WA_TMP_ORDER_CONFIRM","WA_TMP_PAYMENT_CONFIRM","WA_TMP_TICKET_DELIVERY","WA_TMP_SKOU_SALES"].forEach(id=>{
-      const n = host.querySelector("#"+id);
-      if (n) n.dataset.value = s[id] || "";
-    });
-
-    host.querySelector("#YOCO_MODE").value             = (s.YOCO_MODE||"sandbox").toLowerCase();
-    host.querySelector("#YOCO_TEST_PUBLIC_KEY").value  = s.YOCO_TEST_PUBLIC_KEY || "";
-    host.querySelector("#YOCO_TEST_SECRET_KEY").value  = s.YOCO_TEST_SECRET_KEY || "";
-    host.querySelector("#YOCO_LIVE_PUBLIC_KEY").value  = s.YOCO_LIVE_PUBLIC_KEY || "";
-    host.querySelector("#YOCO_LIVE_SECRET_KEY").value  = s.YOCO_LIVE_SECRET_KEY || "";
-
-    // Default visible sub-panel + templates
-    show("gen");
-    loadTemplates();
-  };
-
-  // Allow deep-link like #settings:wa or programmatic switch from admin.js
-  window.AdminPanels.settingsSwitch = function(sub){
-    const host = document.getElementById("panel-settings");
-    if (!host) return;
-    const tab = host.querySelector(\`.tabs .tab[data-sub="\${sub}"]\`);
-    if (tab) tab.click();
-  };
-})();`;
-
-export default adminSiteSettingsJS;
+/* ✅ compatibility exports */
+export const adminSiteSettingsJS = adminSiteSettingsHTML;
+export default adminSiteSettingsHTML;
