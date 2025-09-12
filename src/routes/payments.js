@@ -2,9 +2,7 @@
 import { json, bad } from "../utils/http.js";
 
 export function mountPayments(router) {
-  /* ------------------------------------------------------------------ *
-   * Helpers
-   * ------------------------------------------------------------------ */
+  /* --------------------------- helpers --------------------------- */
 
   // Read a single key from site_settings
   async function getSetting(env, key) {
@@ -23,60 +21,36 @@ export function mountPayments(router) {
     return { mode, secret };
   }
 
-  // Pull WhatsApp template selections from site settings
-  async function getWhatsAppTemplateConfig(env) {
-    // In Admin > Site Settings > WhatsApp > Templates, store these keys:
-    //  - TPL_ORDER_CONFIRM
-    //  - TPL_PAYMENT_CONFIRM
-    //  - TPL_TICKET_DELIVERY
-    //  - TPL_SKOUSALES  (for campaigns / reminders)
-    const [order, pay, ticket, sales, lang] = await Promise.all([
-      getSetting(env, "TPL_ORDER_CONFIRM"),
-      getSetting(env, "TPL_PAYMENT_CONFIRM"),
-      getSetting(env, "TPL_TICKET_DELIVERY"),
-      getSetting(env, "TPL_SKOUSALES"),
-      getSetting(env, "WHATSAPP_TEMPLATE_LANG"),
-    ]);
-    return {
-      order_confirm: order || null,
-      payment_confirm: pay || null,
-      ticket_delivery: ticket || null,
-      skousales: sales || null,
-      lang: lang || "en_US",
-    };
-  }
-
-  // Send a WhatsApp message (template if available; else plain text)
-  async function sendWhatsApp(env, toMsisdn, textBody, preferredTemplateName, lang) {
-    // Lazy import so the worker doesn’t crash if WA service is not bundled in dev
-    let svc = null;
+  // Quick logger (stringifies safely)
+  function log(env, msg, obj) {
     try {
-      svc = await import("../services/whatsapp.js");
+      const s = obj ? `${msg} ${JSON.stringify(obj)}` : msg;
+      console.log(s);
     } catch {
-      console.log("[WA] service not available");
-      return;
-    }
-
-    const sendTemplate = svc.sendWhatsAppTemplate || null;
-    const sendText     = svc.sendWhatsAppText || svc.sendWhatsApp || null;
-
-    try {
-      if (preferredTemplateName && sendTemplate) {
-        // We keep it simple and use the full text as the single variable
-        // If your approved templates have multiple variables, adjust here.
-        await sendTemplate(env, toMsisdn, textBody, lang, preferredTemplateName);
-      } else if (sendText) {
-        await sendText(env, toMsisdn, textBody, lang);
-      }
-    } catch (e) {
-      console.log("[WA SEND FAIL]", String(e?.message || e));
+      console.log(msg);
     }
   }
 
-  /* ------------------------------------------------------------------ *
-   * Create YOCO checkout (intent)
-   * POST /api/payments/yoco/intent  { code: "C123ABC" }
-   * ------------------------------------------------------------------ */
+  /* ---------------------- diagnostics --------------------------- */
+
+  // GET /api/payments/yoco/diag
+  // Helps verify config without creating a checkout.
+  router.add("GET", "/api/payments/yoco/diag", async (_req, env) => {
+    const { mode, secret } = await getYocoSecret(env);
+    const publicBase = await getSetting(env, "PUBLIC_BASE_URL");
+    return json({
+      ok: true,
+      mode,
+      hasSecret: !!secret,
+      publicBaseUrl: publicBase || null,
+      redirectExample: publicBase ? `${publicBase}/thanks/EXAMPLE` : null,
+      cancelExample: publicBase ? `${publicBase}/shop/{event-slug}` : null
+    });
+  });
+
+  /* -------------------- create checkout intent ------------------ */
+
+  // POST /api/payments/yoco/intent  { code: "C123ABC" }
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let body; try { body = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(body?.code || "").trim().toUpperCase();
@@ -124,6 +98,9 @@ export function mountPayments(router) {
       cancel_url
     };
 
+    log(env, "[YOCO INTENT] creating checkout", { code, mode, payload: { ...payload, // redact
+      redirect_url: payload.redirect_url, cancel_url: payload.cancel_url } });
+
     let res, y;
     try {
       res = await fetch("https://payments.yoco.com/api/checkouts", {
@@ -150,7 +127,8 @@ export function mountPayments(router) {
       return bad(`Yoco rejected request: ${msg}`, res.status);
     }
 
-    const redirect = y?.redirectUrl || y?.redirect_url || redirect_url;
+    // Yoco returns `redirectUrl`; keep a defensive fallback to our `redirect_url`
+    const redirectFromYoco = y?.redirectUrl || y?.redirect_url || redirect_url;
 
     // Update order to awaiting_payment + stash external checkout id
     try {
@@ -161,31 +139,47 @@ export function mountPayments(router) {
                 payment_ext_id = COALESCE(?2, payment_ext_id),
                 updated_at = strftime('%s','now')
           WHERE id = ?1`
-      ).bind(o.id, (y?.id || y?.metadata?.checkoutId || null)).run();
+      ).bind(o.id, (y?.id || null)).run();
     } catch {}
 
-    return json({ ok: true, redirect_url: redirect, yoco: y || null });
+    log(env, "[YOCO INTENT] created", { code, checkout_id: y?.id, redirect: redirectFromYoco });
+
+    return json({ ok: true, redirect_url: redirectFromYoco, yoco: y || null });
   });
 
-  /* ------------------------------------------------------------------ *
-   * YOCO Webhook (test/live share the same URL)
-   * POST /api/payments/yoco/webhook
-   * ------------------------------------------------------------------ */
+  /* ------------------------ webhook ----------------------------- */
+
+  // POST /api/payments/yoco/webhook
+  // We see two common shapes:
+  //  1) type: 'payment.succeeded' (or failed) with minimal fields (sometimes no reference)
+  //  2) Svix payloads under data.object.{ status, reference, metadata.checkoutId }
+  //
+  // We try to update by short_code (reference) first; if missing, we fall back to
+  // matching our stored orders.payment_ext_id against metadata.checkoutId.
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let evt; try { evt = await req.json(); } catch { return bad("Bad JSON"); }
 
-    // Yoco webhooks vary by event type; be defensive:
-    const type = String(evt?.type || "").toLowerCase();
-    const obj  = evt?.data?.object || evt?.object || {};
+    // Try multiple shapes defensively
+    const obj = evt?.data?.object || evt?.object || {};
+    const type = String(evt?.type || obj?.type || "").toLowerCase();
+    const rawStatus = String(obj?.status || evt?.status || "").toLowerCase();
 
-    // Try to extract identifiers we can use to link back to our order.
-    // Prefer our short_code ("reference"); fall back to checkoutId / paymentId
-    // which we stash into orders.payment_ext_id when creating the checkout.
-    const reference   = (obj?.reference || evt?.reference || "").toString();
-    const checkoutId  = (obj?.checkoutId || obj?.id || obj?.payment?.checkoutId || "").toString(); // e.g. ch_...
-    const paymentId   = (obj?.paymentId || obj?.payment?.id || "").toString();                     // e.g. pay_...
-    const rawStatus   = String(obj?.status || evt?.status || "").toLowerCase();
+    // Most reliable reference sequence:
+    // - reference (short_code)
+    // - data.object.reference
+    const reference =
+      (evt?.reference || "") ||
+      (obj?.reference || "") ||
+      "";
 
+    // Fallback for matching when reference is missing:
+    const checkoutId =
+      (obj?.metadata && (obj.metadata.checkoutId || obj.metadata.checkout_id)) ||
+      null;
+
+    const extId = obj?.id || evt?.id || null;
+
+    // Normalize status into paid/failed
     const paidLike =
       rawStatus === "paid" ||
       rawStatus === "succeeded" ||
@@ -196,84 +190,58 @@ export function mountPayments(router) {
       rawStatus === "failed" ||
       type.includes("payment.failed");
 
-    // Try to locate the order, in priority order:
-    let targetShortCode = reference;
+    log(env, "[YOCO WEBHOOK]", {
+      type, status: rawStatus, reference, checkoutId, extId
+    });
 
-    if (!targetShortCode && (checkoutId || paymentId)) {
-      const found = await env.DB.prepare(
-        `SELECT short_code FROM orders
-          WHERE payment_ext_id = ?1 OR payment_ext_id = ?2
-          ORDER BY id DESC LIMIT 1`
-      ).bind(checkoutId || "", paymentId || "").first();
-      if (found?.short_code) targetShortCode = found.short_code;
-    }
-
-    console.log("[YOCO WEBHOOK]", JSON.stringify({
-      type, reference: targetShortCode || reference || "",
-      status: rawStatus, extId: evt?.id || obj?.id || ""
-    }));
-
-    if (!targetShortCode) return json({ ok: true, note: "unmatched event" });
-
-    // Pull template config (once)
-    const tpl = await getWhatsAppTemplateConfig(env);
-
-    if (paidLike) {
-      // Set to paid idempotently; only first transition triggers WhatsApp
-      const r = await env.DB.prepare(
-        `UPDATE orders
-            SET status='paid',
-                paid_at = COALESCE(paid_at, strftime('%s','now')),
-                payment_method='online_yoco',
-                updated_at = strftime('%s','now')
-          WHERE UPPER(short_code)=UPPER(?1) AND status!='paid'`
-      ).bind(targetShortCode).run();
-
-      if ((r.meta?.changes || 0) > 0) {
-        // Send WhatsApp ticket delivery / payment confirm
-        const baseRow = await env.DB.prepare(
-          `SELECT value FROM site_settings WHERE key='PUBLIC_BASE_URL' LIMIT 1`
-        ).first();
-        const base = (baseRow?.value || "").toString() || (env.PUBLIC_BASE_URL || "");
-        const link = `${base}/t/${encodeURIComponent(targetShortCode)}`;
-        const body = `Jou kaartjies is gereed. Bestel nommer: ${targetShortCode}\n${link}`;
-
-        // Lookup recipient
-        const ord = await env.DB.prepare(
-          `SELECT buyer_phone FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
-        ).bind(targetShortCode).first();
-        if (ord?.buyer_phone) {
-          // Prefer specific template, fallback to generic text
-          await sendWhatsApp(env, ord.buyer_phone, body, (tpl.ticket_delivery || tpl.payment_confirm || null), tpl.lang);
+    try {
+      if (reference && (paidLike || failedLike)) {
+        // Update by short code
+        if (paidLike) {
+          await env.DB.prepare(
+            `UPDATE orders
+                SET status='paid',
+                    paid_at=strftime('%s','now'),
+                    payment_method='online_yoco',
+                    payment_ext_id=COALESCE(?2,payment_ext_id),
+                    updated_at=strftime('%s','now')
+              WHERE UPPER(short_code)=UPPER(?1)`
+          ).bind(reference, extId).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE orders
+                SET status='payment_failed',
+                    payment_method='online_yoco',
+                    payment_ext_id=COALESCE(?2,payment_ext_id),
+                    updated_at=strftime('%s','now')
+              WHERE UPPER(short_code)=UPPER(?1)`
+          ).bind(reference, extId).run();
+        }
+      } else if (checkoutId && (paidLike || failedLike)) {
+        // Fallback: update by stored checkout id
+        if (paidLike) {
+          await env.DB.prepare(
+            `UPDATE orders
+                SET status='paid',
+                    paid_at=strftime('%s','now'),
+                    payment_method='online_yoco',
+                    updated_at=strftime('%s','now')
+              WHERE payment_ext_id = ?1`
+          ).bind(checkoutId).run();
+        } else {
+          await env.DB.prepare(
+            `UPDATE orders
+                SET status='payment_failed',
+                    payment_method='online_yoco',
+                    updated_at=strftime('%s','now')
+              WHERE payment_ext_id = ?1`
+          ).bind(checkoutId).run();
         }
       }
-    } else if (failedLike) {
-      await env.DB.prepare(
-        `UPDATE orders
-            SET status='payment_failed',
-                payment_method='online_yoco',
-                updated_at=strftime('%s','now')
-          WHERE UPPER(short_code)=UPPER(?1)`
-      ).bind(targetShortCode).run();
+    } catch {
+      // swallow — webhook must be idempotent & resilient
     }
 
     return json({ ok: true });
-  });
-
-  /* ------------------------------------------------------------------ *
-   * Diagnostics (helps verify settings quickly)
-   * GET /api/payments/yoco/diag
-   * ------------------------------------------------------------------ */
-  router.add("GET", "/api/payments/yoco/diag", async (_req, env) => {
-    const { mode, secret } = await getYocoSecret(env);
-    const publicBaseUrl = await getSetting(env, "PUBLIC_BASE_URL");
-    return json({
-      ok: true,
-      mode,
-      hasSecret: !!secret,
-      publicBaseUrl,
-      redirectExample: (publicBaseUrl || "") + "/thanks/EXAMPLE",
-      cancelExample:   (publicBaseUrl || "") + "/shop/{event-slug}"
-    });
   });
 }
