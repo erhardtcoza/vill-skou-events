@@ -1,5 +1,13 @@
 // /src/ui/admin_sitesettings.js
-export function adminSiteSettingsHTML() {
+// Export a JS source string that admin.js will inject into its <script> tag.
+export const adminSiteSettingsJS = `(function(){
+  const API = {
+    settings_get: "/api/admin/settings",
+    settings_set: "/api/admin/settings/update",
+    wa_templates: "/api/admin/whatsapp/templates",
+    wa_sync: "/api/admin/whatsapp/sync",
+    wa_diag: "/api/admin/whatsapp/diag"
+  };
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -354,4 +362,4 @@ loadSettings().then(loadTemplates);
 
 /* ✅ compatibility exports */
 export const adminSiteSettingsJS = adminSiteSettingsHTML;
-export default adminSiteSettingsHTML;
+export default adminSiteSettingsJS;
