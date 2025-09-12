@@ -1,111 +1,178 @@
 // /src/routes/pos.js
 import { json, bad } from "../utils/http.js";
+import { requireRole } from "../utils/auth.js";
 
+/** POS endpoints */
 export function mountPOS(router) {
+  const guard = (fn) => requireRole("pos", fn);
 
-  // ---------- helpers ----------
-  async function setting(env, key){
-    const r = await env.DB.prepare(`SELECT value FROM site_settings WHERE key=?1 LIMIT 1`).bind(key).first();
-    return r ? r.value : null;
+  // --- small helpers -------------------------------------------------------
+  async function getSetting(env, key) {
+    const row = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+    ).bind(key).first();
+    return row ? row.value : null;
   }
-  const toRands = cents => 'R' + ((Number(cents||0))/100).toFixed(2);
-  const normPhone = raw => {
-    const s = String(raw||'').replace(/\D+/g,'');
-    if (s.length===10 && s.startsWith('0')) return '27'+s.slice(1);
-    return s;
-  };
 
-  async function sendTemplate(env, toMsisdn, nameLang, vars = []) {
-    if (!nameLang) return { ok:false, skip:true, why:"no_template_selected" };
-    const [name, language] = String(nameLang).split(":");
-    const token = await setting(env, "WHATSAPP_TOKEN");
-    const phone_id = await setting(env, "PHONE_NUMBER_ID");
-    if (!token || !phone_id || !name || !language) {
-      return { ok:false, err:"WA not configured (token/phone_id/template/lang missing)" };
+  function parseTemplateSetting(v) {
+    // format "template_name:lang"  e.g. "payment_confirm:af"
+    if (!v) return { name: "", lang: "" };
+    const [name, lang] = String(v).split(":");
+    return { name: (name || "").trim(), lang: (lang || "").trim() };
+  }
+
+  async function validateWAConfig(env) {
+    const token      = await getSetting(env, "WHATSAPP_TOKEN");
+    const phoneId    = await getSetting(env, "PHONE_NUMBER_ID");
+    const tPayRaw    = await getSetting(env, "WA_TMP_PAYMENT_CONFIRM");
+    const tTixRaw    = await getSetting(env, "WA_TMP_TICKET_DELIVERY");
+    const tPay       = parseTemplateSetting(tPayRaw);
+    const tTickets   = parseTemplateSetting(tTixRaw);
+
+    const problems = [];
+    if (!token) problems.push("WHATSAPP_TOKEN");
+    if (!phoneId) problems.push("PHONE_NUMBER_ID");
+    if (!tPay.name || !tPay.lang) problems.push("WA_TMP_PAYMENT_CONFIRM");
+    if (!tTickets.name || !tTickets.lang) problems.push("WA_TMP_TICKET_DELIVERY");
+
+    return {
+      ok: problems.length === 0,
+      problems, // array of missing keys
+      token, phoneId, tPay, tTickets
+    };
+  }
+
+  async function waSendTemplate(env, { to, template, lang, vars = [] }) {
+    // Defensive: don’t throw if WhatsApp is not configured; let caller decide
+    const token   = await getSetting(env, "WHATSAPP_TOKEN");
+    const phoneId = await getSetting(env, "PHONE_NUMBER_ID");
+    if (!token || !phoneId) {
+      return { ok: false, err: (!token ? "Missing WHATSAPP_TOKEN" : "Missing PHONE_NUMBER_ID") };
     }
-
-    const bodyComponents = vars.length ? [{
-      type: "body",
-      parameters: vars.map(v => ({ type:"text", text:String(v) }))
-    }] : [];
 
     const payload = {
       messaging_product: "whatsapp",
-      to: toMsisdn,                // e.g. 27721234567 (no +)
+      to,
       type: "template",
-      template: { name, language: { code: language }, components: bodyComponents }
+      template: {
+        name: template,
+        language: { code: lang },
+        components: vars.length
+          ? [{ type: "body", parameters: vars.map(v => ({ type: "text", text: String(v) })) }]
+          : undefined
+      }
     };
 
-    const url = `https://graph.facebook.com/v20.0/${encodeURIComponent(phone_id)}/messages`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type":"application/json", "authorization":"Bearer " + token },
-      body: JSON.stringify(payload)
-    });
-
-    let j = null; try { j = await res.json(); } catch {}
-    if (!res.ok) {
-      const err = j?.error?.message || (`HTTP ${res.status}`);
-      console.log("[WA SEND FAIL]", err, { to: toMsisdn, nameLang, vars });
-      return { ok:false, err };
+    let res, j;
+    try {
+      res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(phoneId)}/messages`, {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + token,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      j = await res.json().catch(() => ({}));
+    } catch (e) {
+      return { ok: false, err: "Network error: " + (e?.message || e) };
     }
-    const id = j?.messages?.[0]?.id || null;
-    console.log("[WA SENT]", { to: toMsisdn, nameLang, id });
-    return { ok:true, id };
+
+    if (!res.ok) {
+      return { ok: false, err: "Meta error " + res.status + ": " + (j?.error?.message || JSON.stringify(j)) };
+    }
+    return { ok: true, id: j?.messages?.[0]?.id || null };
   }
 
-  // ---------- POS settlement ----------
-  // Body: { code, phone? }
-  router.add("POST", "/api/pos/settle", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const code  = String(b?.code || "").trim().toUpperCase();
-    const phoneFromBody = normPhone(b?.phone || "");
-    if (!code) return bad("code required");
+  // --- POS: start / session meta you already have --------------------------
+  router.add("GET", "/api/pos/session", guard(async (_req, env) => {
+    // (keep whatever you already do here; stub for completeness)
+    return json({ ok: true });
+  }));
 
+  // --- POS: settle a sale ---------------------------------------------------
+  // Expected body: { order_id, amount_cents, buyer_phone?, buyer_name?, method: "cash"|"card" }
+  router.add("POST", "/api/pos/settle", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const order_id     = Number(b?.order_id || 0);
+    const amount_cents = Number(b?.amount_cents || 0);
+    const method       = (b?.method || "cash").toLowerCase();
+    const buyer_phone  = String(b?.buyer_phone || "").trim();
+    const buyer_name   = String(b?.buyer_name || "").trim();
+
+    if (!order_id) return bad("order_id required");
+    if (!amount_cents) return bad("amount_cents required");
+
+    // Load order + short_code
     const o = await env.DB.prepare(
-      `SELECT id, short_code, total_cents, status, buyer_phone
-         FROM orders
-        WHERE UPPER(short_code)=?1
-        LIMIT 1`
-    ).bind(code).first();
+      `SELECT id, short_code, status FROM orders WHERE id=?1 LIMIT 1`
+    ).bind(order_id).first();
     if (!o) return bad("Order not found", 404);
 
-    // Mark paid if not already
-    if (String(o.status||"").toLowerCase() !== "paid") {
-      await env.DB.prepare(
-        `UPDATE orders
-            SET status='paid', paid_at=strftime('%s','now')
-          WHERE id=?1`
-      ).bind(o.id).run();
+    // Mark paid (POS)
+    const now = Math.floor(Date.now()/1000);
+    await env.DB.prepare(
+      `UPDATE orders
+          SET status='paid',
+              paid_at=?2,
+              payment_method = CASE WHEN ?3='card' THEN 'pos_card' ELSE 'pos_cash' END,
+              updated_at = strftime('%s','now')
+        WHERE id=?1`
+    ).bind(order_id, now, method).run();
+
+    // WhatsApp — detailed config diagnostics
+    const diag = await validateWAConfig(env);
+
+    // Decide recipient:
+    // Prefer buyer_phone param; else use order’s stored phone if any
+    let to = buyer_phone;
+    if (!to) {
+      const r = await env.DB.prepare(`SELECT buyer_phone FROM orders WHERE id=?1`).bind(order_id).first();
+      to = (r?.buyer_phone || "").trim();
     }
 
-    // Choose phone: body > order.buyer_phone
-    const toMsisdn = normPhone(phoneFromBody || o.buyer_phone || "");
-    const waResults = { payment:null, tickets:null, skipped:false };
+    const wa = { skipped: false, payment: { ok: false }, tickets: { ok: false } };
 
-    if (!toMsisdn) {
-      waResults.skipped = true; // nothing to send to
-      console.log("[WA SKIP] no phone for", code);
+    if (!to) {
+      wa.skipped = true;
+      wa.reason = "no_recipient_phone";
+    } else if (!diag.ok) {
+      wa.skipped = true;
+      wa.reason = "config_missing";
+      wa.missing = diag.problems; // <— tells you exactly what is missing
+      console.log("[WA POS] Skipped — missing:", diag.problems);
     } else {
-      // Settings/URLs
-      const PUBLIC_BASE_URL = (await setting(env,"PUBLIC_BASE_URL")) || "";
-      const payTpl  = await setting(env,"WA_TMP_PAYMENT_CONFIRM");   // e.g. "payment_confirm:af"
-      const tickTpl = await setting(env,"WA_TMP_TICKET_DELIVERY");   // e.g. "ticket_delivery:af"
-      const viewLink = PUBLIC_BASE_URL
-        ? (PUBLIC_BASE_URL + "/t/" + encodeURIComponent(code))
-        : ("https://example.com/t/" + encodeURIComponent(code));
+      // Send payment confirmation
+      const payVars = [
+        buyer_name || "",           // {{1}} name (if your template expects it)
+        o.short_code || "",         // {{2}} order code
+        "R" + (amount_cents/100).toFixed(2) // {{3}} formatted total
+      ].filter(Boolean);
 
-      // Send both, best effort, and capture results
-      try {
-        waResults.payment = await sendTemplate(env, toMsisdn, payTpl, [code, toRands(o.total_cents)]);
-      } catch (e) { waResults.payment = { ok:false, err: String(e?.message||e) }; }
+      const r1 = await waSendTemplate(env, {
+        to,
+        template: diag.tPay.name,
+        lang: diag.tPay.lang,
+        vars: payVars
+      });
+      wa.payment = r1;
 
-      try {
-        waResults.tickets = await sendTemplate(env, toMsisdn, tickTpl, [code, viewLink]);
-      } catch (e) { waResults.tickets = { ok:false, err: String(e?.message||e) }; }
+      // Send ticket delivery
+      const r2 = await waSendTemplate(env, {
+        to,
+        template: diag.tTickets.name,
+        lang: diag.tTickets.lang,
+        // body variables if needed by your template; leave [] if none
+        vars: [o.short_code]
+      });
+      wa.tickets = r2;
+
+      // Console breadcrumbs
+      console.log("[WA POS] payment:", r1.ok ? "sent" : r1.err);
+      console.log("[WA POS] tickets:", r2.ok ? "sent" : r2.err);
     }
 
-    return json({ ok:true, id:o.id, wa: waResults });
-  });
-
+    return json({ ok: true, id: order_id, wa });
+  }));
 }
