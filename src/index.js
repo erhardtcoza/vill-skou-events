@@ -7,6 +7,10 @@ import { badgeHTML } from "./ui/badge.js";
 import { registerAddonRoutes } from "./addons/api.js";
 import { mountPayments } from "./routes/payments.js";
 
+import { mountPOS } from "./routes/pos.js";
+import { mountScan } from "./routes/scan.js";
+
+
 // API route mounts
 import { mountPublic } from "./routes/public.js";
 import { mountAdmin } from "./routes/admin.js";
@@ -53,6 +57,8 @@ mountSync(router);       // /api/sync/*
 mountWhatsApp(router);   // /api/whatsapp/*
 mountWATest(router);
 mountPayments(router);
+mountPOS(router, env);
+mountScan(router, env);
 
 
 /* ---------------------- UI ROUTES ----------------------- */
