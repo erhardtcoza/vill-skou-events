@@ -227,6 +227,85 @@ export function mountAdmin(router) {
     return json({ ok:true, fetched, total });
   }));
 
+// --- WhatsApp: quick template test sender ---------------------------------
+router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
+  // Helpers to read settings (we already have similar ones above)
+  async function getSetting(key) {
+    const row = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+    ).bind(key).first();
+    return row ? row.value : null;
+  }
+
+  let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+
+  // to: MSISDN like 27xxxxxxxxx (no spaces/punct)
+  const to = String(b?.to || "").replace(/\D+/g, "");
+  if (!to) return bad("to required (e.g. 2771… or 27… digits only)");
+
+  // Which selector to use from settings (default: order confirm)
+  // Options: WA_TMP_ORDER_CONFIRM | WA_TMP_PAYMENT_CONFIRM | WA_TMP_TICKET_DELIVERY | WA_TMP_SKOU_SALES
+  const key = String(b?.template_key || "WA_TMP_ORDER_CONFIRM");
+  const selRow = await env.DB.prepare(
+    `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+  ).bind(key).first();
+
+  const sel = String(selRow?.value || "");
+  const [tplName, tplLang] = sel.split(":");
+  if (!tplName || !tplLang) {
+    return bad(`Template not configured in site_settings for ${key}. Save a value like "my_template:af" first.`);
+  }
+
+  // WhatsApp credentials (accept both WA_* and legacy keys)
+  const token  = await getSetting("WA_TOKEN") || await getSetting("WHATSAPP_TOKEN");
+  const pnid   = await getSetting("WA_PHONE_NUMBER_ID") || await getSetting("PHONE_NUMBER_ID");
+  if (!token || !pnid) return bad("WhatsApp token / phone number ID missing in Site Settings");
+
+  // Optional variables for body placeholders in the template
+  // Example: "vars": ["Piet", "CAXHIEG"]
+  const vars = Array.isArray(b?.vars) ? b.vars : [];
+  const components = vars.length
+    ? [{ type: "body", parameters: vars.map(v => ({ type: "text", text: String(v) })) }]
+    : [];
+
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "template",
+    template: {
+      name: tplName,
+      language: { code: tplLang },
+      components
+    }
+  };
+
+  let res, y;
+  try {
+    res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pnid)}/messages`, {
+      method: "POST",
+      headers: {
+        "authorization": "Bearer " + token,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    y = await res.json().catch(()=>({}));
+  } catch (e) {
+    return bad("Meta API network error: " + (e?.message || e), 502);
+  }
+
+  if (!res.ok) {
+    const msg = y?.error?.message || (`Meta error ${res.status}`);
+    return bad(msg, res.status);
+  }
+
+  return json({
+    ok: true,
+    template: { key, name: tplName, lang: tplLang },
+    message_id: y?.messages?.[0]?.id || null,
+  });
+}));
+  
   router.add("GET", "/api/admin/whatsapp/diag", guard(async (_req, env) => {
     const token = await getSetting(env, "WA_TOKEN");
     const waba  = await getSetting(env, "WA_BUSINESS_ID");
