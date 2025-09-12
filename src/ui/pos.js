@@ -1,298 +1,214 @@
-// /src/ui/pos.js
+// /src/routes/pos.js
+import { json, bad } from "../utils/http.js";
+import { requireRole } from "../utils/auth.js";
 
-/* POS landing */
-export function posHTML() {
-  return `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>POS · Villiersdorp Skou</title>
-<style>
-  :root{ --ink:#0b1320; --muted:#667085; --bg:#f6f8f7; --card:#fff; --accent:#0a7d2b; --accent-ink:#fff; }
-  body{ margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif }
-  .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  a.btn{ display:inline-block; background:var(--accent); color:var(--accent-ink); padding:12px 16px; border-radius:10px; text-decoration:none; font-weight:800 }
-  .muted{ color:var(--muted) }
-  .card{ background:var(--card); border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
-</style>
-</head><body>
-<div class="wrap">
-  <h1>POS</h1>
-  <div class="card">
-    <p class="muted" style="margin-top:0">Begin 'n nuwe sessie om kaartjies te verkoop.</p>
-    <a class="btn" href="/pos/sell">Begin verkoop</a>
-  </div>
-</div>
-</body></html>`;
-}
+/** POS endpoints: simple sale + settle (mark paid) + WA sends */
+export function mountPOS(router) {
+  const guard = (fn) => requireRole("pos", fn);
 
-/* POS sell screen – mobile-first, tap-to-add, sticky footer */
-export function posSellHTML(session_id = 0) {
-  return `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>POS · Sell</title>
-<style>
-  :root{
-    --ink:#0b1320; --muted:#667085; --bg:#f6f8f7; --card:#fff;
-    --accent:#0a7d2b; --accent-ink:#fff; --danger:#b42318; --shadow:0 12px 26px rgba(0,0,0,.08);
-  }
-  *{ box-sizing:border-box }
-  html,body{ height:100% }
-  body{ margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif }
-  .wrap{ max-width:1100px; margin:0 auto; padding:10px 12px 92px } /* bottom pad for sticky bar */
-  .topbar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:6px 0 10px }
-  h1{ margin:0; font-size:28px }
-  .ghost{ background:#eef2f4; color:#0b1320; border-radius:999px; padding:6px 10px; text-decoration:none; font-weight:700 }
-  .inputs{ display:grid; grid-template-columns:1.2fr 1.2fr 1fr auto; gap:8px; margin-bottom:8px }
-  @media (max-width:920px){ .inputs{ grid-template-columns:1fr 1fr } }
-  @media (max-width:640px){ .inputs{ grid-template-columns:1fr } }
-  input{ width:100%; border:1px solid #e5e7eb; background:#fff; border-radius:12px; padding:12px 14px; font:inherit }
-  button{ font:inherit }
-  .btn{ padding:12px 16px; border-radius:12px; border:0; font-weight:800; cursor:pointer }
-  .btn.ghost{ background:#fff; border:1px solid #e5e7eb }
-  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start }
-  @media (max-width:920px){ .grid{ grid-template-columns:1fr } }
-  .card{ background:var(--card); border-radius:16px; box-shadow:var(--shadow); padding:12px }
-
-  /* Ticket grid */
-  .tickets{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px }
-  @media (max-width:1080px){ .tickets{ grid-template-columns:repeat(2,1fr) } }
-  @media (max-width:640px){ .tickets{ grid-template-columns:1fr } }
-  .tcard{ border:1px solid #eef1f3; border-radius:14px; padding:12px; cursor:pointer; position:relative; user-select:none; -webkit-tap-highlight-color:transparent; }
-  .tcard:hover{ box-shadow:0 6px 16px rgba(0,0,0,.06) }
-  .tcard .price{ color:#111; font-weight:700; margin-top:4px }
-  .tcard small{ color:var(--muted) }
-  .qtyBadge{ position:absolute; right:10px; top:10px; background:#0a7d2b; color:#fff; border-radius:999px; padding:4px 8px; font-weight:800; font-size:12px; display:none }
-  .tcard.hasQty .qtyBadge{ display:inline-block }
-
-  /* Summary */
-  .summary{ min-height:120px }
-  .line{ display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px dashed #eef1f3 }
-  .line:last-child{ border-bottom:0 }
-  .line small{ color:var(--muted) }
-
-  /* Sticky payment bar */
-  .paybar{
-    position:fixed; left:0; right:0; bottom:0; z-index:10;
-    background:rgba(246,248,247,.92); backdrop-filter:saturate(180%) blur(8px);
-    border-top:1px solid #e5e7eb;
-  }
-  .paybar-inner{ max-width:1100px; margin:auto; padding:10px 12px; display:grid; grid-template-columns:1fr 1fr; gap:10px; align-items:center }
-  @media (max-width:640px){ .paybar-inner{ grid-template-columns:1fr } }
-  .total{ font-size:22px; font-weight:900 }
-  .payBtns{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
-  @media (max-width:640px){ .payBtns{ grid-template-columns:1fr } }
-  .cash{ background:#0a7d2b; color:#fff }
-  .cardBtn{ background:#111; color:#fff }
-  .back{ color:#0a7d2b; text-decoration:none; font-weight:700; display:inline-flex; align-items:center; gap:8px }
-  .muted{ color:var(--muted) }
-</style>
-</head><body>
-<div class="wrap">
-  <div class="topbar">
-    <h1 style="flex:1 1 auto">POS</h1>
-    <a class="ghost" href="/pos">Close / Cash-out</a>
-  </div>
-
-  <div class="inputs">
-    <input id="custName" placeholder="Customer name"/>
-    <input id="custPhone" placeholder="Mobile (optional)"/>
-    <input id="recallCode" placeholder="Recall code"/>
-    <button id="btnRecall" class="btn ghost">Recall</button>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <div class="tickets" id="tickets"></div>
-    </div>
-    <div class="card summary">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px">
-        <strong>Total</strong>
-        <strong id="totalTop">R0.00</strong>
-      </div>
-      <div id="cartLines" class="muted">Cart empty</div>
-    </div>
-  </div>
-</div>
-
-<!-- Sticky payment bar -->
-<div class="paybar">
-  <div class="paybar-inner">
-    <div class="total" id="totalSticky">R0.00</div>
-    <div class="payBtns">
-      <button id="payCash" class="btn cash">Cash</button>
-      <button id="payCard" class="btn cardBtn">Card</button>
-    </div>
-    <div style="grid-column:1 / -1">
-      <a class="back" href="/pos">← Back to start</a>
-      <span id="msg" class="muted" style="margin-left:12px"></span>
-    </div>
-  </div>
-</div>
-
-<script>
-const sessionId = Number(${JSON.stringify(session_id)});
-const $ = id => document.getElementById(id);
-
-const state = {
-  event: null,
-  ttypes: [],
-  cart: new Map(), // ticket_type_id -> qty
-};
-
-const money = c => 'R' + ((c||0)/100).toFixed(2);
-const esc = s => String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c]));
-
-/* normalize phone to E.164-ish ZA */
-function phoneNorm(raw){
-  const s = String(raw||'').replace(/\\D+/g,'');
-  if (s.length===10 && s.startsWith('0')) return '27' + s.slice(1);
-  return s;
-}
-
-function renderTickets(){
-  const box = $('tickets');
-  box.innerHTML = state.ttypes.map(t => {
-    const q = state.cart.get(t.id)||0;
-    return \`
-      <div class="tcard \${q?'hasQty':''}" data-id="\${t.id}">
-        <div class="qtyBadge">\${q}</div>
-        <div style="font-weight:800">\${esc(t.name)}</div>
-        <div class="price">\${t.price_cents ? money(t.price_cents) : 'FREE'}</div>
-        <div class="muted" style="margin-top:2px"><small>Tap to add · long-press to remove</small></div>
-      </div>\`;
-  }).join('');
-
-  // tap to add
-  box.querySelectorAll('.tcard').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      const id = Number(el.dataset.id);
-      const q = (state.cart.get(id)||0)+1;
-      state.cart.set(id,q);
-      updateCartUI();
-      el.classList.add('hasQty');
-      el.querySelector('.qtyBadge').textContent = q;
-      navigator.vibrate?.(15);
-    }, {passive:true});
-
-    // long-press to remove one
-    let pressTimer;
-    el.addEventListener('touchstart', () => {
-      pressTimer = setTimeout(()=>{
-        const id = Number(el.dataset.id);
-        const q = Math.max(0,(state.cart.get(id)||0)-1);
-        if (q) state.cart.set(id,q); else state.cart.delete(id);
-        updateCartUI();
-        const badge = el.querySelector('.qtyBadge');
-        if (q){ el.classList.add('hasQty'); badge.textContent = q; }
-        else{ el.classList.remove('hasQty'); }
-        navigator.vibrate?.(10);
-      }, 450);
-    }, {passive:true});
-    ['touchend','touchcancel','touchmove'].forEach(ev => el.addEventListener(ev, ()=>clearTimeout(pressTimer), {passive:true}));
-  });
-}
-
-function updateCartUI(){
-  const m = new Map(state.ttypes.map(t=>[t.id,t]));
-  let total = 0;
-  const lines = [];
-
-  state.cart.forEach((qty, id)=>{
-    const tt = m.get(id);
-    if (!tt) return;
-    const line = qty * (tt.price_cents||0);
-    total += line;
-    lines.push(\`<div class="line"><div>\${esc(tt.name)} <small>× \${qty}</small></div><strong>\${money(line)}</strong></div>\`);
-  });
-
-  $('cartLines').innerHTML = lines.length ? lines.join('') : 'Cart empty';
-  $('totalTop').textContent = money(total);
-  $('totalSticky').textContent = money(total);
-}
-
-async function loadEvent(){
-  const res = await fetch('/api/public/events').then(r=>r.json()).catch(()=>({ok:false}));
-  if (!res.ok || !(res.events||[]).length){
-    $('msg').textContent = 'Kon nie event laai nie.';
-    return;
-  }
-  const ev = res.events[0];
-  state.event = ev;
-  const d = await fetch('/api/public/events/'+encodeURIComponent(ev.slug)).then(r=>r.json());
-  state.ttypes = (d.ticket_types||[]);
-  renderTickets();
-  updateCartUI();
-}
-
-async function makeSale(method){
-  const name  = String($('custName').value||'').trim();
-  const phone = phoneNorm($('custPhone').value||'');
-  const items = [];
-  state.cart.forEach((qty,id)=>{ if (qty>0) items.push({ ticket_type_id:id, qty }); });
-
-  if (!items.length){ $('msg').textContent = 'Voeg minstens 1 kaartjie by.'; return; }
-  $('msg').textContent = 'Saving…';
-
-  // 1) Create order
-  const createBody = {
-    event_id: state.event.id,
-    items,
-    attendees: [],                 // POS quick sale (scanner can capture gender later)
-    buyer_name: name || 'POS',
-    email: '',
-    phone: phone || '',
-    method: (method === 'cash' ? 'pos_cash' : 'pos_card')
-  };
-
-  const createRes = await fetch('/api/public/orders/create', {
-    method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify(createBody)
-  });
-  const created = await createRes.json().catch(()=>({ok:false}));
-  if (!created.ok){ $('msg').textContent = 'Kon nie bestelling skep nie.'; return; }
-
-  const order = created.order || {};
-  const order_id     = order.id;
-  const short_code   = order.short_code;
-  const amount_cents = order.total_cents || 0;
-
-  // 2) Settle (mark paid) – server will send WhatsApp templates if configured
-  const settleRes = await fetch('/api/pos/settle', {
-    method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({
-      order_id,                     // ✅ REQUIRED
-      amount_cents,
-      buyer_phone: phone || '',
-      buyer_name: name || 'POS',
-      method: (method === 'cash' ? 'cash' : 'card'),
-      code: short_code
-    })
-  });
-  const settle = await settleRes.json().catch(()=>({ok:false}));
-
-  if (!settle.ok){
-    $('msg').textContent = 'Order gestoor, maar kon nie afhandel nie.';
-    return;
+  // ---------------- Helpers ----------------
+  async function getSetting(env, key) {
+    const row = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+    ).bind(key).first();
+    return row ? row.value : null;
   }
 
-  $('msg').textContent = 'Sale completed.';
-  state.cart.clear();
-  renderTickets();
-  updateCartUI();
-  try{ navigator.vibrate?.([20,40,20]); }catch{}
-}
+  function parseTpl(v) {
+    // stored as "template_name:language" e.g. "payment_confirm:en"
+    if (!v) return null;
+    const [name, language] = String(v).split(":");
+    return (name && language) ? { name, language } : null;
+  }
 
-$('payCash').onclick = ()=>makeSale('cash');
-$('payCard').onclick = ()=>makeSale('card');
+  async function sendWaTemplate(env, { to, templateKey, vars = [] }) {
+    const token = await getSetting(env, "WHATSAPP_TOKEN");
+    const phoneId = await getSetting(env, "PHONE_NUMBER_ID");
+    const chosen = parseTpl(await getSetting(env, templateKey));
 
-$('btnRecall').onclick = async ()=>{
-  const code = String($('recallCode').value||'').trim().toUpperCase();
-  if (!code) return;
-  const r = await fetch('/api/public/tickets/by-code/'+encodeURIComponent(code)).then(x=>x.json()).catch(()=>({ok:false}));
-  if (!r.ok){ $('msg').textContent = 'Nie gevind nie.'; return; }
-  $('msg').textContent = 'Order '+code+' het '+(r.tickets||[]).length+' kaartjies.';
-};
+    if (!token || !phoneId || !chosen) {
+      return { ok:false, err:"WA not configured (token/phone_id/template:lang missing)" };
+    }
 
-loadEvent();
-</script>
-</body></html>`;
+    const payload = {
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: chosen.name,
+        language: { code: chosen.language },
+        components: vars.length ? [{ type: "body", parameters: vars }] : undefined
+      }
+    };
+
+    let res, j;
+    try {
+      res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(phoneId)}/messages`, {
+        method: "POST",
+        headers: {
+          "authorization": "Bearer " + token,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      j = await res.json().catch(()=> ({}));
+    } catch (e) {
+      return { ok:false, err: "WA network error: " + (e?.message || e) };
+    }
+
+    if (!res.ok) {
+      return { ok:false, err: "WA rejected: " + (j?.error?.message || res.status) };
+    }
+    return { ok:true, id: j?.messages?.[0]?.id || null };
+  }
+
+  // ---------------- Minimal sale endpoint (optional) ----------------
+  // If you already have /api/pos/order/sale elsewhere, keep that.
+  router.add("POST", "/api/pos/order/sale", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const session_id = Number(b?.session_id || 0);
+    const event_id   = Number(b?.event_id || 0);
+    const items      = Array.isArray(b?.items) ? b.items : [];
+    const method     = String(b?.method || "pos_cash");
+    const buyer_name = String(b?.customer_name || "").trim() || "POS";
+    const buyer_phone= String(b?.customer_msisdn || "").trim();
+
+    if (!event_id) return bad("event_id required");
+    if (!items.length) return bad("items required");
+
+    // ticket type prices
+    const ttQ = await env.DB.prepare(
+      `SELECT id, price_cents FROM ticket_types WHERE event_id=?1`
+    ).bind(event_id).all();
+    const priceById = new Map((ttQ.results||[]).map(r=>[Number(r.id), Number(r.price_cents||0)]));
+
+    let total_cents = 0;
+    const order_items = [];
+    for (const it of items) {
+      const tid = Number(it.ticket_type_id||0);
+      const qty = Math.max(0, Number(it.qty||0));
+      if (!tid || !qty) continue;
+      const price = priceById.get(tid) || 0;
+      total_cents += qty * price;
+      order_items.push({ ticket_type_id: tid, qty, price_cents: price });
+    }
+    if (!order_items.length) return bad("no valid items");
+
+    const now = Math.floor(Date.now()/1000);
+    const short_code = ("E" + Math.random().toString(36).slice(2,7)).toUpperCase();
+
+    const r = await env.DB.prepare(
+      `INSERT INTO orders
+         (short_code, event_id, status, payment_method, total_cents, contact_json,
+          created_at, buyer_name, buyer_phone, items_json, session_id)
+       VALUES (?1, ?2, 'pending', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`
+    ).bind(
+      short_code, event_id, method, total_cents,
+      JSON.stringify({ phone: buyer_phone }),
+      now, buyer_name, buyer_phone, JSON.stringify(order_items), (session_id||null)
+    ).run();
+
+    const order_id = r.meta.last_row_id;
+
+    // create tickets (blank attendees)
+    for (const it of order_items) {
+      await env.DB.prepare(
+        `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
+         VALUES (?1, ?2, ?3, ?4)`
+      ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
+
+      for (let i=0;i<it.qty;i++){
+        const qr = short_code + "-" + it.ticket_type_id + "-" + Math.random().toString(36).slice(2,8).toUpperCase();
+        await env.DB.prepare(
+          `INSERT INTO tickets
+             (order_id, event_id, ticket_type_id, qr, state, issued_at)
+           VALUES (?1, ?2, ?3, ?4, 'unused', ?5)`
+        ).bind(order_id, event_id, it.ticket_type_id, qr, now).run();
+      }
+    }
+
+    return json({ ok:true, order_id, code: short_code });
+  }));
+
+  // ---------------- SETTLE (mark paid + WhatsApp) ----------------
+  // Body: { order_id? , code? , amount_cents?, buyer_phone?, buyer_name?, method? }
+  router.add("POST", "/api/pos/settle", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const order_id = Number(b?.order_id || 0);
+    const code     = String(b?.code || "").trim().toUpperCase();
+    const buyer_phone = String(b?.buyer_phone || "").trim();
+    const buyer_name  = String(b?.buyer_name  || "POS").trim();
+    const method      = String(b?.method || "cash");
+
+    // Lookup order
+    let o;
+    if (order_id) {
+      o = await env.DB.prepare(
+        `SELECT id, short_code, event_id, status, total_cents, buyer_phone
+           FROM orders WHERE id=?1 LIMIT 1`
+      ).bind(order_id).first();
+    } else if (code) {
+      o = await env.DB.prepare(
+        `SELECT id, short_code, event_id, status, total_cents, buyer_phone
+           FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
+      ).bind(code).first();
+    } else {
+      return bad("order_id or code required");
+    }
+    if (!o) return bad("order not found", 404);
+
+    // Update to paid
+    const now = Math.floor(Date.now()/1000);
+    try {
+      await env.DB.prepare(
+        `UPDATE orders
+            SET status='paid',
+                payment_method=CASE WHEN ?3='card' THEN 'pos_card' ELSE 'pos_cash' END,
+                paid_at=?2, updated_at=?2
+          WHERE id=?1`
+      ).bind(o.id, now, method).run();
+    } catch (e) {
+      return bad("DB update failed: " + (e?.message||e));
+    }
+
+    // WhatsApp sends (if configured)
+    const phoneToUse = (buyer_phone || o.buyer_phone || "").replace(/\D+/g,"");
+    const wa = { skipped:false };
+
+    if (phoneToUse) {
+      // Payment confirmation
+      const payVars = [
+        { type:"text", text: buyer_name || "Kliënt" },
+        { type:"text", text: o.short_code }
+      ];
+      const pay = await sendWaTemplate(env, {
+        to: phoneToUse,
+        templateKey: "WA_TMP_PAYMENT_CONFIRM",
+        vars: payVars
+      });
+
+      // Tickets delivery
+      // Build simple ticket link list (or a single link to view by code)
+      const PUBLIC_BASE_URL = await getSetting(env, "PUBLIC_BASE_URL") || "";
+      const link = PUBLIC_BASE_URL ? `${PUBLIC_BASE_URL}/t/${encodeURIComponent(o.short_code)}` : '';
+      const tickVars = [
+        { type:"text", text: buyer_name || "Kliënt" },
+        { type:"text", text: o.short_code },
+        ...(link ? [{ type:"text", text: link }] : [])
+      ];
+      const ticks = await sendWaTemplate(env, {
+        to: phoneToUse,
+        templateKey: "WA_TMP_TICKET_DELIVERY",
+        vars: tickVars
+      });
+
+      wa.payment = pay;
+      wa.tickets = ticks;
+    } else {
+      wa.skipped = true;
+    }
+
+    return json({ ok:true, id:o.id, wa });
+  }));
 }
