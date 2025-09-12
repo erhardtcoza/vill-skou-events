@@ -17,7 +17,6 @@ function renderReceiptAF({ order_id, event_id, ticket_type, amount, method, quan
       <small style="color:#666">Dankie!</small>
     </div>`;
 }
-
 function renderTicketAF({ qr, ticket_type, price }) {
   return `
     <div style="font-family:system-ui,sans-serif;border:1px solid #ddd;border-radius:10px;padding:10px;margin:8px 0">
@@ -31,7 +30,7 @@ function renderTicketAF({ qr, ticket_type, price }) {
 export function mountPOS(router, env) {
   const r = new Router();
 
-  // --- POS diagnostics ---
+  // Diagnostics
   r.get("/diag", async () => {
     return Response.json({
       ok: true,
@@ -40,7 +39,7 @@ export function mountPOS(router, env) {
     });
   });
 
-  // --- Sell tickets for an event/ticket_type ---
+  // Sell tickets
   // Body: { event_id, ticket_type_id, quantity=1, method="cash" }
   r.post("/sell", async (req) => {
     try {
@@ -52,7 +51,7 @@ export function mountPOS(router, env) {
       if (!Number.isInteger(quantity) || quantity < 1)
         return Response.json({ ok: false, error: "quantity must be >= 1 (integer)" }, { status: 400 });
 
-      // Get ticket type and confirm event linkage
+      // Confirm ticket type belongs to event
       const tt = await env.DB.prepare(`
         SELECT id, event_id AS tt_event_id, name, code, price_cents, capacity, per_order_limit, requires_gender
         FROM ticket_types
@@ -118,11 +117,7 @@ export function mountPOS(router, env) {
         }
         ticketsRaw.push({ order_id, event_id, ticket_type_id, qr, state: "unused", issued_at: ts });
         ticketCards.push(
-          renderTicketAF({
-            qr,
-            ticket_type: tt.name,
-            price: (tt.price_cents / 100).toFixed(2),
-          })
+          renderTicketAF({ qr, ticket_type: tt.name, price: (tt.price_cents / 100).toFixed(2) })
         );
       }
 
@@ -139,9 +134,9 @@ export function mountPOS(router, env) {
       return Response.json({
         ok: true,
         order_id,
-        receipt_html: receiptHTML,   // simple render inlined
-        tickets_html: ticketCards,   // array of small HTML snippets
-        tickets: ticketsRaw,         // raw data if your UI prefers to render itself
+        receipt_html: receiptHTML,
+        tickets_html: ticketCards,
+        tickets: ticketsRaw,
         remaining_after: remaining - quantity,
       });
     } catch (err) {
@@ -150,7 +145,7 @@ export function mountPOS(router, env) {
     }
   });
 
-  // --- Get order summary ---
+  // Order summary
   r.get("/order/:id", async (_req, params) => {
     try {
       const { id } = params;
@@ -182,7 +177,7 @@ export function mountPOS(router, env) {
     }
   });
 
-  // --- Void a single ticket by QR ---
+  // Void a single ticket by QR
   // Body: { qr, reason? }
   r.post("/void-ticket", async (req) => {
     try {
@@ -195,7 +190,7 @@ export function mountPOS(router, env) {
 
       await env.DB.prepare(`UPDATE tickets SET state='void' WHERE id=?`).bind(t.id).run();
 
-      // If every ticket on the order is void -> mark order refunded (soft)
+      // If all tickets now void, mark order refunded
       const counts = await env.DB.prepare(`
         SELECT SUM(CASE WHEN state='void' THEN 1 ELSE 0 END) AS voids,
                COUNT(*) AS total
@@ -214,11 +209,8 @@ export function mountPOS(router, env) {
     }
   });
 
-  // --- Refund an entire order ---
+  // Refund an entire order
   // Body: { order_id, method="cash", reason? }
-  // - Voids all tickets
-  // - Inserts a negative payment
-  // - Sets order.status='refunded'
   r.post("/refund", async (req) => {
     try {
       const { order_id, method = "cash" } = await req.json();
