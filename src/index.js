@@ -1,5 +1,12 @@
 // /src/index.js
 import { Router } from "./router.js";
+import { Router } from "./router.js";
+const r = new Router();
+r.get("/hello/:name", (_req, _env, _ctx, p) => new Response(`hi ${p.name}`));
+const sub = new Router();
+sub.get("/ping", () => new Response("pong"));
+r.mount("/api", sub);
+// then r.handle(req, env, ctx)
 import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
 import { mountWATest } from "./routes/wa_test.js";
