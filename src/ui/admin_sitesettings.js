@@ -1,5 +1,5 @@
 // /src/ui/admin_sitesettings.js
-export function adminSiteSettingsHTML() {
+export function adminSiteSettingsJS() {
   return `<!doctype html>
 <html lang="en">
 <head>
