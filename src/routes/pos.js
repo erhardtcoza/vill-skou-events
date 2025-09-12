@@ -28,10 +28,7 @@ export function mountPOS(router) {
       return { ok: false, error: "WhatsApp credentials missing" };
     }
 
-    // selectedTemplate stored as "name:language" (e.g. "payment_confirm:en")
     const [name, language = "en"] = String(selectedTemplate).split(":");
-
-    // Build parameters (order matters for template variables)
     const parameters = tokens.map(v => ({ type: "text", text: String(v ?? "") }));
 
     const payload = {
@@ -41,9 +38,7 @@ export function mountPOS(router) {
       template: {
         name,
         language: { code: language.replace("_", "-") },
-        components: parameters.length
-          ? [{ type: "body", parameters }]
-          : []
+        components: parameters.length ? [{ type: "body", parameters }] : []
       }
     };
 
@@ -94,7 +89,7 @@ export function mountPOS(router) {
 
     if (!o) return bad("Order not found", 404);
 
-    // Upsert buyer_phone if caller provided a phone and DB lacks one
+    // Upsert buyer_phone if caller provided one and DB lacks it
     if (phone && !o.buyer_phone) {
       try {
         await env.DB.prepare(
@@ -103,14 +98,13 @@ export function mountPOS(router) {
       } catch {}
     }
 
-    // Mark order as PAID (idempotent)
+    // Mark order as PAID (no updated_at column used)
     try {
       await env.DB.prepare(
         `UPDATE orders
             SET status='paid',
                 paid_at = COALESCE(paid_at, strftime('%s','now')),
-                payment_method = COALESCE(payment_method,'pos_cash'),
-                updated_at = strftime('%s','now')
+                payment_method = COALESCE(payment_method,'pos_cash')
           WHERE id=?1`
       ).bind(o.id).run();
     } catch (e) {
@@ -123,35 +117,28 @@ export function mountPOS(router) {
     let waErr = null;
 
     if (toMsisdn) {
-      // Read selected template keys from settings
       const tmplPayment = await getSetting(env, "WA_TMP_PAYMENT_CONFIRM");   // "name:lang"
       const tmplTickets = await getSetting(env, "WA_TMP_TICKET_DELIVERY");   // "name:lang"
 
-      // Build a user-facing ticket link (/t/:code)
       const base = await getSetting(env, "PUBLIC_BASE_URL");
       const ticketLink = base ? `${base}/t/${encodeURIComponent(o.short_code)}` : `https://tickets.villiersdorpskou.co.za/t/${encodeURIComponent(o.short_code)}`;
 
-      // Always include the amount (fixes "amount_cents required")
       const amountCents = Number(o.total_cents || 0);
       const amountRand  = moneyRands(amountCents);
 
-      // Try PAYMENT CONFIRM first (pass both code and amount; order matters!)
       if (tmplPayment) {
         const r1 = await sendWATemplate(env, {
           to: toMsisdn,
           selectedTemplate: tmplPayment,
-          // Most common arrangement: {1}=order code, {2}=amount (formatted)
-          tokens: [o.short_code, amountRand]
+          tokens: [o.short_code, amountRand] // adjust order if your template expects different placeholders
         });
         if (r1.ok) sent.payment = r1.id; else waErr = waErr || r1.error;
       }
 
-      // Then TICKET DELIVERY (code + link)
       if (tmplTickets) {
         const r2 = await sendWATemplate(env, {
           to: toMsisdn,
           selectedTemplate: tmplTickets,
-          // {1}=order code, {2}=ticket link
           tokens: [o.short_code, ticketLink]
         });
         if (r2.ok) sent.tickets = r2.id; else waErr = waErr || r2.error;
@@ -161,7 +148,7 @@ export function mountPOS(router) {
     return json({
       ok: true,
       order_id: o.id,
-      amount_cents: Number(o.total_cents || 0),   // for debugging/visibility
+      amount_cents: Number(o.total_cents || 0),
       sent,
       wa_error: waErr || null
     });
