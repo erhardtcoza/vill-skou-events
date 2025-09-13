@@ -387,5 +387,3 @@ export function mountWhatsApp(router) {
     return json({ ok: true, inserted });
   });
 }
-
-export { mountWhatsApp };
