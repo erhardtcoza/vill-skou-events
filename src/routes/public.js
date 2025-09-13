@@ -1,4 +1,4 @@
-// src/router/public.js
+// src/routes/public.js
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
@@ -32,7 +32,9 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
     } else if (sendTxt) {
       await sendTxt(env, toMsisdn, fallbackText);
     }
-  } catch { /* non-blocking */ }
+  } catch {
+    // non-blocking
+  }
 }
 
 /** ------------------------------------------------------------------------
@@ -81,6 +83,7 @@ export function mountPublic(router) {
       id: Number(r.id),
       name: r.name,
       price_cents: Number(r.price_cents || 0),
+      // capacity is still returned for UI, but we do not enforce it server-side here
       capacity: Number(r.capacity || 0),
       per_order_limit: Number(r.per_order_limit || 0),
       requires_gender: Number(r.requires_gender || 0) ? 1 : 0
@@ -199,7 +202,9 @@ export function mountPublic(router) {
       if (buyer_phone) {
         await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg);
       }
-    } catch {}
+    } catch {
+      // ignore
+    }
 
     return json({
       ok: true,
@@ -224,20 +229,37 @@ export function mountPublic(router) {
     return json({ ok:true, status: row.status });
   });
 
-  /* ---------- Public ticket lookup by code ---------- */
+  /* ---------- Public ticket lookup by code (gated by payment) ---------- */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
+
+    // 1) Check order and require 'paid'
+    const o = await env.DB.prepare(
+      `SELECT id, status
+         FROM orders
+        WHERE UPPER(short_code)=?1
+        LIMIT 1`
+    ).bind(c).first();
+
+    if (!o) return json({ ok:false, reason:"not_found" }, 404);
+
+    if (String(o.status || "").toLowerCase() !== "paid") {
+      // Keep the thank-you page polling until webhook flips to 'paid'
+      return json({ ok:false, reason:"unpaid" }, 403);
+    }
+
+    // 2) Return tickets only once paid
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents,
-              o.short_code
+              ?1 AS short_code
          FROM tickets t
-         JOIN orders o ON o.id=t.order_id
-         JOIN ticket_types tt ON tt.id=t.ticket_type_id
-        WHERE UPPER(o.short_code)=?1
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+        WHERE t.order_id = ?2
         ORDER BY t.id ASC`
-    ).bind(c).all();
+    ).bind(c, o.id).all();
+
     return json({ ok:true, tickets: q.results || [] });
   });
 }
