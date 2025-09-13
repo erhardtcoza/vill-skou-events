@@ -224,21 +224,33 @@ export function mountPublic(router) {
     return json({ ok:true, status: row.status });
   });
 
-  /* ---------- Public ticket lookup by code (only when PAID) ---------- */
+  /* ---------- Public ticket lookup by code (PAID ONLY) ---------- */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
+
+    // Enforce payment status before returning tickets
+    const ord = await env.DB.prepare(
+      `SELECT id, status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
+    ).bind(c).first();
+
+    if (!ord) return json({ ok:false, reason:"not_found" }, 404);
+    if (String(ord.status || "").toLowerCase() !== "paid") {
+      // Hide the existence of tickets until payment is confirmed
+      return json({ ok:false, reason:"unpaid" }, 403);
+    }
+
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents,
               o.short_code
          FROM tickets t
-         JOIN orders o ON o.id = t.order_id
-         JOIN ticket_types tt ON tt.id = t.ticket_type_id
-        WHERE UPPER(o.short_code) = ?1
-          AND LOWER(o.status) = 'paid'
+         JOIN orders o ON o.id=t.order_id
+         JOIN ticket_types tt ON tt.id=t.ticket_type_id
+        WHERE UPPER(o.short_code)=?1
         ORDER BY t.id ASC`
     ).bind(c).all();
+
     return json({ ok:true, tickets: q.results || [] });
   });
 }
