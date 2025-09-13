@@ -15,7 +15,7 @@ async function parseTpl(env, key) {
   const sel = await getSetting(env, key);
   if (!sel) return { name: null, lang: "en_US" };
   const [n, l] = String(sel).split(":");
-  return { name: (n||"").trim() || null, lang: (l||"").trim() || "en_US" };
+  return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
 }
 
 async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
@@ -32,7 +32,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
     } else if (sendTxt) {
       await sendTxt(env, toMsisdn, fallbackText);
     }
-  } catch {}
+  } catch { /* non-blocking */ }
 }
 
 /** ------------------------------------------------------------------------
@@ -40,27 +40,29 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
  * --------------------------------------------------------------------- */
 export function mountPOS(router) {
   // Minimal diag
-  router.add("GET", "/api/pos/diag", async () => json({ ok:true, pos:"ready" }));
+  router.add("GET", "/api/pos/diag", async () => json({ ok: true, pos: "ready" }));
 
   // Settle an order (mark as paid) and trigger WA delivery
   // Body: { order_id, code, buyer_phone, buyer_name, method: 'cash'|'card' }
   router.add("POST", "/api/pos/settle", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const order_id   = Number(b?.order_id || 0);
-    const code       = String(b?.code || "").trim().toUpperCase();
-    const buyer_phone= String(b?.buyer_phone || "").trim();
-    const buyer_name = String(b?.buyer_name || "").trim();
-    const method     = String(b?.method || "cash").toLowerCase(); // 'cash' | 'card'
+    const order_id    = Number(b?.order_id || 0);
+    const code        = String(b?.code || "").trim().toUpperCase();
+    const buyer_phone = String(b?.buyer_phone || "").trim();
+    const buyer_name  = String(b?.buyer_name || "").trim();
+    const method      = String(b?.method || "cash").toLowerCase(); // 'cash' | 'card'
 
     if (!order_id || !code) return bad("order_id and code required");
 
     const o = await env.DB.prepare(
       `SELECT id, short_code, total_cents, status
-         FROM orders WHERE id=?1 AND UPPER(short_code)=?2 LIMIT 1`
+         FROM orders
+        WHERE id=?1 AND UPPER(short_code)=?2
+        LIMIT 1`
     ).bind(order_id, code).first();
     if (!o) return bad("order not found", 404);
 
-    const now = Math.floor(Date.now()/1000);
+    const now = Math.floor(Date.now() / 1000);
 
     // Mark paid
     await env.DB.prepare(
@@ -74,14 +76,16 @@ export function mountPOS(router) {
        VALUES (?1, ?2, ?3, 'approved', ?4, ?4)`
     ).bind(order_id, o.total_cents || 0, m, now).run();
 
-    // WhatsApp delivery (and optional confirmation)
+    // WhatsApp delivery (admin-selected template key)
     try {
       const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
       const link = base ? `${base}/t/${encodeURIComponent(code)}` : "";
-      const body = link ? `Jou kaartjies is gereed. ${link}` : `Jou kaartjies is gereed. Kode: ${code}`;
+      const body = link
+        ? `Jou kaartjies is gereed. ${link}`
+        : `Jou kaartjies is gereed. Kode: ${code}`;
       await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", buyer_phone, body);
-    } catch {}
+    } catch { /* ignore WA failure */ }
 
-    return json({ ok:true, order_id, status:"paid" });
+    return json({ ok: true, order_id, status: "paid" });
   });
 }
