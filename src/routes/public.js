@@ -35,6 +35,9 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   } catch { /* non-blocking */ }
 }
 
+/** Helpers */
+function nowTs() { return Math.floor(Date.now()/1000); }
+
 /** ------------------------------------------------------------------------
  * Public-facing endpoints (catalog, event detail, checkout)
  * --------------------------------------------------------------------- */
@@ -131,7 +134,7 @@ export function mountPublic(router) {
     }
     if (!order_items.length) return bad("No valid items");
 
-    const now = Math.floor(Date.now()/1000);
+    const now = nowTs();
     const short_code = ("C" + Math.random().toString(36).slice(2,8)).toUpperCase();
 
     // Insert order
@@ -229,15 +232,15 @@ export function mountPublic(router) {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
 
-    // Enforce payment status before returning tickets
-    const ord = await env.DB.prepare(
+    // Ensure order is PAID before exposing tickets
+    const o = await env.DB.prepare(
       `SELECT id, status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
     ).bind(c).first();
 
-    if (!ord) return json({ ok:false, reason:"not_found" }, 404);
-    if (String(ord.status || "").toLowerCase() !== "paid") {
-      // Hide the existence of tickets until payment is confirmed
-      return json({ ok:false, reason:"unpaid" }, 403);
+    if (!o) return json({ ok:false, reason: "not_found" }, 404);
+    if (String(o.status || "").toLowerCase() !== "paid") {
+      // Hide tickets until payment confirmed
+      return json({ ok:false, reason: "unpaid" }, 403);
     }
 
     const q = await env.DB.prepare(
@@ -247,9 +250,9 @@ export function mountPublic(router) {
          FROM tickets t
          JOIN orders o ON o.id=t.order_id
          JOIN ticket_types tt ON tt.id=t.ticket_type_id
-        WHERE UPPER(o.short_code)=?1
+        WHERE o.id=?1
         ORDER BY t.id ASC`
-    ).bind(c).all();
+    ).bind(o.id).all();
 
     return json({ ok:true, tickets: q.results || [] });
   });
