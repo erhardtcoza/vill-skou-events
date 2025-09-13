@@ -101,9 +101,9 @@ export function mountPublic(router) {
     const buyer_phone= String(b?.phone || "").trim();
     const method     = b?.method === "pay_now" ? "online_yoco" : "pos_cash";
 
-    if (!event_id)     return bad("event_id required");
+    if (!event_id)   return bad("event_id required");
     if (!items.length) return bad("items required");
-    if (!buyer_name)   return bad("buyer_name required");
+    if (!buyer_name) return bad("buyer_name required");
 
     // Validate ticket types (NO capacity checks here)
     const ttQ = await env.DB.prepare(
