@@ -2,7 +2,7 @@
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
- * Shared helpers (settings + WhatsApp via Admin template selectors)
+ * Small shared helpers (settings + WhatsApp via Admin template selectors)
  * --------------------------------------------------------------------- */
 async function getSetting(env, key) {
   const row = await env.DB.prepare(
@@ -22,7 +22,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   if (!toMsisdn) return;
   let svc = null;
   try { svc = await import("../services/whatsapp.js"); } catch { return; }
-  const sendTpl = svc.sendWhatsAppTemplate || null;   // (env,to,body,lang,templateName?)
+  const sendTpl = svc.sendWhatsAppTemplate || null;   // (env,to,body,lang,name?)
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
 
   const { name, lang } = await parseTpl(env, tplKey);
@@ -101,11 +101,11 @@ export function mountPublic(router) {
     const buyer_phone= String(b?.phone || "").trim();
     const method     = b?.method === "pay_now" ? "online_yoco" : "pos_cash";
 
-    if (!event_id)   return bad("event_id required");
+    if (!event_id)     return bad("event_id required");
     if (!items.length) return bad("items required");
-    if (!buyer_name) return bad("buyer_name required");
+    if (!buyer_name)   return bad("buyer_name required");
 
-    // Validate ticket types (NO capacity checks here)
+    // Validate ticket types (NO capacity checks)
     const ttQ = await env.DB.prepare(
       `SELECT id, name, price_cents, per_order_limit
          FROM ticket_types WHERE event_id=?1`
