@@ -1,4 +1,4 @@
-// src/router/public.js
+// src/routes/public.js
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
@@ -33,14 +33,6 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
       await sendTxt(env, toMsisdn, fallbackText);
     }
   } catch { /* non-blocking */ }
-}
-
-/** Quick helper so we can centrally decide when tickets are visible */
-async function isOrderPaid(env, shortCode) {
-  const row = await env.DB.prepare(
-    `SELECT status FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
-  ).bind(String(shortCode || "")).first();
-  return !!row && String(row.status || "").toLowerCase() === "paid";
 }
 
 /** ------------------------------------------------------------------------
@@ -89,7 +81,7 @@ export function mountPublic(router) {
       id: Number(r.id),
       name: r.name,
       price_cents: Number(r.price_cents || 0),
-      capacity: Number(r.capacity || 0),         // kept for UI display; not enforced
+      capacity: Number(r.capacity || 0),
       per_order_limit: Number(r.per_order_limit || 0),
       requires_gender: Number(r.requires_gender || 0) ? 1 : 0
     }));
@@ -232,28 +224,21 @@ export function mountPublic(router) {
     return json({ ok:true, status: row.status });
   });
 
-  /* ---------- Public ticket lookup by code ----------
-     IMPORTANT: Only return tickets when the order is PAID. */
+  /* ---------- Public ticket lookup by code (only when PAID) ---------- */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
-
-    // Block access if the order isn't paid yet
-    if (!(await isOrderPaid(env, c))) {
-      return json({ ok:false, error:"unpaid" }, 403);
-    }
-
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents,
               o.short_code
          FROM tickets t
-         JOIN orders o ON o.id=t.order_id
-         JOIN ticket_types tt ON tt.id=t.ticket_type_id
-        WHERE UPPER(o.short_code)=?1
+         JOIN orders o ON o.id = t.order_id
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+        WHERE UPPER(o.short_code) = ?1
+          AND LOWER(o.status) = 'paid'
         ORDER BY t.id ASC`
     ).bind(c).all();
-
     return json({ ok:true, tickets: q.results || [] });
   });
 }
