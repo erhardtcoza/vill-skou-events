@@ -56,9 +56,9 @@ export async function sendTicketTemplate(env, toMsisdn, {
   return await r.json();
 }
 
-/** Legacy helpers (kept to avoid breaking imports elsewhere). */
-export async function sendWhatsAppTemplate(env, toMsisdn, bodyText, lang) {
-  const templateName = env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery";
+/** Back-compatible helper with optional explicit template name. */
+export async function sendWhatsAppTemplate(env, toMsisdn, bodyText, lang, explicitTemplateName) {
+  const templateName = explicitTemplateName || env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery";
   const language = lang || env.WHATSAPP_TEMPLATE_LANG || "af";
   const payload = {
     messaging_product: "whatsapp",
