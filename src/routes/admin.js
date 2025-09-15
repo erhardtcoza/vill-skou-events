@@ -685,7 +685,8 @@ router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
       await sendFn(env, msisdn, body, (env.WHATSAPP_TEMPLATE_LANG || "en_US"));
       return json({ ok: true });
     } catch (e) {
-      return bad(String(e?.message || e || "WhatsApp send failed"), 500);
+      console.error("WhatsApp send failed:", e);
+      return bad("WhatsApp send failed", 500);
     }
   }));
 
