@@ -1,50 +1,34 @@
 // src/routes/public.js
 import { json, bad } from "../utils/http.js";
 
-/** ------------------------------------------------------------------------
- * Small shared helpers (settings + WhatsApp via Admin template selectors)
- * --------------------------------------------------------------------- */
+/* ------------------ shared helpers (settings + WA) ------------------ */
 async function getSetting(env, key) {
   const row = await env.DB.prepare(
     `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
   ).bind(key).first();
   return row ? row.value : null;
 }
-
-async function parseTpl(env, key /* e.g. 'WA_TMP_ORDER_CONFIRM' */) {
+async function parseTpl(env, key) {
   const sel = await getSetting(env, key);
   if (!sel) return { name: null, lang: "en_US" };
   const [n, l] = String(sel).split(":");
   return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
 }
-
-/**
- * Send WhatsApp via an admin-selected template key.
- * Supports BODY variables (bodyVars) and falls back to plain text if no template is configured.
- * Matches the helper used in payments.js so both behave the same.
- */
-async function sendViaTemplateKey(env, tplKey, toMsisdn, { bodyVars = [], fallbackText = "" } = {}) {
+async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   if (!toMsisdn) return;
-  let svc = null;
-  try { svc = await import("../services/whatsapp.js"); } catch { return; }
-  const sendTpl = svc.sendWhatsAppTemplate || null;   // (env, to, {bodyVars}, lang, name)
+  let svc = null; try { svc = await import("../services/whatsapp.js"); } catch { return; }
+  const sendTpl = svc.sendWhatsAppTemplate || null;
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
-
   const { name, lang } = await parseTpl(env, tplKey);
   try {
-    if (name && sendTpl) {
-      await sendTpl(env, toMsisdn, { bodyVars }, lang, name);
-    } else if (sendTxt && fallbackText) {
-      await sendTxt(env, toMsisdn, fallbackText);
-    }
-  } catch { /* non-blocking */ }
+    if (name && sendTpl) await sendTpl(env, toMsisdn, fallbackText, lang, name);
+    else if (sendTxt)   await sendTxt(env, toMsisdn, fallbackText);
+  } catch {}
 }
 
-/** ------------------------------------------------------------------------
- * Public-facing endpoints (catalog, event detail, checkout)
- * --------------------------------------------------------------------- */
+/* --------------------------- public routes --------------------------- */
 export function mountPublic(router) {
-  /* ---------- Events list (active) ---------- */
+  /* Events list (active) */
   router.add("GET", "/api/public/events", async (_req, env) => {
     const q = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -64,7 +48,7 @@ export function mountPublic(router) {
     });
   });
 
-  /* ---------- Event detail (+ ticket types) ---------- */
+  /* Event detail (+ ticket types) */
   router.add("GET", "/api/public/events/:slug", async (_req, env, _ctx, { slug }) => {
     const ev = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -72,7 +56,6 @@ export function mountPublic(router) {
          FROM events
         WHERE slug=?1 LIMIT 1`
     ).bind(slug).first();
-
     if (!ev) return bad("Not found", 404);
 
     const ttQ = await env.DB.prepare(
@@ -94,8 +77,8 @@ export function mountPublic(router) {
     return json({ ok: true, event: ev, ticket_types });
   });
 
-  /* ---------- Create order (checkout) ---------- */
-  router.add("POST", "/api/public/orders/create", async (req, env, ctx) => {
+  /* Create order (and send WA order confirmation) */
+  router.add("POST", "/api/public/orders/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
     const event_id   = Number(b?.event_id || 0);
@@ -110,7 +93,7 @@ export function mountPublic(router) {
     if (!items.length) return bad("items required");
     if (!buyer_name)   return bad("buyer_name required");
 
-    // Validate ticket types (NO capacity checks)
+    // Validate ticket types (simple; no capacity here)
     const ttQ = await env.DB.prepare(
       `SELECT id, name, price_cents, per_order_limit
          FROM ticket_types WHERE event_id=?1`
@@ -157,7 +140,7 @@ export function mountPublic(router) {
 
     const order_id = r.meta.last_row_id;
 
-    // Optional attendee attachment (FIFO per ticket_type)
+    // Attach attendees (FIFO per ticket_type)
     const queues = new Map();
     for (const a of attendees) {
       const tid = Number(a?.ticket_type_id || 0);
@@ -171,17 +154,16 @@ export function mountPublic(router) {
       });
       queues.set(tid, arr);
     }
-
     for (const it of order_items) {
       await env.DB.prepare(
         `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
          VALUES (?1,?2,?3,?4)`
       ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
 
-      const queue = queues.get(it.ticket_type_id) || [];
+      const q = queues.get(it.ticket_type_id) || [];
       for (let i=0;i<it.qty;i++){
         const qr = short_code + "-" + it.ticket_type_id + "-" + Math.random().toString(36).slice(2,8).toUpperCase();
-        const a = queue.length ? queue.shift() : {first:null,last:null,gender:null,phone:null};
+        const a = q.length ? q.shift() : {first:null,last:null,gender:null,phone:null};
         await env.DB.prepare(
           `INSERT INTO tickets
              (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, issued_at)
@@ -190,33 +172,22 @@ export function mountPublic(router) {
       }
     }
 
-    // WhatsApp: Order confirmation via Admin-picked template (Bestelling_ontvang)
+    // WhatsApp: Order confirmation
     try {
       const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
       const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
-
-      // Variables expected by your template:
-      // {{1}} = first name (or buyer_name), {{2}} = order code
-      const first = (buyer_name || "").trim().split(/\s+/)[0] || (buyer_name || "Koper");
-      const bodyVars = [first, short_code];
-
-      const fallback = [
-        `Hallo ${buyer_name || "Koper"}`,
+      const msg  = [
+        `Hallo ${buyer_name}`,
         ``,
         `Jou bestel nommer is ${short_code}.`,
-        ``,
-        `Indien jy nie nou aanlyn betaal het nie, kan jy hierdie kode by die hek wys, die kasier sal jou bestelling herroep.`,
-        link ? `Jy kan die bestelstatus hier volg: ${link}` : ``,
+        `Indien jy nie nou aanlyn betaal het nie, kan jy die kode by die hek wys.`,
+        link ? `Volg vordering / betaal hier: ${link}` : ``,
         `Ons stuur jou kaartjies sodra betaling klaar is.`
       ].filter(Boolean).join("\n");
-
       if (buyer_phone) {
-        await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), {
-          bodyVars,
-          fallbackText: fallback
-        });
+        await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg);
       }
-    } catch { /* non-blocking */ }
+    } catch {}
 
     return json({
       ok: true,
@@ -230,7 +201,7 @@ export function mountPublic(router) {
     });
   });
 
-  /* ---------- Minimal order status (thank-you poll) ---------- */
+  /* Order status (thank-you polling) */
   router.add("GET", "/api/public/orders/status/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").toUpperCase();
     if (!c) return bad("code required");
@@ -241,7 +212,7 @@ export function mountPublic(router) {
     return json({ ok:true, status: row.status });
   });
 
-  /* ---------- Public ticket lookup by code ---------- */
+  /* Public ticket lookup by code */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
