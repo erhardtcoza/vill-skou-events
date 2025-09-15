@@ -1,86 +1,99 @@
-// /src/ui/thankyou.js
-export function thankYouHTML(code) {
-  const safe = String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  return `<!doctype html><html lang="af"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Bestelling ontvang - Villiersdorp Skou</title>
-<style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --border:#e5e7eb }
-  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
-  .wrap{ max-width:720px; margin:24px auto; padding:0 14px }
-  .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
-  h1{ margin:0 0 10px } .muted{ color:var(--muted) }
-  .code{ display:inline-block; font-weight:800; font-size:22px; padding:10px 14px; border-radius:12px; background:#f1f5f3; letter-spacing:1px }
-  .btn{ display:inline-block; padding:12px 14px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer; font-weight:700; text-decoration:none; color:#111 }
-  .btn.primary{ background:var(--green); color:#fff; border-color:transparent }
-  .row{ display:flex; gap:10px; flex-wrap:wrap }
-  .spinner{ width:14px; height:14px; border:2px solid #cbd5d1; border-top-color:#4caf50; border-radius:50%; display:inline-block; animation:spin 1s linear infinite; vertical-align:middle }
-  @keyframes spin{ to{ transform:rotate(360deg) } }
-  .success{ background:#e9f7ef; border:1px solid #cdebd9; color:#0a5c28; padding:10px 12px; border-radius:10px; margin-top:10px; display:none }
-</style>
-</head><body>
-<div class="wrap">
-  <div class="card">
-    <h1>Dankie! 🎟️</h1>
-    <p>Ons het jou bestelling ontvang. Gebruik hierdie kode as verwysing:</p>
-    <div class="code" id="orderCode">${safe}</div>
+// src/ui/thankyou.js
+//
+// Thank-you / Order status page
+// - Polls /api/public/orders/status/:code until PAID
+// - Hides the "Show my tickets" button until paid
+// - If there’s a ?next=<yoco_url> query, shows a resilient "Pay now" button
+//   and (optionally) auto-kicks once after a brief delay.
 
-    <div id="waiting" class="muted" style="margin-top:10px">
-      <span class="spinner"></span>
-      <span>Wag vir betaalbevestiging…</span>
-    </div>
+import { api } from "../addons/api.js";
 
-    <div id="paidBanner" class="success">Betaling bevestig! Jou kaartjies word nou via WhatsApp en e-pos gestuur.</div>
+function qs(sel, root = document) { return root.querySelector(sel); }
 
-    <div class="row" style="margin-top:14px">
-      <a id="ticketsBtn" class="btn primary" href="/t/${safe}">Wys my kaartjies</a>
-      <a class="btn" href="/">Terug na tuisblad</a>
-    </div>
-  </div>
-</div>
+export function mountThankYou(el, { code }) {
+  const statusDot  = qs("[data-status-dot]", el);
+  const showBtn    = qs("[data-show-tickets]", el);
+  const backBtn    = qs("[data-back-home]", el);
+  const payBtn     = qs("[data-pay-now]", el);      // new
+  const alertBox   = qs("[data-pay-alert]", el);    // new
 
-<script>
-(async function(){
-  const code = ${JSON.stringify(safe)};
-  const params = new URLSearchParams(location.search);
-  const next = params.get("next"); // set by payments redirect
-  const statusUrl = "/api/public/orders/status/" + encodeURIComponent(code);
-  const btn = document.getElementById("ticketsBtn");
-  const wait = document.getElementById("waiting");
-  const banner = document.getElementById("paidBanner");
+  // read ?next (payment URL) from location
+  const u = new URL(location.href);
+  const next = u.searchParams.get("next") || "";
 
-  async function getStatus(){
-    try{
-      const r = await fetch(statusUrl, { cache:"no-store" });
-      if (!r.ok) return null;
-      const j = await r.json().catch(()=>null);
-      return j?.status || null;
-    }catch{ return null; }
+  // Initial UI state
+  setPaidUI(false);
+  if (payBtn) payBtn.style.display = next ? "" : "none";
+  if (alertBox) alertBox.style.display = next ? "" : "none";
+
+  // Wire up buttons
+  if (showBtn) {
+    showBtn.addEventListener("click", () => {
+      // Only allow when paid (guard in case someone fiddles with attributes)
+      if (!showBtn.dataset.enabled) return;
+      window.location.href = `/t/${encodeURIComponent(code)}`;
+    });
   }
 
-  function onPaid(){
-    wait.style.display = "none";
-    banner.style.display = "block";
-    // If Yoco showed their "click here if not redirected" link → this page loads,
-    // we automatically forward to the ticket page so the user lands on their tickets.
-    if (next) location.href = next;
-    else btn.style.display = "inline-block";
+  if (payBtn && next) {
+    payBtn.addEventListener("click", () => window.location.assign(next));
   }
 
-  // First check
-  let s = await getStatus();
-  if (s === "paid"){ onPaid(); return; }
+  // Optional: auto-open the payment page once if we have next=...
+  if (next) {
+    // Give the page a moment to render, then try once.
+    setTimeout(() => {
+      window.location.assign(next);
+    }, 400);
+  }
 
-  // Poll up to ~3 minutes
-  let tries = 0, max = 90;     // every 2s
-  const t = setInterval(async ()=>{
+  // Poll status until paid (or give up after N tries)
+  let tries = 0;
+  const timer = setInterval(async () => {
     tries++;
-    const st = await getStatus();
-    if (st === "paid"){ clearInterval(t); onPaid(); }
-    if (st === "payment_failed"){ clearInterval(t); wait.innerHTML = "<span>Betaling het misluk. Probeer asseblief weer.</span>"; }
-    if (tries >= max){ clearInterval(t); } // stop silently
-  }, 2000);
-})();
-</script>
-</body></html>`;
+    try {
+      const res = await api.get(`/api/public/orders/status/${encodeURIComponent(code)}`);
+      const st = String(res?.status || "").toLowerCase();
+
+      if (st === "paid") {
+        clearInterval(timer);
+        setPaidUI(true);
+      } else {
+        setPaidUI(false);
+      }
+    } catch {
+      // keep trying silently
+    }
+    if (tries > 120) { // ~6 minutes at 3s interval if you adjust later
+      clearInterval(timer);
+    }
+  }, 3000);
+
+  function setPaidUI(isPaid) {
+    if (statusDot) {
+      statusDot.className = isPaid ? "dot dot--green" : "dot dot--waiting";
+      statusDot.textContent = isPaid ? "Betaalbevestig ✔" : "Wag vir betaalbevestiging…";
+    }
+    if (showBtn) {
+      showBtn.disabled = !isPaid;
+      // dataset flag so click handler can double-guard
+      if (isPaid) {
+        showBtn.dataset.enabled = "1";
+        showBtn.classList.remove("is-disabled");
+      } else {
+        delete showBtn.dataset.enabled;
+        showBtn.classList.add("is-disabled");
+      }
+    }
+    if (payBtn) {
+      // When paid, hide the rescue pay flow
+      if (isPaid) {
+        payBtn.style.display = "none";
+        if (alertBox) alertBox.style.display = "none";
+      } else if (next) {
+        payBtn.style.display = "";
+        if (alertBox) alertBox.style.display = "";
+      }
+    }
+  }
 }
