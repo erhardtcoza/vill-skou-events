@@ -29,7 +29,20 @@ export function registerAddonRoutes(router){
 
   /* -------- Templates -------- */
   router.add("GET","/api/templates",async(_req,env)=>{ const useWa=await tableExists(env,"wa_templates"); const tbl=useWa?"wa_templates":"templates"; return json(await all(env.DB,`SELECT * FROM ${tbl} ORDER BY is_default DESC, name`)); });
-  router.add("POST","/api/templates/sync",async(_req,env)=>{ try{ ensureWhatsAppEnv(env); const r=await fetch(`https://graph.facebook.com/v20.0/${env.PHONE_NUMBER_ID}/message_templates?limit=200`,{headers:{Authorization:`Bearer ${env.WHATSAPP_TOKEN}`}}); const J=await r.json(); const tbl=await upsertTemplateRows(env,J.data||[]); return json({ok:true,table:tbl,count:(J.data||[]).length}); }catch(e){ return json({error:String(e.message||e)},500);} });
+  router.add("POST","/api/templates/sync",async(_req,env)=>{ 
+    try { 
+      ensureWhatsAppEnv(env); 
+      const r = await fetch(`https://graph.facebook.com/v20.0/${env.PHONE_NUMBER_ID}/message_templates?limit=200`, { headers: { Authorization: `Bearer ${env.WHATSAPP_TOKEN}` } });
+      const J = await r.json(); 
+      const tbl = await upsertTemplateRows(env, J.data || []); 
+      return json({ok: true, table: tbl, count: (J.data || []).length}); 
+    } catch(e) { 
+      // Server-side logging of full error for diagnostics
+      console.error("POST /api/templates/sync error:", e); 
+      // Send a generic error message to the client
+      return json({error: "Internal server error"}, 500);
+    } 
+  });
   router.add("PUT","/api/templates/:name",async(req,env,_c,p)=>{ const b=await readJson(req); if(!b) return json({error:"Bad JSON"},400); const useWa=await tableExists(env,"wa_templates"); const tbl=useWa?"wa_templates":"templates"; if(b.is_default===1) await run(env.DB,`UPDATE ${tbl} SET is_default=0`); await run(env.DB,`UPDATE ${tbl} SET is_default=COALESCE(?1,is_default), lang=COALESCE(?2,lang), category=COALESCE(?3,category), updated_at=strftime('%s','now') WHERE name=?4`,b.is_default,b.lang,b.category,p.name); return json({ok:true}); });
 
   /* -------- WhatsApp -------- */
