@@ -2,7 +2,7 @@
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
- * Small helpers
+ * Helpers (settings, time, WhatsApp)
  * --------------------------------------------------------------------- */
 async function getSetting(env, key) {
   const row = await env.DB.prepare(
@@ -16,7 +16,6 @@ async function currentPublicBase(env) {
 }
 function nowTs() { return Math.floor(Date.now() / 1000); }
 
-/** WhatsApp helpers */
 async function parseTpl(env, key) {
   const sel = await getSetting(env, key);
   if (!sel) return { name: null, lang: "en_US" };
@@ -45,24 +44,26 @@ async function sendTickets(env, order) {
 }
 
 /** ------------------------------------------------------------------------
- * YOCO config (exact DB keys & mode)
+ * Yoco config (exact DB keys & mode)
  * --------------------------------------------------------------------- */
 async function yocoConfig(env) {
   const modeRaw = (await getSetting(env, "YOCO_MODE")) || "test";
   const mode = String(modeRaw).toLowerCase() === "live" ? "live" : "test";
+
   const testSecret = await getSetting(env, "YOCO_TEST_SECRET_KEY");
   const liveSecret = await getSetting(env, "YOCO_LIVE_SECRET_KEY");
   const secret = mode === "live" ? (liveSecret || "") : (testSecret || "");
+
   const testHook = await getSetting(env, "YOCO_TEST_WEBHOOK_SECRET");
   const liveHook = await getSetting(env, "YOCO_LIVE_WEBHOOK_SECRET");
-  return {
-    mode,
-    secret,
-    webhookSecret: mode === "live" ? (liveHook || null) : (testHook || null),
-  };
+  const webhookSecret = mode === "live" ? (liveHook || null) : (testHook || null);
+
+  return { mode, secret, webhookSecret };
 }
 
-/** DB/KV utilities */
+/** ------------------------------------------------------------------------
+ * DB utilities
+ * --------------------------------------------------------------------- */
 function findShortCodeAnywhere(obj) {
   const re = /C[A-Z0-9]{6,8}/g;
   try {
@@ -71,6 +72,7 @@ function findShortCodeAnywhere(obj) {
     return m && m[0] ? m[0] : null;
   } catch { return null; }
 }
+
 async function activateTickets(env, orderId) {
   const ts = nowTs();
   await env.DB.prepare(
@@ -79,8 +81,10 @@ async function activateTickets(env, orderId) {
       WHERE order_id=?2 AND state!='active'`
   ).bind(ts, orderId).run();
 }
+
 async function markPaidAndLog(env, code, meta = {}) {
   if (!code) return { ok: false, reason: "no_code" };
+
   const o = await env.DB.prepare(
     `SELECT id, short_code, total_cents, buyer_name, buyer_phone, buyer_email, event_id, status
        FROM orders
@@ -105,6 +109,7 @@ async function markPaidAndLog(env, code, meta = {}) {
 
   const amount = Number(meta.amount_cents || o.total_cents || 0);
   const txref  = String(meta.tx_ref || meta.txid || meta.reference || "") || null;
+
   await env.DB.prepare(
     `INSERT INTO payments (order_id, amount_cents, method, status, created_at, updated_at, reference)
      VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
@@ -113,8 +118,12 @@ async function markPaidAndLog(env, code, meta = {}) {
   try {
     const base = await currentPublicBase(env);
     const link = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : base;
-    const payMsg = [`Betaling ontvang ✅`,`Bestelling: ${o.short_code}`, link ? `Jou kaartjies: ${link}` : ``]
-      .filter(Boolean).join("\n");
+    const payMsg = [
+      `Betaling ontvang ✅`,
+      `Bestelling: ${o.short_code}`,
+      link ? `Jou kaartjies: ${link}` : ``,
+    ].filter(Boolean).join("\n");
+
     if (o.buyer_phone) {
       await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", String(o.buyer_phone), payMsg);
       await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(o.buyer_phone),
@@ -128,7 +137,7 @@ async function markPaidAndLog(env, code, meta = {}) {
 }
 
 /** ------------------------------------------------------------------------
- * Yoco API helpers
+ * Yoco API helpers (Create Checkout + status fetch)
  * --------------------------------------------------------------------- */
 async function createYocoCheckout(env, order) {
   const yc = await yocoConfig(env);
@@ -143,26 +152,45 @@ async function createYocoCheckout(env, order) {
   const body = {
     amount: Number(order.total_cents || 0) | 0,
     currency: "ZAR",
+    successUrl,
+    cancelUrl,
+    failureUrl,
     metadata: { reference: code },
-    successUrl, cancelUrl, failureUrl
   };
 
-  const r = await fetch("https://payments.yoco.com/api/checkouts", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${yc.secret}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  const J = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, error: J?.message || "yoco_error", meta: J };
+  let r, J;
+  try {
+    r = await fetch("https://payments.yoco.com/api/checkouts", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${yc.secret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    J = await r.json().catch(() => ({}));
+  } catch {
+    return { ok: false, error: "yoco_network_error" };
+  }
+
+  if (!r.ok) {
+    return { ok: false, error: J?.message || "yoco_create_failed", meta: J };
+  }
 
   const checkoutId = J?.id || null;
   const redirectUrl = J?.redirectUrl || null;
-  if (!checkoutId || !redirectUrl) return { ok: false, error: "no_redirect_url", meta: J };
+  if (!checkoutId || !redirectUrl) {
+    return { ok: false, error: "no_redirect_url", meta: J };
+  }
 
-  // Save checkoutId in KV for reconciliation
+  // Save checkout id for reconciliation
   try {
     if (env.EVENTS_KV) {
-      await env.EVENTS_KV.put(`yoco:cx:${code}`, JSON.stringify({ id: checkoutId, at: Date.now() }), { expirationTtl: 60 * 60 * 24 });
+      await env.EVENTS_KV.put(
+        `yoco:cx:${code}`,
+        JSON.stringify({ id: checkoutId, at: Date.now() }),
+        { expirationTtl: 60 * 60 * 24 }
+      );
     }
   } catch {}
 
@@ -192,8 +220,8 @@ async function reconcileCheckout(env, code) {
   const d = chk.data || {};
   const paidLike =
     String(d?.status || "").toLowerCase().includes("paid") ||
-    !!d?.paymentId ||
-    String(d?.status || "").toLowerCase().includes("success");
+    String(d?.status || "").toLowerCase().includes("success") ||
+    !!d?.paymentId;
 
   if (paidLike) {
     const amount_cents = Number(d?.amount || 0) || null;
@@ -208,7 +236,7 @@ async function reconcileCheckout(env, code) {
  * Router
  * --------------------------------------------------------------------- */
 export function mountPayments(router) {
-  // Create a real Yoco checkout (always hits Yoco)
+  // Create a Yoco checkout (TEST or LIVE based on YOCO_MODE)
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
@@ -231,41 +259,92 @@ export function mountPayments(router) {
     return json({ ok: true, redirect_url: res.redirect_url });
   });
 
-  // Webhook (kept; still preferred if configured)
+  // Yoco webhook (payment notifications)
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
-    let payload;
-    try { payload = await req.json(); }
-    catch { return json({ ok: false, error: "bad_json" }, 400); }
+    // Read raw for optional signature verification
+    let raw = "";
+    try { raw = await req.text(); } catch {}
+    let payload; try { payload = raw ? JSON.parse(raw) : null; } catch { payload = null; }
+
+    const { mode, webhookSecret } = await yocoConfig(env);
+
+    // Optional best-effort signature check (won't block if absent)
+    try {
+      const sig =
+        req.headers.get("yoco-signature") ||
+        req.headers.get("x-yoco-signature") ||
+        req.headers.get("yoco-webhook-signature") ||
+        null;
+      if (webhookSecret && sig && raw) {
+        const enc = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          "raw", enc.encode(webhookSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+        );
+        const mac = await crypto.subtle.sign("HMAC", key, enc.encode(raw));
+        const hex = Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2,"0")).join("");
+        const cleanSig = String(sig).trim().toLowerCase();
+        if (!cleanSig.includes(hex.slice(0, 32)) && cleanSig !== hex) {
+          // If you prefer silent ack to avoid retries, change to 200.
+          return json({ ok:false, error:"bad_signature", mode }, 400);
+        }
+      }
+    } catch { /* ignore */ }
+
+    if (!payload) return json({ ok:false, error:"bad_json" }, 400);
 
     const data = payload?.data || payload?.object || payload || {};
+
+    // Extract our order code
     let code =
       data?.metadata?.reference ||
       data?.reference ||
       data?.description ||
       payload?.reference ||
-      payload?.description ||
-      null;
+      payload?.description || null;
 
     if (code) {
       const m = String(code).toUpperCase().match(/C[A-Z0-9]{6,8}/);
       code = m ? m[0] : null;
     }
     if (!code) code = findShortCodeAnywhere(payload);
-    if (!code) return json({ ok: false, error: "code_not_found" }, 200);
+    if (!code) return json({ ok:false, error:"code_not_found" }, 200);
 
-    const amount_cents = Number(data?.amount || data?.amount_cents || data?.amountInCents || 0) || null;
-    const statusRaw = String(data?.status || payload?.status || payload?.type || "").toLowerCase();
-    const isPaid = statusRaw.includes("paid") || statusRaw.includes("success");
+    // Amount (if present)
+    const amount_cents =
+      Number(data?.amount ?? data?.amount_cents ?? data?.amountInCents ?? 0) || null;
+
+    // Consider multiple forms of "paid"
+    const statusCandidates = [
+      String(data?.status || "").toLowerCase(),
+      String(payload?.status || "").toLowerCase(),
+      String(payload?.type || "").toLowerCase(),
+      String(payload?.event || "").toLowerCase(),
+      String(payload?.eventType || "").toLowerCase(),
+      String(data?.payment?.status || "").toLowerCase(),
+    ].filter(Boolean);
+
+    const isPaid =
+      statusCandidates.some(s =>
+        s.includes("paid") ||
+        s.includes("success") ||
+        s.includes("succeed") ||
+        s.includes("completed")
+      );
 
     if (isPaid) {
-      const meta = { amount_cents, tx_ref: data?.id || payload?.id || payload?.eventId || null };
+      const meta = {
+        amount_cents,
+        tx_ref: data?.id || data?.paymentId || payload?.id || payload?.eventId || null,
+      };
       const res = await markPaidAndLog(env, code, meta);
-      return json({ ok: true, processed: res.ok, already_paid: !!res.already_paid });
+      return json({ ok: true, processed: res.ok, already_paid: !!res.already_paid, mode });
     }
-    return json({ ok: true, ignored: true });
+
+    // Not a paid signal – ACK so Yoco doesn't retry endlessly
+    return json({ ok: true, ignored: true, status: data?.status || payload?.status || null, mode });
   });
 
-  // Optional: explicit reconcile endpoint (useful for tools/ops)
+  // Optional: explicit reconcile endpoint (e.g., for admin tools)
   router.add("POST", "/api/payments/yoco/reconcile", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
