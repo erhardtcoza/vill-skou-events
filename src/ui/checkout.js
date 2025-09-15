@@ -1,13 +1,10 @@
-/* Checkout front-end logic
- * - Posts to /api/public/orders/create
- * - If method === "pay_now", redirects to Yoco (intent/simulate or hosted)
- * - Otherwise shows inline success
- * Exposed as: window.App.mountCheckout(root)
- */
-(function () {
-  function qs(sel, root) { return (root || document).querySelector(sel); }
-  function qsa(sel, root) { return Array.from((root || document).querySelectorAll(sel)); }
+// src/ui/checkout.js
+//
+// Checkout page – creates an order then redirects the browser to Yoco
+// when `method === "pay_now"`. No ESM exports (attached on window).
 
+(function (global) {
+  function qs(sel, root = document) { return root.querySelector(sel); }
   async function postJSON(url, body) {
     const r = await fetch(url, {
       method: "POST",
@@ -19,118 +16,83 @@
     return r.json();
   }
 
-  // Serialize the checkout form into the order payload expected by the API
-  function buildPayload(root) {
-    const f = root.querySelector("form[data-checkout]");
-    const evId = Number(f?.dataset?.eventId || 0);
-    const buyer_name  = (qs('[name="buyer_name"]', f)?.value || "").trim();
-    const buyer_email = (qs('[name="buyer_email"]', f)?.value || "").trim();
-    const buyer_phone = (qs('[name="buyer_phone"]', f)?.value || "").trim();
-    const method = (qs('[name="method"]', f)?.value || "pay_now");
-
-    // items list (ticket_type_id, qty) from any inputs like data-tt-id + value
-    const items = [];
-    qsa("[data-tt-id]", f).forEach(inp => {
-      const qty = Number(inp.value || 0);
-      const id  = Number(inp.dataset.ttId || 0);
-      if (id && qty > 0) items.push({ ticket_type_id: id, qty });
-    });
-
-    // optional attendees (per-line blocks)
-    const attendees = [];
-    qsa("[data-attendee]", f).forEach(row => {
-      attendees.push({
-        ticket_type_id: Number(row.dataset.ttId || 0),
-        attendee_first: (qs('[name="att_first"]', row)?.value || "").trim(),
-        attendee_last:  (qs('[name="att_last"]', row)?.value || "").trim(),
-        gender:         (qs('[name="att_gender"]', row)?.value || "").trim(),
-        phone:          (qs('[name="att_phone"]', row)?.value || "").trim(),
-      });
-    });
-
-    return {
-      event_id: evId,
-      buyer_name,
-      email: buyer_email,
-      phone: buyer_phone,
-      method, // "pay_now" or "pos_cash"
-      items,
-      attendees
-    };
-  }
-
-  async function createOrderAndMaybePay(root) {
-    const btn = qs("[data-submit]", root);
-    const err = qs("[data-error]", root);
-
-    function setBusy(b) {
-      if (btn) {
-        btn.disabled = !!b;
-        btn.textContent = b ? "Verwerk..." : btn.dataset.label || "Voltooi";
-      }
-    }
-
-    try {
-      setBusy(true);
-      if (err) err.textContent = "";
-
-      const payload = buildPayload(root);
-      const created = await postJSON("/api/public/orders/create", payload);
-
-      // If pay_now, ask backend for Yoco intent/simulate URL in test mode
-      if (payload.method === "pay_now") {
-        const thanksUrl = `/thanks/${encodeURIComponent(created.order.short_code)}`;
-        const intent = await postJSON("/api/payments/yoco/intent", {
-          code: created.order.short_code,
-          next: thanksUrl
-        });
-
-        // Hard redirect to payment (or simulator in test mode)
-        if (intent?.url) {
-          window.location.assign(intent.url);
-          return;
-        }
-
-        // Fallback: just land on thanks and let recovery button appear
-        window.location.assign(thanksUrl);
-        return;
-      }
-
-      // Non-online flow → land on thanks immediately (pending)
-      window.location.assign(`/thanks/${encodeURIComponent(created.order.short_code)}`);
-    } catch (e) {
-      console.error("[checkout] create error", e);
-      if (err) err.textContent = "Kon nie voortgaan nie. Probeer asseblief weer.";
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function mountCheckout(root) {
-    root = root || document;
-    const form = qs("form[data-checkout]", root);
-    const btn  = qs("[data-submit]", root);
-    if (!form || !btn) {
-      console.warn("[checkout] form or button not found");
-      return;
+    const form = root.querySelector("form[data-checkout]");
+    if (!form) return console.warn("[checkout] form not found");
+
+    const payMethodSel = qs("[name='pay_method']", form); // value: 'pay_now' | 'pos_cash'
+    const submitBtn    = qs("[data-submit]", form);
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      submitBtn && (submitBtn.disabled = true);
+
+      try {
+        const payload = collectForm(form);
+        const res = await postJSON("/api/public/orders/create", payload);
+
+        if (!res?.ok) throw new Error("Kon nie bestelling skep nie");
+
+        const base = location.origin; // your PUBLIC_BASE_URL resolves here
+        const code = res.order.short_code;
+
+        // when pay_now, ask server for hosted checkout url (or simulate in test)
+        const next = await getNextUrl(code);
+
+        // land on /thanks/:code and give it ?next=<yoco_url> so it can recover
+        const to = `${base}/thanks/${encodeURIComponent(code)}${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+        window.location.assign(to);
+      } catch (err) {
+        alert(err.message || err);
+      } finally {
+        submitBtn && (submitBtn.disabled = false);
+      }
+    });
+
+    async function getNextUrl(code) {
+      try {
+        const body = { code, next: "" }; // ‘next’ is optional here
+        const r = await postJSON("/api/payments/yoco/intent", body);
+        if (r?.ok && r?.url) return r.url;
+      } catch { /* ignore, we’ll still land on /thanks */ }
+      return "";
     }
-    btn.dataset.label = btn.textContent;
-    btn.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      createOrderAndMaybePay(root);
-    });
+
+    function collectForm(f) {
+      const fd = new FormData(f);
+
+      // Build expected payload for /api/public/orders/create
+      const event_id = Number(fd.get("event_id") || 0);
+      const buyer_name  = String(fd.get("buyer_name") || "").trim();
+      const email       = String(fd.get("buyer_email") || "").trim();
+      const phone       = String(fd.get("buyer_phone") || "").trim();
+      const method      = (payMethodSel?.value === "pay_now") ? "pay_now" : "pos_cash";
+
+      // Items
+      const items = [];
+      f.querySelectorAll("[data-item]").forEach((row) => {
+        const tt = Number(row.getAttribute("data-tt") || 0);
+        const qty = Number(qs("[name='qty']", row)?.value || 0);
+        const price = Number(qs("[data-price-cents]", row)?.getAttribute("data-price-cents") || 0);
+        if (tt && qty > 0) items.push({ ticket_type_id: tt, qty, price_cents: price });
+      });
+
+      // Attendees (optional)
+      const attendees = [];
+      f.querySelectorAll("[data-attendee]").forEach((row) => {
+        attendees.push({
+          ticket_type_id: Number(row.getAttribute("data-tt") || 0),
+          attendee_first: String(qs("[name='first']", row)?.value || ""),
+          attendee_last:  String(qs("[name='last']", row)?.value  || ""),
+          gender:         String(qs("[name='gender']", row)?.value || ""),
+          phone:          String(qs("[name='att_phone']", row)?.value || "")
+        });
+      });
+
+      return { event_id, buyer_name, email, phone, method, items, attendees };
+    }
   }
 
-  // expose + auto-mount
-  window.App = window.App || {};
-  window.App.mountCheckout = mountCheckout;
-
-  // Auto-mount if we see the marker
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      if (qs("form[data-checkout]")) mountCheckout(document);
-    });
-  } else {
-    if (qs("form[data-checkout]")) mountCheckout(document);
-  }
-})();
+  // expose for inline HTML: <script>window.mountCheckout(...)</script>
+  global.mountCheckout = mountCheckout;
+})(typeof window !== "undefined" ? window : self);
