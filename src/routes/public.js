@@ -1,4 +1,4 @@
-// src/routes/public.js
+// src/router/public.js
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
@@ -35,8 +35,9 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   } catch { /* non-blocking */ }
 }
 
-/** Helpers */
-function nowTs() { return Math.floor(Date.now()/1000); }
+async function publicBase(env) {
+  return (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+}
 
 /** ------------------------------------------------------------------------
  * Public-facing endpoints (catalog, event detail, checkout)
@@ -134,7 +135,7 @@ export function mountPublic(router) {
     }
     if (!order_items.length) return bad("No valid items");
 
-    const now = nowTs();
+    const now = Math.floor(Date.now()/1000);
     const short_code = ("C" + Math.random().toString(36).slice(2,8)).toUpperCase();
 
     // Insert order
@@ -190,7 +191,7 @@ export function mountPublic(router) {
 
     // WhatsApp: Order confirmation via Admin-picked template
     try {
-      const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
+      const base = await publicBase(env);
       const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
       const msg  = [
         `Bestelling ontvang 👍`,
@@ -204,6 +205,19 @@ export function mountPublic(router) {
       }
     } catch {}
 
+    // Optional: give frontend a fallback URL to (re)open payment
+    let pay_url = null;
+    if (method === "online_yoco") {
+      const base = await publicBase(env);
+      const mode = (await getSetting(env, "YOCO_MODE")) || "test";
+      // In TEST we provide a simulator so the “Pay now” button always works.
+      if (mode === "test") {
+        // after pay, user should land on /thanks/:code and your UI can continue from there
+        pay_url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(short_code)}&next=${encodeURIComponent(`/t/${short_code}`)}`;
+      }
+      // In LIVE we don’t know the hosted URL here (created client-side), so leave null.
+    }
+
     return json({
       ok: true,
       order: {
@@ -212,7 +226,8 @@ export function mountPublic(router) {
         payment_method: method, total_cents,
         buyer_name, buyer_email, buyer_phone,
         items: order_items
-      }
+      },
+      pay_url // front-end can show a “Pay now” button if present
     });
   });
 
@@ -227,20 +242,20 @@ export function mountPublic(router) {
     return json({ ok:true, status: row.status });
   });
 
-  /* ---------- Public ticket lookup by code (PAID ONLY) ---------- */
+  /* ---------- Public ticket lookup by code (PAID only) ---------- */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
-
-    // Ensure order is PAID before exposing tickets
+    // ensure the order is paid before exposing tickets
     const o = await env.DB.prepare(
       `SELECT id, status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
     ).bind(c).first();
 
     if (!o) return json({ ok:false, reason: "not_found" }, 404);
+
     if (String(o.status || "").toLowerCase() !== "paid") {
-      // Hide tickets until payment confirmed
-      return json({ ok:false, reason: "unpaid" }, 403);
+      // Don’t leak tickets – make the UI keep polling / show “awaiting payment”
+      return json({ ok:false, reason: "awaiting_payment" }, 402);
     }
 
     const q = await env.DB.prepare(
