@@ -251,12 +251,10 @@ async function submit(){
 
       const link = y?.redirect_url || y?.url || '';
       if (!y.ok || !link){
-        // fall back to thanks with hint to recover
         location.href = '/thanks/' + encodeURIComponent(code) + '?pay=err';
         return;
       }
 
-      // Save so the Thanks page can recover (and open in a new tab)
       try{
         sessionStorage.setItem('last_yoco', JSON.stringify({ code, url: link, ts: Date.now() }));
       }catch{}
