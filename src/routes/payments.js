@@ -1,4 +1,4 @@
-// src/routes/payments.js
+// src/router/payments.js
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
@@ -25,6 +25,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   const { name, lang } = await parseTpl(env, tplKey);
   try {
     if (name && sendTpl) {
+      // In our svc, extra "name" is ignored safely if not supported.
       await sendTpl(env, toMsisdn, fallbackText, lang, name);
     } else if (sendTxt) {
       await sendTxt(env, toMsisdn, fallbackText);
@@ -32,6 +33,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   } catch { /* non-blocking */ }
 }
 async function sendTickets(env, order) {
+  // Uses high-level helper that fills URL button {{1}} with short_code
   try {
     const svc = await import("../services/whatsapp.js");
     if (svc?.sendOrderOnWhatsApp) {
@@ -43,11 +45,13 @@ async function sendTickets(env, order) {
 function nowTs() { return Math.floor(Date.now() / 1000); }
 
 async function currentPublicBase(env) {
+  // Try site_settings first; fall back to env var
   const s = await getSetting(env, "PUBLIC_BASE_URL");
   return s || env.PUBLIC_BASE_URL || "";
 }
 
 function findShortCodeAnywhere(obj) {
+  // Our short codes look like CXXXXXX (7–9 chars). Be permissive.
   const re = /C[A-Z0-9]{6,8}/g;
   try {
     const asText = JSON.stringify(obj || {});
@@ -56,16 +60,6 @@ function findShortCodeAnywhere(obj) {
   } catch {
     return null;
   }
-}
-
-/** Activate tickets for an order (reserved → active) */
-async function activateTickets(env, orderId) {
-  const ts = nowTs();
-  await env.DB.prepare(
-    `UPDATE tickets
-        SET state='active', activated_at=?1
-      WHERE order_id=?2 AND state!='active'`
-  ).bind(ts, orderId).run();
 }
 
 async function markPaidAndLog(env, code, meta = {}) {
@@ -79,12 +73,12 @@ async function markPaidAndLog(env, code, meta = {}) {
   ).bind(code).first();
   if (!o) return { ok: false, reason: "order_not_found" };
 
-  // Idempotency: if already paid, just ensure tickets active
-  const ts = nowTs();
+  // Idempotency: if already paid, just return ok
   if (String(o.status || "").toLowerCase() === "paid") {
-    await activateTickets(env, o.id).catch(()=>{});
     return { ok: true, already_paid: true, order: o };
   }
+
+  const ts = nowTs();
 
   // Update order → paid
   await env.DB.prepare(
@@ -92,9 +86,6 @@ async function markPaidAndLog(env, code, meta = {}) {
         SET status='paid', paid_at=?1, updated_at=?1
       WHERE id=?2`
   ).bind(ts, o.id).run();
-
-  // Activate tickets that were created in reserved state
-  await activateTickets(env, o.id).catch(()=>{});
 
   // Log a payment record (best-effort)
   const amount = Number(meta.amount_cents || o.total_cents || 0);
@@ -112,7 +103,7 @@ async function markPaidAndLog(env, code, meta = {}) {
     const payMsg = [
       `Betaling ontvang ✅`,
       `Bestelling: ${o.short_code}`,
-      link ? `Jou kaartjies: ${link}` : ``,
+      link ? `Volledige besonderhede: ${link}` : ``,
     ].filter(Boolean).join("\n");
 
     if (o.buyer_phone) {
@@ -132,7 +123,13 @@ async function markPaidAndLog(env, code, meta = {}) {
  * Router
  * --------------------------------------------------------------------- */
 export function mountPayments(router) {
-  /* Create a payment intent (test → simulator URL; live → expect frontend to POST here) */
+  /* ---------------------------------------------------------------------
+   * Create a payment intent (TEST mode: simulator URL, LIVE: you likely
+   * create/redirect from the frontend – we keep this minimal to avoid
+   * breaking your current working flow).
+   * Body: { code, next? }
+   * Returns: { ok:true, url }
+   * ------------------------------------------------------------------- */
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
@@ -152,19 +149,27 @@ export function mountPayments(router) {
       return json({ ok: true, url, mode: "test" });
     }
 
-    // LIVE: You’re already using Yoco’s hosted checkout from the client.
-    // Return a gentle error if someone expects server-side creation.
+    // LIVE: Your frontend is already creating the hosted checkout successfully.
+    // We return a gentle error if someone hits this endpoint in live mode
+    // without a server-side integration.
     return bad("Yoco live mode: server-side intent creation not configured here.", 400);
   });
 
-  /* TEST MODE: simulator that marks the order paid and redirects back */
+  /* ---------------------------------------------------------------------
+   * TEST MODE ONLY: simulator that marks the order paid and then redirects
+   * back to /thanks/:code?next=...
+   * ------------------------------------------------------------------- */
   router.add("GET", "/api/payments/yoco/simulate", async (req, env) => {
     const u = new URL(req.url);
     const code = String(u.searchParams.get("code") || "").toUpperCase();
     const next = String(u.searchParams.get("next") || "");
     if (!code) return new Response("code required", { status: 400 });
 
-    const res = await markPaidAndLog(env, code, { tx_ref: "SIMULATED", amount_cents: null });
+    // Mark paid
+    const res = await markPaidAndLog(env, code, {
+      tx_ref: "SIMULATED",
+      amount_cents: null
+    });
 
     const base = await currentPublicBase(env);
     const to = `${base}/thanks/${encodeURIComponent(code)}${next ? `?next=${encodeURIComponent(next)}` : ""}`;
@@ -177,15 +182,19 @@ export function mountPayments(router) {
     return Response.redirect(to, 302);
   });
 
-  /* YOCO Webhook (test + live) */
+  /* ---------------------------------------------------------------------
+   * YOCO Webhook
+   * Configure this URL in Yoco dashboard (test/live respectively).
+   *
+   * We try multiple places to find the short_code, then mark the order PAID.
+   * ------------------------------------------------------------------- */
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let payload;
     try { payload = await req.json(); }
     catch { return json({ ok: false, error: "bad_json" }, 400); }
 
+    // 1) Try common locations
     const data = payload?.data || payload?.object || {};
-
-    // Try find our short_code in common fields
     let code =
       data?.metadata?.reference ||
       data?.reference ||
@@ -194,14 +203,14 @@ export function mountPayments(router) {
       payload?.description ||
       null;
 
-    // Fallback: scan full payload for CXXXXXX pattern
+    // 2) Fallback: scan entire payload for CXXXXXX pattern
     if (code) {
       const m = String(code).toUpperCase().match(/C[A-Z0-9]{6,8}/);
       code = m ? m[0] : null;
     }
     if (!code) code = findShortCodeAnywhere(payload);
     if (!code) {
-      // Ack 200 so Yoco doesn't retry forever, but indicate we couldn't map it
+      // Nothing we can do; ack 200 so Yoco doesn't retry forever, but log not OK
       return json({ ok: false, error: "code_not_found" }, 200);
     }
 
@@ -209,7 +218,7 @@ export function mountPayments(router) {
     const amount_cents =
       Number(data?.amount || data?.amount_cents || data?.amountInCents || 0) || null;
 
-    // Status detection
+    // Status detection: handle various shapes (e.g. "paid", "successful")
     const statusRaw = String(
       data?.status || payload?.status || payload?.type || ""
     ).toLowerCase();
@@ -218,6 +227,7 @@ export function mountPayments(router) {
       statusRaw.includes("paid") ||
       statusRaw.includes("success");
 
+    // Always attempt to mark paid when we think it is successful
     if (isPaid) {
       const meta = {
         amount_cents,
@@ -227,7 +237,7 @@ export function mountPayments(router) {
       return json({ ok: true, processed: res.ok, already_paid: !!res.already_paid });
     }
 
-    // Not a paid signal – ACK and ignore
+    // Not a paid signal – ACK so Yoco stops retrying; do nothing.
     return json({ ok: true, ignored: true });
   });
 }
