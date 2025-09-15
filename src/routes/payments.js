@@ -41,21 +41,17 @@ async function sendTickets(env, order) {
 }
 
 function nowTs() { return Math.floor(Date.now() / 1000); }
-
 async function currentPublicBase(env) {
   const s = await getSetting(env, "PUBLIC_BASE_URL");
   return s || env.PUBLIC_BASE_URL || "";
 }
-
 function findShortCodeAnywhere(obj) {
   const re = /C[A-Z0-9]{6,8}/g;
   try {
     const asText = JSON.stringify(obj || {});
     const m = asText.match(re);
     return m && m[0] ? m[0] : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 /** Activate tickets for an order (reserved → active) */
@@ -79,8 +75,9 @@ async function markPaidAndLog(env, code, meta = {}) {
   ).bind(code).first();
   if (!o) return { ok: false, reason: "order_not_found" };
 
-  // Idempotency: if already paid, just ensure tickets active
   const ts = nowTs();
+
+  // Idempotent
   if (String(o.status || "").toLowerCase() === "paid") {
     await activateTickets(env, o.id).catch(()=>{});
     return { ok: true, already_paid: true, order: o };
@@ -96,7 +93,7 @@ async function markPaidAndLog(env, code, meta = {}) {
   // Activate tickets that were created in reserved state
   await activateTickets(env, o.id).catch(()=>{});
 
-  // Log a payment record (best-effort)
+  // Log payment (best-effort)
   const amount = Number(meta.amount_cents || o.total_cents || 0);
   const txref  = String(meta.tx_ref || meta.txid || meta.reference || "") || null;
   await env.DB.prepare(
@@ -104,7 +101,7 @@ async function markPaidAndLog(env, code, meta = {}) {
      VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
   ).bind(o.id, amount, ts, txref).run().catch(()=>{});
 
-  // WhatsApp: payment confirm, then ticket delivery
+  // WhatsApp: payment confirm + delivery
   try {
     const base = await currentPublicBase(env);
     const link = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : base;
@@ -131,35 +128,55 @@ async function markPaidAndLog(env, code, meta = {}) {
  * Router
  * --------------------------------------------------------------------- */
 export function mountPayments(router) {
-  /* ---------------------------------------------------------------------
-   * Create a payment intent
-   * - Always returns a URL so the UI never falls back to ?pay=err.
-   * - In "test" → simulator; in "live" → still simulator until live flow is wired.
-   * ------------------------------------------------------------------- */
+
+  /** -------------------------------------------------------------------
+   * Create a payment intent (client can call via POST or GET)
+   * Body/query: { code, next? }
+   * TEST mode → returns simulator URL
+   * LIVE mode → return gentle 400 (your frontend is already creating
+   *             the hosted checkout directly with Yoco)
+   * ------------------------------------------------------------------ */
+  async function buildIntent(env, code, next) {
+    if (!code) return { err: bad("code required") };
+
+    const o = await env.DB.prepare(
+      `SELECT id, short_code, total_cents, status
+         FROM orders
+        WHERE UPPER(short_code)=UPPER(?1)
+        LIMIT 1`
+    ).bind(code).first();
+    if (!o) return { err: bad("order not found", 404) };
+
+    const mode = (await getSetting(env, "YOCO_MODE")) || "test";
+    const base = await currentPublicBase(env);
+
+    if (mode === "test") {
+      const url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(code)}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
+      return { ok: json({ ok: true, url, mode: "test" }) };
+    }
+    return { err: bad("Yoco live mode: server-side intent not configured.", 400) };
+  }
+
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
     const next = String(b?.next || "").trim();
-    if (!code) return bad("code required");
-
-    const o = await env.DB.prepare(
-      `SELECT id, short_code, total_cents, status
-         FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
-    ).bind(code).first();
-    if (!o) return bad("order not found", 404);
-
-    const mode = (await getSetting(env, "YOCO_MODE")) || (env.YOCO_MODE || "test");
-    const base = await currentPublicBase(env);
-
-    // Always hand back a valid URL. (We’ll swap to real hosted-checkout later.)
-    const url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(code)}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
-    return json({ ok: true, url, mode: mode === "test" ? "test" : "live-sim" });
+    const { ok, err } = await buildIntent(env, code, next);
+    return ok || err;
   });
 
-  /* ---------------------------------------------------------------------
-   * TEST / FALLBACK: simulator that marks the order PAID and redirects
-   * back to /thanks/:code (preserving next= if provided).
-   * ------------------------------------------------------------------- */
+  // Convenience GET so the Thank-you page can recover the payment URL with a simple fetch
+  router.add("GET", "/api/payments/yoco/intent", async (req, env) => {
+    const u = new URL(req.url);
+    const code = String(u.searchParams.get("code") || "").trim().toUpperCase();
+    const next = String(u.searchParams.get("next") || "").trim();
+    const { ok, err } = await buildIntent(env, code, next);
+    return ok || err;
+  });
+
+  /** -------------------------------------------------------------------
+   * TEST MODE: simulator that marks the order PAID and redirects back
+   * ------------------------------------------------------------------ */
   router.add("GET", "/api/payments/yoco/simulate", async (req, env) => {
     const u = new URL(req.url);
     const code = String(u.searchParams.get("code") || "").toUpperCase();
@@ -179,10 +196,9 @@ export function mountPayments(router) {
     return Response.redirect(to, 302);
   });
 
-  /* ---------------------------------------------------------------------
+  /** -------------------------------------------------------------------
    * YOCO Webhook (test + live)
-   * - Extracts short_code defensively, marks order paid on success.
-   * ------------------------------------------------------------------- */
+   * ------------------------------------------------------------------ */
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let payload;
     try { payload = await req.json(); }
@@ -190,7 +206,7 @@ export function mountPayments(router) {
 
     const data = payload?.data || payload?.object || {};
 
-    // Try find our short_code in common fields
+    // Try common locations first
     let code =
       data?.metadata?.reference ||
       data?.reference ||
@@ -214,7 +230,7 @@ export function mountPayments(router) {
     const amount_cents =
       Number(data?.amount || data?.amount_cents || data?.amountInCents || 0) || null;
 
-    // Status detection
+    // Decide if this event is a "paid" signal
     const statusRaw = String(
       data?.status || payload?.status || payload?.type || ""
     ).toLowerCase();
@@ -232,7 +248,7 @@ export function mountPayments(router) {
       return json({ ok: true, processed: res.ok, already_paid: !!res.already_paid });
     }
 
-    // Not a paid signal – ACK and ignore
+    // Not a paid/success signal – ACK and ignore
     return json({ ok: true, ignored: true });
   });
 }
