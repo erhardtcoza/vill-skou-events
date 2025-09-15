@@ -9,7 +9,6 @@
   "use strict";
 
   function qs(sel, root) { return (root || document).querySelector(sel); }
-
   function getJSON(url) {
     return fetch(url, { credentials: "same-origin" }).then(function (r) {
       if (!r.ok) return r.text().then(function (t) { throw new Error(t || "Request failed"); });
@@ -76,12 +75,9 @@
             gateTickets(false);
           }
         })
-        .catch(function () {
-          // ignore transient errors
-        });
+        .catch(function () { /* ignore transient errors */ });
 
-      // safety stop (~6 minutes at 3s if you keep this interval)
-      if (tries > 120) clearInterval(iv);
+      if (tries > 120) clearInterval(iv); // ~6 minutes at 3s
     }, 3000);
 
     function gateTickets(isPaid) {
@@ -111,23 +107,8 @@
     }
   }
 
-  // Expose for both module and non-module use
+  // expose on window.App
   var App = global.App = global.App || {};
   App.mountThankYou = mountThankYou;
-  try { if (typeof export !== "undefined") {} } catch (_) {}
-  try { /* ESM named export for <script type="module"> use */
-    // eslint-disable-next-line no-undef
-    if (typeof window === "undefined") {} // keep bundlers happy
-  } catch (_) {}
-  // If you import as a module:  import { mountThankYou } from "/ui/thankyou.js"
-  // we provide the named export below in ESM-aware bundlers:
-  // (Some bundlers will ignore this line when not used.)
-  // eslint-disable-next-line
-  if (typeof document !== "undefined") { /* marker to avoid tree-shake */ }
-
-  // Provide an ESM export when loaded as a module
-  // (wrangler/esbuild is fine parsing this).
-  // eslint-disable-next-line
-  export { mountThankYou };
 
 })(typeof window !== "undefined" ? window : (typeof globalThis !== "undefined" ? globalThis : this));
