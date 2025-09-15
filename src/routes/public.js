@@ -242,7 +242,7 @@ export function mountPublic(router) {
       // Hide tickets until payment confirmed
       return json({ ok:false, reason: "unpaid" }, 403);
     }
-
+    
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents,
