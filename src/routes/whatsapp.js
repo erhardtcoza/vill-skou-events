@@ -20,8 +20,13 @@ function norm(msisdn) {
   if (s.length === 10 && s.startsWith("0")) return "27" + s.slice(1);
   return s;
 }
+async function tableExists(db, name){
+  try {
+    const r = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?1`).bind(name).first();
+    return !!r;
+  } catch { return false; }
+}
 
-// ---- If you already have a diag route, keep yours ----
 export function mountWhatsApp(router) {
   router.get("/api/whatsapp/diag", async (_req, env) => {
     const token = (await getSetting(env, "WA_TOKEN")) || env.WA_TOKEN;
@@ -34,27 +39,23 @@ export function mountWhatsApp(router) {
     return json({ ok: true, cfg: { has_token: !!token, has_phone_id: !!pid, default_lang: lang, public_base: base } });
   });
 
-  // ---- New: low-level template test (explicit template + vars array) ----
-  // POST { to:"2772...", template:"bestelling_ontvang", lang:"af", vars:["Piet", "C4RD6I1", "https://.../t/C4RD6I1"] }
+  // Explicit template test with vars[]
   router.add("POST", "/api/whatsapp/test-template", async (req, env) => {
     let b; try { b = await req.json(); } catch { return json({ ok:false, error:"bad_json" }, 400); }
     const to = norm(b?.to || "");
     const template = String(b?.template || "").trim();
     const lang = String(b?.lang || (await getSetting(env, "WA_DEFAULT_LANG")) || "en_US");
-    const vars = Array.isArray(b?.vars) ? b.vars.slice(0, 10).map(x => String(x ?? "")) : []; // support up to 10 safely
+    const vars = Array.isArray(b?.vars) ? b.vars.slice(0, 10).map(x => String(x ?? "")) : [];
     if (!to || !template) return json({ ok:false, error:"to and template required" }, 400);
 
     const WA = await svc();
     if (!WA.sendWhatsAppTemplate) return json({ ok:false, error:"wa_service_missing" }, 500);
 
-    // Our service supports variable arrays via params argument (added below).
     const ok = await WA.sendWhatsAppTemplate(env, to, "", lang, template, vars);
     return json({ ok });
   });
 
-  // ---- New: high-level “order-style” test with your 3 mapped variables ----
-  // POST { to:"2772...", name:"Piet", code:"C4RD6I1" }
-  // Uses PUBLIC_BASE_URL to build the ticket link automatically.
+  // High-level order-style test (uses name, code -> builds link via PUBLIC_BASE_URL)
   router.add("POST", "/api/whatsapp/test-order-sample", async (req, env) => {
     let b; try { b = await req.json(); } catch { return json({ ok:false, error:"bad_json" }, 400); }
     const to   = norm(b?.to || "");
@@ -65,7 +66,6 @@ export function mountWhatsApp(router) {
     const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
     const link = base ? `${base}/t/${encodeURIComponent(code)}` : "";
 
-    // Choose which template to test: order/payment/ticket
     const which = String(b?.which || "order").toLowerCase();
     const key =
       which === "payment" ? "WA_TMP_PAYMENT_CONFIRM" :
@@ -79,8 +79,35 @@ export function mountWhatsApp(router) {
     const WA = await svc();
     if (!WA.sendWhatsAppTemplate) return json({ ok:false, error:"wa_service_missing" }, 500);
 
-    const vars = [name, code, link]; // matches your admin mapping {{1}}=Name, {{2}}=Order no, {{3}}=Ticket url
+    const vars = [name, code, link];
     const ok = await WA.sendWhatsAppTemplate(env, to, "", lang || "en_US", template, vars);
     return json({ ok, which, template, lang, vars });
+  });
+
+  // ---------- Inbox (best-effort; returns [] if no table) ----------
+  router.add("GET", "/api/whatsapp/inbox", async (_req, env) => {
+    const has = await tableExists(env.DB, "wa_messages");
+    if (!has) return json({ ok:true, messages: [] });
+    const q = await env.DB.prepare(
+      `SELECT id, direction, wa_from, wa_to, text, ts
+         FROM wa_messages
+        ORDER BY ts DESC
+        LIMIT 100`
+    ).all();
+    return json({ ok:true, messages: q.results || [] });
+  });
+
+  // ---------- Quick reply ----------
+  router.add("POST", "/api/whatsapp/reply", async (req, env) => {
+    let b; try { b = await req.json(); } catch { return json({ ok:false, error:"bad_json" }, 400); }
+    const to = norm(b?.to || "");
+    const text = String(b?.text || "").trim();
+    if (!to || !text) return json({ ok:false, error:"to and text required" }, 400);
+
+    const WA = await svc();
+    if (!WA.sendWhatsAppTextIfSession) return json({ ok:false, error:"wa_service_missing" }, 500);
+
+    const ok = await WA.sendWhatsAppTextIfSession(env, to, text);
+    return json({ ok });
   });
 }
