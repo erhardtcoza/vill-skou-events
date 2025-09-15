@@ -1,4 +1,4 @@
-// src/router/public.js
+// src/routes/public.js
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
@@ -33,10 +33,6 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
       await sendTxt(env, toMsisdn, fallbackText);
     }
   } catch { /* non-blocking */ }
-}
-
-async function publicBase(env) {
-  return (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
 }
 
 /** ------------------------------------------------------------------------
@@ -94,7 +90,7 @@ export function mountPublic(router) {
   });
 
   /* ---------- Create order (checkout) ---------- */
-  router.add("POST", "/api/public/orders/create", async (req, env) => {
+  router.add("POST", "/api/public/orders/create", async (req, env, ctx) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
     const event_id   = Number(b?.event_id || 0);
@@ -189,34 +185,28 @@ export function mountPublic(router) {
       }
     }
 
-    // WhatsApp: Order confirmation via Admin-picked template
+    // WhatsApp: Order confirmation via Admin-picked template (Bestelling_ontvang)
     try {
-      const base = await publicBase(env);
+      const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
       const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
       const msg  = [
-        `Bestelling ontvang 👍`,
-        `Verwysingskode: ${short_code}`,
+        `Hallo ${buyer_name}`,
+        ``,
+        `Jou bestel nommer is ${short_code}.`,
+        ``,
+        `Indien jy nie nou aanlyn betaal het nie, kan jy hierdie kode by die hek wys.`,
         link ? `Volg vordering of betaal hier: ${link}` : ``,
         `Ons stuur jou kaartjies sodra betaling klaar is.`
       ].filter(Boolean).join("\n");
 
       if (buyer_phone) {
-        await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg);
+        // Template key is configured by admin as WA_TMP_ORDER_CONFIRM → Bestelling_ontvang
+        const svc = await import("../services/whatsapp.js").catch(()=>null);
+        if (svc?.sendWhatsAppTemplate || svc?.sendWhatsAppTextIfSession) {
+          await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg);
+        }
       }
     } catch {}
-
-    // Optional: give frontend a fallback URL to (re)open payment
-    let pay_url = null;
-    if (method === "online_yoco") {
-      const base = await publicBase(env);
-      const mode = (await getSetting(env, "YOCO_MODE")) || "test";
-      // In TEST we provide a simulator so the “Pay now” button always works.
-      if (mode === "test") {
-        // after pay, user should land on /thanks/:code and your UI can continue from there
-        pay_url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(short_code)}&next=${encodeURIComponent(`/t/${short_code}`)}`;
-      }
-      // In LIVE we don’t know the hosted URL here (created client-side), so leave null.
-    }
 
     return json({
       ok: true,
@@ -226,8 +216,7 @@ export function mountPublic(router) {
         payment_method: method, total_cents,
         buyer_name, buyer_email, buyer_phone,
         items: order_items
-      },
-      pay_url // front-end can show a “Pay now” button if present
+      }
     });
   });
 
@@ -242,22 +231,10 @@ export function mountPublic(router) {
     return json({ ok:true, status: row.status });
   });
 
-  /* ---------- Public ticket lookup by code (PAID only) ---------- */
+  /* ---------- Public ticket lookup by code ---------- */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
-    // ensure the order is paid before exposing tickets
-    const o = await env.DB.prepare(
-      `SELECT id, status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
-    ).bind(c).first();
-
-    if (!o) return json({ ok:false, reason: "not_found" }, 404);
-
-    if (String(o.status || "").toLowerCase() !== "paid") {
-      // Don’t leak tickets – make the UI keep polling / show “awaiting payment”
-      return json({ ok:false, reason: "awaiting_payment" }, 402);
-    }
-
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents,
@@ -265,10 +242,9 @@ export function mountPublic(router) {
          FROM tickets t
          JOIN orders o ON o.id=t.order_id
          JOIN ticket_types tt ON tt.id=t.ticket_type_id
-        WHERE o.id=?1
+        WHERE UPPER(o.short_code)=?1
         ORDER BY t.id ASC`
-    ).bind(o.id).all();
-
+    ).bind(c).all();
     return json({ ok:true, tickets: q.results || [] });
   });
 }
