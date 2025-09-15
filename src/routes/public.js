@@ -18,18 +18,23 @@ async function parseTpl(env, key /* e.g. 'WA_TMP_ORDER_CONFIRM' */) {
   return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
 }
 
-async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
+/**
+ * Send WhatsApp via an admin-selected template key.
+ * Supports BODY variables (bodyVars) and falls back to plain text if no template is configured.
+ * Matches the helper used in payments.js so both behave the same.
+ */
+async function sendViaTemplateKey(env, tplKey, toMsisdn, { bodyVars = [], fallbackText = "" } = {}) {
   if (!toMsisdn) return;
   let svc = null;
   try { svc = await import("../services/whatsapp.js"); } catch { return; }
-  const sendTpl = svc.sendWhatsAppTemplate || null;   // (env,to,body,lang,name?)
+  const sendTpl = svc.sendWhatsAppTemplate || null;   // (env, to, {bodyVars}, lang, name)
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
 
   const { name, lang } = await parseTpl(env, tplKey);
   try {
     if (name && sendTpl) {
-      await sendTpl(env, toMsisdn, fallbackText, lang, name);
-    } else if (sendTxt) {
+      await sendTpl(env, toMsisdn, { bodyVars }, lang, name);
+    } else if (sendTxt && fallbackText) {
       await sendTxt(env, toMsisdn, fallbackText);
     }
   } catch { /* non-blocking */ }
@@ -189,24 +194,29 @@ export function mountPublic(router) {
     try {
       const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
       const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
-      const msg  = [
-        `Hallo ${buyer_name}`,
+
+      // Variables expected by your template:
+      // {{1}} = first name (or buyer_name), {{2}} = order code
+      const first = (buyer_name || "").trim().split(/\s+/)[0] || (buyer_name || "Koper");
+      const bodyVars = [first, short_code];
+
+      const fallback = [
+        `Hallo ${buyer_name || "Koper"}`,
         ``,
         `Jou bestel nommer is ${short_code}.`,
         ``,
-        `Indien jy nie nou aanlyn betaal het nie, kan jy hierdie kode by die hek wys.`,
-        link ? `Volg vordering of betaal hier: ${link}` : ``,
+        `Indien jy nie nou aanlyn betaal het nie, kan jy hierdie kode by die hek wys, die kasier sal jou bestelling herroep.`,
+        link ? `Jy kan die bestelstatus hier volg: ${link}` : ``,
         `Ons stuur jou kaartjies sodra betaling klaar is.`
       ].filter(Boolean).join("\n");
 
       if (buyer_phone) {
-        // Template key is configured by admin as WA_TMP_ORDER_CONFIRM → Bestelling_ontvang
-        const svc = await import("../services/whatsapp.js").catch(()=>null);
-        if (svc?.sendWhatsAppTemplate || svc?.sendWhatsAppTextIfSession) {
-          await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg);
-        }
+        await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), {
+          bodyVars,
+          fallbackText: fallback
+        });
       }
-    } catch {}
+    } catch { /* non-blocking */ }
 
     return json({
       ok: true,
