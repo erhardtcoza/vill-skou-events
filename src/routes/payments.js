@@ -2,7 +2,7 @@
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
- * Settings + WhatsApp helpers (same pattern as public.js)
+ * Settings + WhatsApp helpers
  * --------------------------------------------------------------------- */
 async function getSetting(env, key) {
   const row = await env.DB.prepare(
@@ -20,7 +20,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   if (!toMsisdn) return;
   let svc = null;
   try { svc = await import("../services/whatsapp.js"); } catch { return; }
-  const sendTpl = svc.sendWhatsAppTemplate || null;   // (env,to,body,lang,name?)
+  const sendTpl = svc.sendWhatsAppTemplate || null;
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
   const { name, lang } = await parseTpl(env, tplKey);
   try {
@@ -29,7 +29,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
     } else if (sendTxt) {
       await sendTxt(env, toMsisdn, fallbackText);
     }
-  } catch { /* non-blocking */ }
+  } catch {}
 }
 async function sendTickets(env, order) {
   try {
@@ -37,7 +37,7 @@ async function sendTickets(env, order) {
     if (svc?.sendOrderOnWhatsApp) {
       await svc.sendOrderOnWhatsApp(env, order?.buyer_phone, order);
     }
-  } catch { /* non-blocking */ }
+  } catch {}
 }
 
 function nowTs() { return Math.floor(Date.now() / 1000); }
@@ -54,19 +54,17 @@ function findShortCodeAnywhere(obj) {
   } catch { return null; }
 }
 
-/** Activate tickets for an order (reserved → active) */
+/** Tickets: reserved -> active */
 async function activateTickets(env, orderId) {
   const ts = nowTs();
   await env.DB.prepare(
-    `UPDATE tickets
-        SET state='active', activated_at=?1
+    `UPDATE tickets SET state='active', activated_at=?1
       WHERE order_id=?2 AND state!='active'`
   ).bind(ts, orderId).run();
 }
 
 async function markPaidAndLog(env, code, meta = {}) {
   if (!code) return { ok: false, reason: "no_code" };
-
   const o = await env.DB.prepare(
     `SELECT id, short_code, total_cents, buyer_name, buyer_phone, buyer_email, event_id, status
        FROM orders
@@ -83,17 +81,14 @@ async function markPaidAndLog(env, code, meta = {}) {
     return { ok: true, already_paid: true, order: o };
   }
 
-  // Update order → paid
   await env.DB.prepare(
     `UPDATE orders
         SET status='paid', paid_at=?1, updated_at=?1
       WHERE id=?2`
   ).bind(ts, o.id).run();
 
-  // Activate tickets that were created in reserved state
   await activateTickets(env, o.id).catch(()=>{});
 
-  // Log payment (best-effort)
   const amount = Number(meta.amount_cents || o.total_cents || 0);
   const txref  = String(meta.tx_ref || meta.txid || meta.reference || "") || null;
   await env.DB.prepare(
@@ -101,11 +96,9 @@ async function markPaidAndLog(env, code, meta = {}) {
      VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
   ).bind(o.id, amount, ts, txref).run().catch(()=>{});
 
-  // WhatsApp: payment confirm + delivery
   try {
     const base = await currentPublicBase(env);
     const link = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : base;
-
     const payMsg = [
       `Betaling ontvang ✅`,
       `Bestelling: ${o.short_code}`,
@@ -119,7 +112,7 @@ async function markPaidAndLog(env, code, meta = {}) {
       );
       await sendTickets(env, o);
     }
-  } catch { /* non-blocking */ }
+  } catch {}
 
   return { ok: true, order: { ...o, status: "paid", paid_at: ts } };
 }
@@ -128,55 +121,35 @@ async function markPaidAndLog(env, code, meta = {}) {
  * Router
  * --------------------------------------------------------------------- */
 export function mountPayments(router) {
-
-  /** -------------------------------------------------------------------
-   * Create a payment intent (client can call via POST or GET)
-   * Body/query: { code, next? }
-   * TEST mode → returns simulator URL
-   * LIVE mode → return gentle 400 (your frontend is already creating
-   *             the hosted checkout directly with Yoco)
-   * ------------------------------------------------------------------ */
-  async function buildIntent(env, code, next) {
-    if (!code) return { err: bad("code required") };
-
-    const o = await env.DB.prepare(
-      `SELECT id, short_code, total_cents, status
-         FROM orders
-        WHERE UPPER(short_code)=UPPER(?1)
-        LIMIT 1`
-    ).bind(code).first();
-    if (!o) return { err: bad("order not found", 404) };
-
-    const mode = (await getSetting(env, "YOCO_MODE")) || "test";
-    const base = await currentPublicBase(env);
-
-    if (mode === "test") {
-      const url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(code)}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
-      return { ok: json({ ok: true, url, mode: "test" }) };
-    }
-    return { err: bad("Yoco live mode: server-side intent not configured.", 400) };
-  }
-
+  // Create a payment intent
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
     const next = String(b?.next || "").trim();
-    const { ok, err } = await buildIntent(env, code, next);
-    return ok || err;
+    if (!code) return bad("code required");
+
+    const o = await env.DB.prepare(
+      `SELECT id, short_code, total_cents, status FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
+    ).bind(code).first();
+    if (!o) return bad("order not found", 404);
+
+    // Normalize mode; treat sandbox/test the same for now
+    const rawMode = (await getSetting(env, "YOCO_MODE")) || "test";
+    const mode = String(rawMode).toLowerCase(); // "sandbox" | "test" | "live"
+
+    const base = await currentPublicBase(env);
+
+    if (mode === "test" || mode === "sandbox") {
+      const url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(code)}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
+      // return both keys to satisfy any callers
+      return json({ ok: true, url, redirect_url: url, mode });
+    }
+
+    // LIVE: you are creating the hosted checkout client-side; we don't do it here yet.
+    return bad("Yoco live mode: server-side intent creation not configured here.", 400);
   });
 
-  // Convenience GET so the Thank-you page can recover the payment URL with a simple fetch
-  router.add("GET", "/api/payments/yoco/intent", async (req, env) => {
-    const u = new URL(req.url);
-    const code = String(u.searchParams.get("code") || "").trim().toUpperCase();
-    const next = String(u.searchParams.get("next") || "").trim();
-    const { ok, err } = await buildIntent(env, code, next);
-    return ok || err;
-  });
-
-  /** -------------------------------------------------------------------
-   * TEST MODE: simulator that marks the order PAID and redirects back
-   * ------------------------------------------------------------------ */
+  // TEST/SANDBOX simulator: mark paid then bounce back to thanks/:code
   router.add("GET", "/api/payments/yoco/simulate", async (req, env) => {
     const u = new URL(req.url);
     const code = String(u.searchParams.get("code") || "").toUpperCase();
@@ -196,9 +169,7 @@ export function mountPayments(router) {
     return Response.redirect(to, 302);
   });
 
-  /** -------------------------------------------------------------------
-   * YOCO Webhook (test + live)
-   * ------------------------------------------------------------------ */
+  // YOCO Webhook
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let payload;
     try { payload = await req.json(); }
@@ -206,7 +177,6 @@ export function mountPayments(router) {
 
     const data = payload?.data || payload?.object || {};
 
-    // Try common locations first
     let code =
       data?.metadata?.reference ||
       data?.reference ||
@@ -215,22 +185,18 @@ export function mountPayments(router) {
       payload?.description ||
       null;
 
-    // Fallback: scan full payload for CXXXXXX pattern
     if (code) {
       const m = String(code).toUpperCase().match(/C[A-Z0-9]{6,8}/);
       code = m ? m[0] : null;
     }
     if (!code) code = findShortCodeAnywhere(payload);
     if (!code) {
-      // Ack 200 so Yoco doesn't retry forever, but indicate we couldn't map it
       return json({ ok: false, error: "code_not_found" }, 200);
     }
 
-    // Amount (best-effort)
     const amount_cents =
       Number(data?.amount || data?.amount_cents || data?.amountInCents || 0) || null;
 
-    // Decide if this event is a "paid" signal
     const statusRaw = String(
       data?.status || payload?.status || payload?.type || ""
     ).toLowerCase();
@@ -248,7 +214,6 @@ export function mountPayments(router) {
       return json({ ok: true, processed: res.ok, already_paid: !!res.already_paid });
     }
 
-    // Not a paid/success signal – ACK and ignore
     return json({ ok: true, ignored: true });
   });
 }
