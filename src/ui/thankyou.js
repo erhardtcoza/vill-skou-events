@@ -37,7 +37,20 @@
     var payHint   = qs("[data-pay-alert]", root);
 
     var u = new URL(location.href);
-    var next = u.searchParams.get("next") || "";
+    var nextRaw = u.searchParams.get("next") || "";
+    var next = "";
+    try {
+      // Accept only absolute HTTPS URLs pointing to pay.yoco.com
+      var nextUrl = new URL(nextRaw);
+      if (
+        nextUrl.protocol === "https:" &&
+        nextUrl.hostname === "pay.yoco.com"
+      ) {
+        next = nextUrl.href;
+      }
+    } catch (_) {
+      // Invalid URL, fall through and leave next = ""
+    }
 
     gateTickets(false);
     if (payBtn)  payBtn.style.display  = next ? "" : "none";
