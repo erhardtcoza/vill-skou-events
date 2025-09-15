@@ -34,6 +34,11 @@ export const adminSiteSettingsJS = `
       #pv-list table{width:100%;border-collapse:collapse}
       #pv-list th,#pv-list td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
       #pv-list tbody tr:hover{background:#fafafa}
+
+      /* inbox */
+      #wa-inbox .msg{padding:8px 10px;border:1px solid #eef1f3;border-radius:10px;margin:8px 0;background:#fafafa}
+      #wa-inbox .in{background:#fff}
+      #wa-inbox .out{background:#f6fffb}
     </style>
 
     <!-- GENERAL -->
@@ -58,8 +63,17 @@ export const adminSiteSettingsJS = `
         <div><label>Access Token</label><input id="WHATSAPP_TOKEN"/></div>
         <div><label>Phone Number ID</label><input id="PHONE_NUMBER_ID"/></div>
         <div><label>Business (WABA) ID</label><input id="BUSINESS_ID"/></div>
-        <div><label>Auto-reply enabled (1/0)</label><input id="WA_AUTOREPLY_ENABLED" placeholder="0 or 1"/></div>
-        <div style="grid-column:1/-1"><label>Auto-reply text</label><input id="WA_AUTOREPLY_TEXT" placeholder="Thank you, we will get back to you soon."/></div>
+
+        <div>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:30px">
+            <input type="checkbox" id="WA_AUTOREPLY_ENABLED" style="width:auto;min-height:initial" />
+            Enable auto-reply
+          </label>
+        </div>
+        <div style="grid-column:1/-1">
+          <label>Auto-reply text</label>
+          <textarea id="WA_AUTOREPLY_TEXT" rows="3" placeholder="Thank you, we will get back to you soon."></textarea>
+        </div>
       </div>
 
       <h3 style="margin-top:14px">Template selectors</h3>
@@ -130,6 +144,19 @@ export const adminSiteSettingsJS = `
       <div class="row-actions">
         <button id="sendWATest" class="btn">Send test</button>
         <span id="msgWATest" class="muted"></span>
+      </div>
+
+      <div class="hr"></div>
+
+      <h3>Inbox (last 100)</h3>
+      <div id="wa-inbox" class="muted">Loading…</div>
+      <div class="grid" style="margin-top:10px">
+        <div><input id="wa_reply_to" placeholder="27XXXXXXXXX"/></div>
+        <div><input id="wa_reply_text" placeholder="Type a quick reply…"/></div>
+      </div>
+      <div class="row-actions">
+        <button id="wa_reply_btn" class="btn">Send reply</button>
+        <span id="wa_reply_msg" class="muted"></span>
       </div>
 
       <h3 style="margin-top:18px">Templates</h3>
@@ -275,7 +302,9 @@ export const adminSiteSettingsJS = `
     $('#WHATSAPP_TOKEN').value = s.WHATSAPP_TOKEN || '';
     $('#PHONE_NUMBER_ID').value = s.PHONE_NUMBER_ID || '';
     $('#BUSINESS_ID').value = s.BUSINESS_ID || '';
-    $('#WA_AUTOREPLY_ENABLED').value = s.WA_AUTOREPLY_ENABLED || '0';
+
+    // ✅ checkbox + textarea
+    $('#WA_AUTOREPLY_ENABLED').checked = String(s.WA_AUTOREPLY_ENABLED||'0') === '1';
     $('#WA_AUTOREPLY_TEXT').value = s.WA_AUTOREPLY_TEXT || '';
 
     // Template variable mappings
@@ -332,6 +361,42 @@ export const adminSiteSettingsJS = `
       </table>\`;
   }
 
+  // ---------- WhatsApp Inbox + quick reply ----------
+  async function loadInbox(){
+    const box = $('#wa-inbox');
+    box.textContent = 'Loading…';
+    const r = await fetch('/api/whatsapp/inbox', { credentials:'include' })
+      .then(x=>x.json()).catch(()=>({ok:false}));
+    if (!r.ok){ box.textContent = 'Unable to load inbox.'; return; }
+    const rows = r.messages || [];
+    if (!rows.length){ box.textContent = 'No messages yet.'; return; }
+    box.innerHTML = rows.map(m=>{
+      const dir = m.direction === 'in' ? '⬅︎ in' : 'out ➡︎';
+      const who = m.direction === 'in' ? (m.wa_from||'') : (m.wa_to||'');
+      const ts  = m.ts ? new Date(m.ts*1000).toLocaleString() : '';
+      const body = esc(m.text||'');
+      const cls = m.direction === 'in' ? 'in' : 'out';
+      return \`<div class="msg \${cls}">
+        <div class="muted" style="font-size:12px">\${dir} · \${who} · \${ts}</div>
+        <div>\${body}</div>
+      </div>\`;
+    }).join('');
+  }
+
+  $('#wa_reply_btn').onclick = async ()=>{
+    const to = msisdn($('#wa_reply_to').value);
+    const text = $('#wa_reply_text').value.trim();
+    const m = $('#wa_reply_msg');
+    if (!to || !text){ m.textContent='Enter phone + text.'; return; }
+    m.textContent='Sending…';
+    const r = await fetch('/api/whatsapp/reply', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ to, text })
+    }).then(x=>x.json()).catch(()=>({ok:false}));
+    m.textContent = r.ok ? 'Sent.' : 'Failed (no recent session?)';
+    if (r.ok){ $('#wa_reply_text').value=''; loadInbox(); }
+  };
+
   // ---------- Actions: save sections ----------
   $('#saveGen').onclick = ()=>save({
     SITE_NAME: $('#SITE_NAME').value,
@@ -352,7 +417,8 @@ export const adminSiteSettingsJS = `
     WHATSAPP_TOKEN: $('#WHATSAPP_TOKEN').value,
     PHONE_NUMBER_ID: $('#PHONE_NUMBER_ID').value,
     BUSINESS_ID: $('#BUSINESS_ID').value,
-    WA_AUTOREPLY_ENABLED: $('#WA_AUTOREPLY_ENABLED').value,
+    // ✅ persist as "1"/"0"
+    WA_AUTOREPLY_ENABLED: $('#WA_AUTOREPLY_ENABLED').checked ? '1' : '0',
     WA_AUTOREPLY_TEXT: $('#WA_AUTOREPLY_TEXT').value,
     WA_MAP_VAR1: $('#WA_MAP_VAR1').value,
     WA_MAP_VAR2: $('#WA_MAP_VAR2').value,
@@ -494,7 +560,7 @@ export const adminSiteSettingsJS = `
   };
 
   // init
-  loadSettings().then(loadTemplates);
+  loadSettings().then(()=>{ loadTemplates(); loadInbox(); });
   const hash = (location.hash||"").replace(/^#settings:/,"");
   if (hash === "past") showTab("past");
   window.AdminPanels.settings = ()=>showTab('gen');
