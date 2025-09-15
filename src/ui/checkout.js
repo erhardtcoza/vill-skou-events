@@ -23,6 +23,9 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   .err{ color:#b42318; margin-top:8px; font-weight:600 }
   .ok{ color:#0a7d2b; margin-top:8px; font-weight:600 }
   .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
+  .pay-cta{ margin-top:8px; display:none; align-items:center; gap:10px }
+  .pay-cta .btn{ white-space:nowrap }
+  .hint{ font-size:13px; color:var(--muted) }
 </style>
 </head><body>
 <div class="wrap">
@@ -65,9 +68,15 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
             <option value="pay_at_event">Betaal by hek</option>
           </select>
         </div>
-        <div style="display:flex; align-items:flex-end; gap:8px">
-          <button id="submitBtn" class="btn">Voltooi</button>
-          <span id="msg" class="muted"></span>
+        <div style="display:flex; flex-direction:column; align-items:flex-start; gap:8px">
+          <div style="display:flex; align-items:flex-end; gap:8px">
+            <button id="submitBtn" class="btn">Voltooi</button>
+            <span id="msg" class="muted"></span>
+          </div>
+          <div id="payCta" class="pay-cta">
+            <button id="payNowBtn" class="btn">Gaan betaal</button>
+            <span class="hint">As jy nie outomaties herlei word nie, klik hier om die betaalblad te open.</span>
+          </div>
         </div>
       </div>
     </div>
@@ -102,6 +111,7 @@ function normPhone(raw){
 
 let catalog = null;
 let cart = null;
+let lastPaymentURL = ""; // store Yoco/intent URL for the fallback button
 
 function buildAttendeeForms(){
   const wrap = $('attWrap');
@@ -211,12 +221,30 @@ function validateBuyer(b){
 
 function showMsg(kind, text){
   const el = $('msg');
-  el.className = kind==='err' ? 'err' : 'ok';
-  el.textContent = text;
+  el.className = kind==='err' ? 'err' : (kind==='ok' ? 'ok' : 'muted');
+  el.textContent = text || '';
+}
+
+function showPayCTA(url){
+  lastPaymentURL = String(url||'');
+  const box = $('payCta');
+  if (!lastPaymentURL || !box) return;
+  box.style.display = 'flex';
+  const btn = $('payNowBtn');
+  if (btn){
+    btn.onclick = ()=>{
+      // open payment in a new tab/window, and keep this tab in case user navigates back
+      const w = window.open(lastPaymentURL, '_blank');
+      if (!w) window.location.assign(lastPaymentURL);
+    };
+  }
 }
 
 async function submit(){
   showMsg('', '');
+  $('payCta').style.display = 'none';
+  lastPaymentURL = '';
+
   const methodSel = $('pay_method').value; // 'pay_now' | 'pay_at_event'
   const { buyer, attendees } = collectPayload();
   const err = validateBuyer(buyer);
@@ -249,12 +277,21 @@ async function submit(){
         body: JSON.stringify({ code })
       }).then(x=>x.json()).catch(()=>({ok:false,error:'network'}));
 
-      if (!y.ok || !y.redirect_url){
+      // Accept both shapes: {redirect_url} or {url}
+      const target = y?.redirect_url || y?.url || '';
+
+      if (!y.ok || !target){
         // fall back to thanks with explanatory message
         location.href = '/thanks/' + encodeURIComponent(code) + '?pay=err';
         return;
       }
-      location.href = y.redirect_url;   // ✅ Go to Yoco
+
+      // Show a visible fallback button immediately…
+      showPayCTA(target);
+      showMsg('ok', 'Besig om jou na Yoco te neem…');
+
+      // …and also try auto-redirect after a tiny delay
+      setTimeout(()=>{ try{ window.location.assign(target); }catch{} }, 400);
       return;
     }
 
