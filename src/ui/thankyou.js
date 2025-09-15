@@ -100,15 +100,12 @@ export function thankYouHTML(code) {
       const j = await postJSON('/api/payments/yoco/intent', { code });
       const url = j && j.redirect_url || '';
       if (!url) throw new Error('no redirect url');
-      // Open in new tab; if blocked, same-tab
       const w = window.open(url, '_blank');
       if (!w) location.assign(url);
     }catch(e){
       alert('Kon nie die betaalblad oopmaak nie. Probeer asseblief weer.');
     }
   });
-
-  // If the URL contains ?pay=err we leave the pay button visible.
 
   // Poll for status
   let tries = 0;
@@ -124,7 +121,6 @@ export function thankYouHTML(code) {
     if (tries > 200) clearInterval(iv); // ~10 min @3s
   }, 3000);
 
-  // Initial gate
   gateTickets(false);
 })();
 </script>
