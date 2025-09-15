@@ -106,8 +106,6 @@ export async function sendWhatsAppTemplate(
     return false;
   }
 
-  // Build components: if params[] provided, map to body parameters;
-  // otherwise keep a single fallback text parameter (old behavior).
   let components;
   if (Array.isArray(params) && params.length) {
     components = [{
