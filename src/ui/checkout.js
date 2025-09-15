@@ -73,7 +73,7 @@
                 window.location.href = thanksUrl;
               })
               .catch(function () {
-                // If intent fails, still send to thank-you (will show pay-later button if next present)
+                // If intent fails, still send to thank-you (will show pay button if next present)
                 window.location.href = thanksUrlBase;
               });
             return;
@@ -119,14 +119,14 @@
     var phone       = str(fd.get("phone") || fd.get("buyer_phone"));
 
     var items = [];
-    qsa("[data-qty]", form).forEach(function (inp) {
+    Array.prototype.slice.call(form.querySelectorAll("[data-qty]")).forEach(function (inp) {
       var qty = Number(inp.value || 0);
       var id  = Number(inp.getAttribute("data-id") || 0);
       if (qty > 0 && id) items.push({ ticket_type_id: id, qty: qty });
     });
 
     var attendees = [];
-    qsa("[data-attendee-row]", form).forEach(function (row) {
+    Array.prototype.slice.call(form.querySelectorAll("[data-attendee-row]")).forEach(function (row) {
       var tid = Number(row.getAttribute("data-tid") || 0);
       if (!tid) return;
       attendees.push({
@@ -152,11 +152,8 @@
   function val(root, s) { var n = (root || document).querySelector(s); return n ? n.value : ""; }
   function str(v) { return String(v || "").trim(); }
 
-  // expose
+  // expose on window.App
   var App = global.App = global.App || {};
   App.mountCheckout = mountCheckout;
-  // also provide an ESM export
-  // eslint-disable-next-line
-  export { mountCheckout };
 
 })(typeof window !== "undefined" ? window : (typeof globalThis !== "undefined" ? globalThis : this));
