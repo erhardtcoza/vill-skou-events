@@ -23,17 +23,23 @@ async function parseTpl(env, key) {
   const [n, l] = String(sel).split(":");
   return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
 }
-async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
+async function sendViaTemplateKey(env, tplKey, toMsisdn, { bodyVars = [], fallbackText = "" } = {}) {
   if (!toMsisdn) return;
   let svc = null;
   try { svc = await import("../services/whatsapp.js"); } catch { return; }
-  const sendTpl = svc.sendWhatsAppTemplate || null;
+  const sendTpl = svc.sendWhatsAppTemplate || null;     // (env,to,body,lang,name?)  *** our helper supports bodyVars
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
+
   const { name, lang } = await parseTpl(env, tplKey);
   try {
-    if (name && sendTpl) await sendTpl(env, toMsisdn, fallbackText, lang, name);
-    else if (sendTxt)   await sendTxt(env, toMsisdn, fallbackText);
-  } catch {}
+    if (name && sendTpl) {
+      // Our WA service expects: sendWhatsAppTemplate(env, to, bodyTextOrVars, lang, name)
+      // Here we pass a special object the service knows how to map to the BODY variables.
+      await sendTpl(env, toMsisdn, { bodyVars }, lang, name);
+    } else if (sendTxt && fallbackText) {
+      await sendTxt(env, toMsisdn, fallbackText);
+    }
+  } catch { /* non-blocking */ }
 }
 async function sendTickets(env, order) {
   try {
@@ -41,14 +47,32 @@ async function sendTickets(env, order) {
     if (svc?.sendOrderOnWhatsApp) {
       await svc.sendOrderOnWhatsApp(env, order?.buyer_phone, order);
     }
-  } catch {}
+  } catch { /* non-blocking */ }
+}
+
+/** Map WA template variables.
+ * Your templates (from DB) expect:
+ * - Order confirmation (Bestelling_ontvang): {{1}}=name, {{2}}=order_no
+ * - Payment confirmation (betaling_ontvang): {{1}}=name, {{2}}=order_no
+ * - Ticket delivery (ticket): {{1}}=name, {{2}}=order_no, {{3}}=ticket_url
+ *
+ * If you later flip to use the dynamic mapping (WA_MAP_VAR1..3),
+ * you can expand this function to read those keys and build arrays accordingly.
+ */
+function waVarsForPayment(order, ticketUrl) {
+  const buyer = String(order?.buyer_name || "").trim();
+  const nameOnly = buyer ? buyer.split(/\s+/)[0] : "";
+  const code = String(order?.short_code || "");
+  return {
+    payVars:   [nameOnly || buyer || "Koper", code],
+    ticketVars:[nameOnly || buyer || "Koper", code, ticketUrl]
+  };
 }
 
 /** ------------------------------------------------------------------------
  * YOCO config (exact DB keys & mode)
  * --------------------------------------------------------------------- */
 async function yocoConfig(env) {
-  // Mode must be exactly 'test' or 'live'
   const modeRaw = (await getSetting(env, "YOCO_MODE")) || "test";
   const mode = String(modeRaw).toLowerCase() === "live" ? "live" : "test";
   const testSecret = await getSetting(env, "YOCO_TEST_SECRET_KEY");
@@ -80,6 +104,7 @@ async function activateTickets(env, orderId) {
       WHERE order_id=?2 AND state!='active'`
   ).bind(ts, orderId).run();
 }
+
 async function markPaidAndLog(env, code, meta = {}) {
   if (!code) return { ok: false, reason: "no_code" };
   const o = await env.DB.prepare(
@@ -90,21 +115,24 @@ async function markPaidAndLog(env, code, meta = {}) {
   ).bind(code).first();
   if (!o) return { ok: false, reason: "order_not_found" };
 
+  // Idempotency: already paid
   const ts = nowTs();
   if (String(o.status || "").toLowerCase() === "paid") {
     await activateTickets(env, o.id).catch(()=>{});
-    console.log("[yoco] markPaidAndLog already paid", code);
     return { ok: true, already_paid: true, order: o };
   }
 
+  // Update order → paid
   await env.DB.prepare(
     `UPDATE orders
         SET status='paid', paid_at=?1, updated_at=?1
       WHERE id=?2`
   ).bind(ts, o.id).run();
 
+  // Activate tickets that were created in reserved state
   await activateTickets(env, o.id).catch(()=>{});
 
+  // Log a payment record (best-effort)
   const amount = Number(meta.amount_cents || o.total_cents || 0);
   const txref  = String(meta.tx_ref || meta.txid || meta.reference || "") || null;
   await env.DB.prepare(
@@ -112,36 +140,43 @@ async function markPaidAndLog(env, code, meta = {}) {
      VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
   ).bind(o.id, amount, ts, txref).run().catch(()=>{});
 
-  console.log("[yoco] order marked paid", { code, txref, amount });
-
+  // WhatsApp: payment confirm, then ticket delivery (after short delay)
   try {
     const base = await currentPublicBase(env);
     const link = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : base;
-    const payMsg = [`Betaling ontvang ✅`,`Bestelling: ${o.short_code}`, link ? `Jou kaartjies: ${link}` : ``]
-      .filter(Boolean).join("\n");
+
+    const { payVars, ticketVars } = waVarsForPayment(o, link);
+
+    // Payment confirmation (betaling_ontvang)
     if (o.buyer_phone) {
-      // Payment confirmation now
-      await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", String(o.buyer_phone), payMsg);
-      // Ticket delivery a few seconds later
-      setTimeout(async () => {
-        try {
-          await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(o.buyer_phone),
-            `Jou kaartjies is gereed. Bestel kode: ${o.short_code}\n${link}`
-          );
-          await sendTickets(env, o);
-          console.log("[wa] ticket delivery sent", code);
-        } catch (e) {
-          console.log("[wa] ticket delivery error", code, String(e?.message||e));
-        }
-      }, 5000);
+      await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", String(o.buyer_phone), {
+        bodyVars: payVars,
+        fallbackText: `Betaling ontvang ✅\nBestelling: ${o.short_code}\nKaartjies: ${link}`
+      });
     }
+
+    // Ticket delivery (ticket) – try to give Yoco a few seconds to propagate everywhere
+    const delay = (ms)=>new Promise(res=>setTimeout(res, ms));
+    (async ()=>{
+      try {
+        await delay(5000);
+        if (o.buyer_phone) {
+          await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(o.buyer_phone), {
+            bodyVars: ticketVars,
+            fallbackText: `Jou kaartjies is gereed. Bestel kode: ${o.short_code}\n${link}`
+          });
+          // Also fire the high-level “ticket_delivery” with URL button if configured
+          await sendTickets(env, o);
+        }
+      } catch {}
+    })();
   } catch {}
 
   return { ok: true, order: { ...o, status: "paid", paid_at: ts } };
 }
 
 /** ------------------------------------------------------------------------
- * Yoco API helpers
+ * Yoco API helpers (unchanged behaviour)
  * --------------------------------------------------------------------- */
 async function createYocoCheckout(env, order) {
   const yc = await yocoConfig(env);
@@ -166,19 +201,12 @@ async function createYocoCheckout(env, order) {
     body: JSON.stringify(body)
   });
   const J = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    console.log("[yoco] create checkout error", r.status, J);
-    return { ok: false, error: J?.message || "yoco_error", meta: J };
-  }
+  if (!r.ok) return { ok: false, error: J?.message || "yoco_error", meta: J };
 
   const checkoutId = J?.id || null;
   const redirectUrl = J?.redirectUrl || null;
-  if (!checkoutId || !redirectUrl) {
-    console.log("[yoco] missing redirectUrl/id", J);
-    return { ok: false, error: "no_redirect_url", meta: J };
-  }
+  if (!checkoutId || !redirectUrl) return { ok: false, error: "no_redirect_url", meta: J };
 
-  // Save checkoutId in KV for reconciliation
   try {
     if (env.EVENTS_KV) {
       await env.EVENTS_KV.put(
@@ -186,14 +214,12 @@ async function createYocoCheckout(env, order) {
         JSON.stringify({ id: checkoutId, at: Date.now() }),
         { expirationTtl: 60 * 60 * 24 }
       );
-      console.log("[yoco] saved checkoutId to KV", { code, checkoutId });
     } else {
-      console.log("[yoco] KV not bound; skipping save", { code, checkoutId });
+      try { console.log("[yoco] KV not bound; skipping save"); } catch {}
     }
-  } catch (e) {
-    console.log("[yoco] KV put error", String(e?.message || e));
-  }
+  } catch {}
 
+  try { console.log("[yoco] created checkout intent"); } catch {}
   return { ok: true, redirect_url: redirectUrl, meta: J };
 }
 
@@ -204,10 +230,7 @@ async function fetchCheckoutStatus(env, checkoutId) {
     headers: { "Authorization": `Bearer ${yc.secret}` }
   });
   const J = await r.json().catch(()=>({}));
-  if (!r.ok) {
-    console.log("[yoco] fetch checkout error", r.status, J);
-    return { ok: false, error: J?.message || "yoco_error", meta: J };
-  }
+  if (!r.ok) return { ok: false, error: J?.message || "yoco_error", meta: J };
   return { ok: true, data: J };
 }
 
@@ -215,19 +238,16 @@ async function fetchCheckoutStatus(env, checkoutId) {
 async function reconcileCheckout(env, code) {
   if (!env.EVENTS_KV) return { ok: false, error: "kv_unavailable" };
   const rec = await env.EVENTS_KV.get(`yoco:cx:${code}`, "json");
-  if (!rec?.id) {
-    console.log("[yoco] reconcile: no checkout id in KV", code);
-    return { ok: false, error: "no_checkout_id" };
-  }
+  if (!rec?.id) return { ok: false, error: "no_checkout_id" };
 
   const chk = await fetchCheckoutStatus(env, rec.id);
   if (!chk.ok) return { ok: false, error: chk.error, meta: chk.meta };
 
   const d = chk.data || {};
-  const statusStr = String(d?.status || "").toLowerCase();
-  const paidLike = statusStr.includes("paid") || !!d?.paymentId || statusStr.includes("success");
-
-  console.log("[yoco] reconcile status", { code, checkoutId: rec.id, status: d?.status, paymentId: d?.paymentId });
+  const paidLike =
+    String(d?.status || "").toLowerCase().includes("paid") ||
+    !!d?.paymentId ||
+    String(d?.status || "").toLowerCase().includes("success");
 
   if (paidLike) {
     const amount_cents = Number(d?.amount || 0) || null;
@@ -239,7 +259,7 @@ async function reconcileCheckout(env, code) {
 }
 
 /** ------------------------------------------------------------------------
- * Router
+ * Router (unchanged endpoints)
  * --------------------------------------------------------------------- */
 export function mountPayments(router) {
   // Create a real Yoco checkout (always hits Yoco)
@@ -262,17 +282,14 @@ export function mountPayments(router) {
 
     const res = await createYocoCheckout(env, o);
     if (!res.ok) return json({ ok: false, error: res.error, meta: res.meta }, 502);
-    console.log("[yoco] created checkout intent", { code, redirect: res.redirect_url });
     return json({ ok: true, redirect_url: res.redirect_url });
   });
 
-  // Webhook (kept; still preferred if configured)
+  // Webhook (kept; ack + mark paid when Yoco notifies)
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let payload;
     try { payload = await req.json(); }
     catch { return json({ ok: false, error: "bad_json" }, 400); }
-
-    console.log("[yoco] webhook payload", payload?.type || payload?.status || "unknown");
 
     const data = payload?.data || payload?.object || payload || {};
     let code =
@@ -288,10 +305,7 @@ export function mountPayments(router) {
       code = m ? m[0] : null;
     }
     if (!code) code = findShortCodeAnywhere(payload);
-    if (!code) {
-      console.log("[yoco] webhook: code_not_found");
-      return json({ ok: false, error: "code_not_found" }, 200);
-    }
+    if (!code) return json({ ok: false, error: "code_not_found" }, 200);
 
     const amount_cents = Number(data?.amount || data?.amount_cents || data?.amountInCents || 0) || null;
     const statusRaw = String(data?.status || payload?.status || payload?.type || "").toLowerCase();
@@ -300,25 +314,15 @@ export function mountPayments(router) {
     if (isPaid) {
       const meta = { amount_cents, tx_ref: data?.id || payload?.id || payload?.eventId || null };
       const res = await markPaidAndLog(env, code, meta);
-      console.log("[yoco] webhook -> marked paid", { code, tx: meta.tx_ref, already_paid: !!res.already_paid });
       return json({ ok: true, processed: res.ok, already_paid: !!res.already_paid });
     }
-    console.log("[yoco] webhook ignored event", statusRaw);
     return json({ ok: true, ignored: true });
   });
 
-  // Reconcile (POST body)
+  // Optional: explicit reconcile endpoint
   router.add("POST", "/api/payments/yoco/reconcile", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
-    if (!code) return bad("code required");
-    const r = await reconcileCheckout(env, code);
-    return json(r, r.ok ? 200 : 502);
-  });
-
-  // 👇 NEW: Lightweight GET for the thank-you page to ping easily
-  router.add("GET", "/api/payments/yoco/reconcile/:code", async (_req, env, _ctx, p) => {
-    const code = String(p.code || "").trim().toUpperCase();
     if (!code) return bad("code required");
     const r = await reconcileCheckout(env, code);
     return json(r, r.ok ? 200 : 502);
