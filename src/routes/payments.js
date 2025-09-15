@@ -23,14 +23,14 @@ async function parseTpl(env, key) {
   const [n, l] = String(sel).split(":");
   return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
 }
-async function sendViaTemplateKey(env, tplKey, toMsisdn, textIfNoTpl) {
+async function sendViaTemplateKey(env, tplKey, toMsisdn, textIfNoTpl, params = []) {
   if (!toMsisdn) return;
   let svc = null; try { svc = await import("../services/whatsapp.js"); } catch { return; }
   const sendTpl = svc.sendWhatsAppTemplate || null;
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
   const { name, lang } = await parseTpl(env, tplKey);
   try {
-    if (name && sendTpl) await sendTpl(env, toMsisdn, textIfNoTpl, lang, name);
+    if (name && sendTpl) await sendTpl(env, toMsisdn, textIfNoTpl, lang, name, params);
     else if (sendTxt)   await sendTxt(env, toMsisdn, textIfNoTpl);
   } catch {}
 }
@@ -114,27 +114,32 @@ async function markPaidAndLog(env, code, meta = {}) {
      VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
   ).bind(o.id, amount, ts, txref).run().catch(()=>{});
 
-  /* WhatsApp: payment confirmation + ticket delivery (5s later) */
+  /* WhatsApp: payment confirmation + ticket delivery (params per template) */
   try {
     const base = await currentPublicBase(env);
     const link = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : base;
 
-    // Payment confirmation
-    const payMsg = [
-      `Hi ${o.buyer_name || ""}`,
-      ``,
-      `Jou betaling was suksesvol.`,
-      `Bestelling: ${o.short_code}`,
-      link ? `Jou kaartjies: ${link}` : ``
-    ].filter(Boolean).join("\n");
     if (o.buyer_phone) {
-      await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", String(o.buyer_phone), payMsg);
+      // Payment confirmation (2 vars: name, order)
+      const payMsg = [
+        `Hi ${o.buyer_name || ""}`,
+        ``,
+        `Jou betaling was suksesvol.`,
+        `Bestelling: ${o.short_code}`
+      ].filter(Boolean).join("\n");
+      const payParams = [o.buyer_name || "", o.short_code || ""];
+      await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", String(o.buyer_phone), payMsg, payParams);
+
+      // Ticket delivery (3 vars: name, order, ticket url) a few seconds later
       setTimeout(async () => {
+        const deliverMsg = `Jou kaartjies is gereed. Bestel: ${o.short_code}${link ? "\n" + link : ""}`;
+        const deliverParams = [o.buyer_name || "", o.short_code || "", link || ""];
         await sendViaTemplateKey(
           env,
           "WA_TMP_TICKET_DELIVERY",
           String(o.buyer_phone),
-          `Jou kaartjies is gereed. Bestel: ${o.short_code}${link ? "\n" + link : ""}`
+          deliverMsg,
+          deliverParams
         );
         await sendTickets(env, o);
       }, 5000);
@@ -158,35 +163,19 @@ async function markPaidByCheckoutId(env, checkoutId, meta = {}) {
     row = null;
   }
 
-  // Fallback: KV record (yoco:cx:{short_code} -> {id})
+  // Fallback: KV (yoco:cx:${short_code} => { id: checkoutId })
   if (!row && env.EVENTS_KV) {
-    const all = await env.EVENTS_KV.list({ prefix: "yoco:cx:" });
-    if (all && Array.isArray(all.keys)) {
-      const hit = all.keys.find(k => k.name && k.name.endsWith(checkoutId));
-      if (hit) {
-        const code = hit.name.split(":").pop(); // last segment (unsafe if code had ':', which it doesn't)
-        if (code) {
-          return markPaidAndLog(env, code.replace(checkoutId, "")); // not reliable; ignore
-        }
+    const list = await env.EVENTS_KV.list({ prefix: "yoco:cx:" });
+    for (const k of (list.keys || [])) {
+      const rec = await env.EVENTS_KV.get(k.name, "json");
+      if (rec?.id === checkoutId) {
+        const code = k.name.replace("yoco:cx:", "");
+        if (code) return markPaidAndLog(env, code, meta);
       }
     }
   }
 
-  if (!row) {
-    // One more try: we may have saved KV as `yoco:cx:${short_code}` => { id: checkoutId }
-    if (env.EVENTS_KV) {
-      const list = await env.EVENTS_KV.list({ prefix: "yoco:cx:" });
-      for (const k of (list.keys || [])) {
-        const rec = await env.EVENTS_KV.get(k.name, "json");
-        if (rec?.id === checkoutId) {
-          const code = k.name.replace("yoco:cx:", "");
-          if (code) return markPaidAndLog(env, code, meta);
-        }
-      }
-    }
-    return { ok: false, reason: "order_not_found_for_checkoutId" };
-  }
-
+  if (!row) return { ok: false, reason: "order_not_found_for_checkoutId" };
   return markPaidAndLog(env, row.short_code, meta);
 }
 
@@ -277,15 +266,13 @@ async function reconcileCheckout(env, code) {
  * Webhook helpers: prefer new Yoco payload structure
  * ----------------------------------------------------- */
 function extractWebhookBasics(payload) {
-  // Support your provided structure and older variants
-  // Expected: { type: "payment.succeeded", payload: { ... } }
+  // Expected: { type: "payment.succeeded", payload: { ... } }  (your sample)
   const type = String(payload?.type || "").toLowerCase();
   const data = payload?.payload || payload?.data || payload?.object || {};
   const amount_cents = Number(data?.amount || data?.amount_cents || data?.amountInCents || 0) || null;
   const status = String(data?.status || payload?.status || "").toLowerCase();
   const checkoutId = data?.metadata?.checkoutId || data?.checkoutId || null;
 
-  // Legacy short-code hints for fallback
   let code =
     data?.metadata?.reference ||
     data?.description ||
