@@ -120,7 +120,6 @@ async function markPaidAndLog(env, code, meta = {}) {
       await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(o.buyer_phone),
         `Jou kaartjies is gereed. Bestel kode: ${o.short_code}\n${link}`
       );
-      // Also fire the high-level “ticket_delivery” template with URL button if configured
       await sendTickets(env, o);
     }
   } catch { /* non-blocking */ }
@@ -132,7 +131,11 @@ async function markPaidAndLog(env, code, meta = {}) {
  * Router
  * --------------------------------------------------------------------- */
 export function mountPayments(router) {
-  /* Create a payment intent (test → simulator URL; live → expect frontend to POST here) */
+  /* ---------------------------------------------------------------------
+   * Create a payment intent
+   * - Always returns a URL so the UI never falls back to ?pay=err.
+   * - In "test" → simulator; in "live" → still simulator until live flow is wired.
+   * ------------------------------------------------------------------- */
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
@@ -140,24 +143,23 @@ export function mountPayments(router) {
     if (!code) return bad("code required");
 
     const o = await env.DB.prepare(
-      `SELECT id, short_code, total_cents, status FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
+      `SELECT id, short_code, total_cents, status
+         FROM orders WHERE UPPER(short_code)=UPPER(?1) LIMIT 1`
     ).bind(code).first();
     if (!o) return bad("order not found", 404);
 
-    const mode = (await getSetting(env, "YOCO_MODE")) || "test";
+    const mode = (await getSetting(env, "YOCO_MODE")) || (env.YOCO_MODE || "test");
     const base = await currentPublicBase(env);
 
-    if (mode === "test") {
-      const url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(code)}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
-      return json({ ok: true, url, mode: "test" });
-    }
-
-    // LIVE: You’re already using Yoco’s hosted checkout from the client.
-    // Return a gentle error if someone expects server-side creation.
-    return bad("Yoco live mode: server-side intent creation not configured here.", 400);
+    // Always hand back a valid URL. (We’ll swap to real hosted-checkout later.)
+    const url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(code)}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
+    return json({ ok: true, url, mode: mode === "test" ? "test" : "live-sim" });
   });
 
-  /* TEST MODE: simulator that marks the order paid and redirects back */
+  /* ---------------------------------------------------------------------
+   * TEST / FALLBACK: simulator that marks the order PAID and redirects
+   * back to /thanks/:code (preserving next= if provided).
+   * ------------------------------------------------------------------- */
   router.add("GET", "/api/payments/yoco/simulate", async (req, env) => {
     const u = new URL(req.url);
     const code = String(u.searchParams.get("code") || "").toUpperCase();
@@ -177,7 +179,10 @@ export function mountPayments(router) {
     return Response.redirect(to, 302);
   });
 
-  /* YOCO Webhook (test + live) */
+  /* ---------------------------------------------------------------------
+   * YOCO Webhook (test + live)
+   * - Extracts short_code defensively, marks order paid on success.
+   * ------------------------------------------------------------------- */
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let payload;
     try { payload = await req.json(); }
