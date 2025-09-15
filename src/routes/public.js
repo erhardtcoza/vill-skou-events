@@ -1,4 +1,4 @@
-// src/router/public.js
+// src/routes/public.js
 import { json, bad } from "../utils/http.js";
 
 /** ------------------------------------------------------------------------
@@ -35,8 +35,22 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
   } catch { /* non-blocking */ }
 }
 
-async function publicBase(env) {
-  return (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+function nowTs() { return Math.floor(Date.now()/1000); }
+
+async function currentPublicBase(env) {
+  const s = await getSetting(env, "PUBLIC_BASE_URL");
+  return s || env.PUBLIC_BASE_URL || "";
+}
+
+/** Build a friendly "resume payment" URL (test → simulator; live → intent endpoint) */
+async function buildPaymentResumeUrl(env, short_code, next="") {
+  const base = await currentPublicBase(env);
+  const mode = (await getSetting(env, "YOCO_MODE")) || "test";
+  if (mode === "test") {
+    return `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(short_code)}${next ? `&next=${encodeURIComponent(next)}` : ""}`;
+  }
+  // Live: front-end should POST /api/payments/yoco/intent to get hosted checkout
+  return `${base}/api/payments/yoco/intent`; // your UI can POST {code,next} here
 }
 
 /** ------------------------------------------------------------------------
@@ -104,6 +118,7 @@ export function mountPublic(router) {
     const buyer_email= String(b?.email || "").trim();
     const buyer_phone= String(b?.phone || "").trim();
     const method     = b?.method === "pay_now" ? "online_yoco" : "pos_cash";
+    const next       = String(b?.next || "").trim(); // optional redirect-return hint
 
     if (!event_id)     return bad("event_id required");
     if (!items.length) return bad("items required");
@@ -135,28 +150,26 @@ export function mountPublic(router) {
     }
     if (!order_items.length) return bad("No valid items");
 
-    const now = Math.floor(Date.now()/1000);
+    const ts = nowTs();
     const short_code = ("C" + Math.random().toString(36).slice(2,8)).toUpperCase();
 
     // Insert order
-    const contact_json = JSON.stringify({ name: buyer_name, email: buyer_email, phone: buyer_phone });
-    const items_json   = JSON.stringify(order_items);
-
+    const items_json = JSON.stringify(order_items);
     const r = await env.DB.prepare(
       `INSERT INTO orders
-         (short_code, event_id, status, payment_method, total_cents, contact_json,
-          created_at, buyer_name, buyer_email, buyer_phone, items_json)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`
+         (short_code, event_id, status, payment_method, total_cents,
+          created_at, updated_at, buyer_name, buyer_email, buyer_phone, items_json)
+       VALUES (?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10)`
     ).bind(
       short_code, event_id,
-      method === "online_yoco" ? "awaiting_payment" : "pending",
-      method, total_cents, contact_json, now,
+      method === "online_yoco" ? "awaiting_payment" : "paid",
+      method, total_cents, ts,
       buyer_name, buyer_email, buyer_phone, items_json
     ).run();
 
     const order_id = r.meta.last_row_id;
 
-    // Optional attendee attachment (FIFO per ticket_type)
+    // Optional attendee attachment queues (for initial ticket data)
     const queues = new Map();
     for (const a of attendees) {
       const tid = Number(a?.ticket_type_id || 0);
@@ -171,6 +184,9 @@ export function mountPublic(router) {
       queues.set(tid, arr);
     }
 
+    // Create ticket rows NOW but keep them hidden (state="reserved") until payment.
+    // If POS cash, we activate immediately.
+    const initialState = (method === "online_yoco") ? "reserved" : "active";
     for (const it of order_items) {
       await env.DB.prepare(
         `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
@@ -183,81 +199,80 @@ export function mountPublic(router) {
         const a = queue.length ? queue.shift() : {first:null,last:null,gender:null,phone:null};
         await env.DB.prepare(
           `INSERT INTO tickets
-             (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, issued_at)
-           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`
-        ).bind(order_id, event_id, it.ticket_type_id, a.first, a.last, a.gender, a.phone, qr, now).run();
+             (order_id, event_id, ticket_type_id, attendee_first, attendee_last,
+              gender, phone, qr, issued_at, state)
+           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`
+        ).bind(order_id, event_id, it.ticket_type_id,
+               a.first, a.last, a.gender, a.phone, qr, ts, initialState).run();
       }
     }
 
-    // WhatsApp: Order confirmation via Admin-picked template
+    // WhatsApp: Order confirmation via Admin-picked template (with "resume payment" link when online)
     try {
-      const base = await publicBase(env);
-      const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
-      const msg  = [
+      const base = await currentPublicBase(env);
+      const thanks = `${base}/thanks/${encodeURIComponent(short_code)}${next ? `?next=${encodeURIComponent(next)}` : ""}`;
+      let msgLines = [
         `Bestelling ontvang 👍`,
-        `Verwysingskode: ${short_code}`,
-        link ? `Volg vordering of betaal hier: ${link}` : ``,
-        `Ons stuur jou kaartjies sodra betaling klaar is.`
-      ].filter(Boolean).join("\n");
+        `Verwysingskode: ${short_code}`
+      ];
+      if (method === "online_yoco") {
+        const resume = await buildPaymentResumeUrl(env, short_code, next);
+        msgLines.push(`Betaal hier: ${resume}`);
+        msgLines.push(`Of volg vordering: ${thanks}`);
+      } else {
+        msgLines.push(`Jou kaartjies is gereed.`);
+      }
+      const msg = msgLines.join("\n");
 
       if (buyer_phone) {
         await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg);
       }
-    } catch {}
+    } catch {/* ignore */}
 
-    // Optional: give frontend a fallback URL to (re)open payment
-    let pay_url = null;
-    if (method === "online_yoco") {
-      const base = await publicBase(env);
-      const mode = (await getSetting(env, "YOCO_MODE")) || "test";
-      // In TEST we provide a simulator so the “Pay now” button always works.
-      if (mode === "test") {
-        // after pay, user should land on /thanks/:code and your UI can continue from there
-        pay_url = `${base}/api/payments/yoco/simulate?code=${encodeURIComponent(short_code)}&next=${encodeURIComponent(`/t/${short_code}`)}`;
-      }
-      // In LIVE we don’t know the hosted URL here (created client-side), so leave null.
-    }
+    // Response – include a suggested "resume" URL for online
+    const resume_payment_url = (method === "online_yoco")
+      ? await buildPaymentResumeUrl(env, short_code, next)
+      : null;
 
     return json({
       ok: true,
       order: {
         id: order_id, short_code, event_id,
-        status: (method === "online_yoco" ? "awaiting_payment" : "pending"),
+        status: (method === "online_yoco" ? "awaiting_payment" : "paid"),
         payment_method: method, total_cents,
         buyer_name, buyer_email, buyer_phone,
-        items: order_items
-      },
-      pay_url // front-end can show a “Pay now” button if present
+        items: order_items,
+        resume_payment_url
+      }
     });
   });
 
   /* ---------- Minimal order status (thank-you poll) ---------- */
-  router.add("GET", "/api/public/orders/status/:code", async (_req, env, _ctx, { code }) => {
+  router.add("GET", "/api/public/orders/status/:code", async (req, env, _ctx, { code }) => {
     const c = String(code||"").toUpperCase();
     if (!c) return bad("code required");
     const row = await env.DB.prepare(
-      `SELECT status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
+      `SELECT status, payment_method FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
     ).bind(c).first();
     if (!row) return json({ ok:false }, 404);
-    return json({ ok:true, status: row.status });
+
+    // Offer a resume URL while awaiting payment
+    let resume_payment_url = null;
+    if (row.status === "awaiting_payment" && row.payment_method === "online_yoco") {
+      const u = new URL(req.url);
+      const next = String(u.searchParams.get("next") || "");
+      resume_payment_url = await buildPaymentResumeUrl(env, c, next);
+    }
+
+    return json({ ok:true, status: row.status, resume_payment_url });
   });
 
-  /* ---------- Public ticket lookup by code (PAID only) ---------- */
+  /* ---------- Public ticket lookup by code (only when paid) ---------- */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
-    // ensure the order is paid before exposing tickets
-    const o = await env.DB.prepare(
-      `SELECT id, status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
-    ).bind(c).first();
 
-    if (!o) return json({ ok:false, reason: "not_found" }, 404);
-
-    if (String(o.status || "").toLowerCase() !== "paid") {
-      // Don’t leak tickets – make the UI keep polling / show “awaiting payment”
-      return json({ ok:false, reason: "awaiting_payment" }, 402);
-    }
-
+    // Only expose when the order is PAID
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
               tt.name AS type_name, tt.price_cents,
@@ -265,9 +280,10 @@ export function mountPublic(router) {
          FROM tickets t
          JOIN orders o ON o.id=t.order_id
          JOIN ticket_types tt ON tt.id=t.ticket_type_id
-        WHERE o.id=?1
+        WHERE UPPER(o.short_code)=?1
+          AND LOWER(o.status)='paid'
         ORDER BY t.id ASC`
-    ).bind(o.id).all();
+    ).bind(c).all();
 
     return json({ ok:true, tickets: q.results || [] });
   });
