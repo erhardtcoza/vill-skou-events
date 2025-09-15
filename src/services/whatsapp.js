@@ -1,127 +1,150 @@
-// /src/services/whatsapp.js
+// src/services/whatsapp.js
+// WhatsApp Cloud API helpers (fail-safe: never throw)
+// Used by payments/public routes via dynamic import.
 
-const GRAPH_VERSION = "v20.0";
+const GRAPH_VER = "v20.0"; // safe default; FB keeps older versions live for a long time
 
-function graphEndpoint(env) {
-  if (!env.PHONE_NUMBER_ID) throw new Error("Missing PHONE_NUMBER_ID");
-  return `https://graph.facebook.com/${GRAPH_VERSION}/${env.PHONE_NUMBER_ID}/messages`;
+/* ------------------------------ utils ------------------------------ */
+async function getSetting(env, key) {
+  const row = await env.DB.prepare(
+    `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+  ).bind(key).first();
+  return row ? row.value : null;
 }
 
-/** Low-level sender for a templated message with body + URL button param. */
-export async function sendTicketTemplate(env, toMsisdn, {
-  templateName,
-  language,
-  bodyParam1,        // e.g. buyer first name → maps to Body {{1}}
-  urlSuffixParam1,   // e.g. short code → maps to URL button {{1}}
-}) {
-  const name = templateName || env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery";
-  const lang = language || env.WHATSAPP_TEMPLATE_LANG || "af";
+function normMSISDN(msisdn) {
+  try {
+    const s = String(msisdn || "").replace(/\D+/g, "");
+    if (!s) return "";
+    if (s.startsWith("27") && s.length >= 11) return s;
+    if (s.length === 10 && s.startsWith("0")) return "27" + s.slice(1);
+    return s;
+  } catch { return ""; }
+}
 
-  const payload = {
+async function baseURL(env) {
+  const s = await getSetting(env, "PUBLIC_BASE_URL");
+  return s || env.PUBLIC_BASE_URL || "";
+}
+
+async function getWAConfig(env) {
+  // Prefer Settings table, with env fallbacks
+  const token = (await getSetting(env, "WA_TOKEN")) || env.WA_TOKEN || "";
+  const phone_id = (await getSetting(env, "WA_PHONE_ID")) || env.WA_PHONE_ID || "";
+  const default_lang = (await getSetting(env, "WA_DEFAULT_LANG")) || "en_US";
+  return { token, phone_id, default_lang };
+}
+
+async function waFetch(env, path, body) {
+  const { token } = await getWAConfig(env);
+  if (!token) return { ok: false, status: 0, json: { error: "no_token" } };
+
+  try {
+    const r = await fetch(`https://graph.facebook.com/${GRAPH_VER}/${path}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body || {})
+    });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, json: j };
+  } catch (e) {
+    return { ok: false, status: 0, json: { error: String(e && e.message || e) } };
+  }
+}
+
+/* ------------------------- public functions ------------------------ */
+
+/**
+ * Send a pre-approved TEMPLATE message (outside 24h window).
+ * - name: template name (string, required to send template)
+ * - lang: BCP47 like 'en_US' or 'af' (defaults from settings)
+ * - fallbackText: used as a single body variable if your template has {{1}}
+ */
+export async function sendWhatsAppTemplate(env, to, fallbackText = "", lang, name) {
+  const { phone_id, default_lang } = await getWAConfig(env);
+  const msisdn = normMSISDN(to);
+  if (!phone_id || !msisdn || !name) return false;
+
+  const body = {
     messaging_product: "whatsapp",
-    to: toMsisdn,
+    to: msisdn,
     type: "template",
     template: {
       name,
-      language: { code: lang },
-      components: [
-        {
-          type: "body",
-          parameters: [{ type: "text", text: String(bodyParam1 || "") }]
-        },
-        {
-          // Button 0 must be configured in the template as "Visit Website" with URL ending /t/{{1}}
-          type: "button",
-          sub_type: "url",
-          index: "0",
-          parameters: [{ type: "text", text: String(urlSuffixParam1 || "") }]
-        }
-      ]
+      language: { code: (lang || default_lang || "en_US") },
+      // Minimal component – assume a single body param; if your template
+      // has no params this is ignored by WA server.
+      components: [{
+        type: "body",
+        parameters: [{ type: "text", text: String(fallbackText || "") }]
+      }]
     }
   };
 
-  const r = await fetch(graphEndpoint(env), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.WHATSAPP_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`Graph ${r.status}: ${t}`);
+  const res = await waFetch(env, `${phone_id}/messages`, body);
+  if (!res.ok) {
+    // Keep the app flow non-blocking; log for diagnostics only
+    try { console.log("[wa] template send failed", res.status, res.json); } catch {}
   }
-  return await r.json();
-}
-
-/** Back-compatible helper with optional explicit template name. */
-export async function sendWhatsAppTemplate(env, toMsisdn, bodyText, lang, explicitTemplateName) {
-  const templateName = explicitTemplateName || env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery";
-  const language = lang || env.WHATSAPP_TEMPLATE_LANG || "af";
-  const payload = {
-    messaging_product: "whatsapp",
-    to: toMsisdn,
-    type: "template",
-    template: {
-      name: templateName,
-      language: { code: language },
-      components: [
-        { type: "body", parameters: [{ type: "text", text: String(bodyText ?? "") }] }
-      ]
-    }
-  };
-  const r = await fetch(graphEndpoint(env), {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env.WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`WA template send failed (${r.status}): ${t}`);
-  }
-  return await r.json();
-}
-
-export async function sendWhatsAppTextIfSession(env, toMsisdn, bodyText) {
-  const payload = {
-    messaging_product: "whatsapp",
-    to: toMsisdn,
-    type: "text",
-    text: { body: String(bodyText ?? "") },
-  };
-  const r = await fetch(graphEndpoint(env), {
-    method: "POST",
-    headers: { Authorization: `Bearer ${env.WHATSAPP_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`WA text send failed (${r.status}): ${t}`);
-  }
-  return await r.json();
+  return !!res.ok;
 }
 
 /**
- * High-level convenience used by POS/online flows:
- * Sends the `ticket_delivery` template to the buyer (or a fallback phone).
- * Expects order: { short_code, buyer_name?, buyer_phone? }
+ * Send a plain TEXT message (works only if user has an active session).
  */
-export async function sendOrderOnWhatsApp(env, phoneFallback, order) {
-  const code = String(order?.short_code || "").trim();
-  if (!code) throw new Error("sendOrderOnWhatsApp: order.short_code missing");
+export async function sendWhatsAppTextIfSession(env, to, text) {
+  const { phone_id } = await getWAConfig(env);
+  const msisdn = normMSISDN(to);
+  if (!phone_id || !msisdn || !text) return false;
 
-  // Prefer buyer phone if present; else fallback (e.g. cashier phone or provided msisdn)
-  const msisdn = String(order?.buyer_phone || phoneFallback || "").trim();
-  if (!msisdn) throw new Error("sendOrderOnWhatsApp: no phone available");
+  const body = {
+    messaging_product: "whatsapp",
+    to: msisdn,
+    type: "text",
+    text: { preview_url: true, body: String(text || "") }
+  };
 
-  const firstName = String(order?.buyer_name || "").split(/\s+/)[0] || "Vriend";
-
-  return await sendTicketTemplate(env, msisdn, {
-    templateName: env.WHATSAPP_TEMPLATE_NAME || "ticket_delivery",
-    language: env.WHATSAPP_TEMPLATE_LANG || "af",
-    bodyParam1: firstName,
-    urlSuffixParam1: code, // fills {{1}} in URL button → /t/{{1}}
-  });
+  const res = await waFetch(env, `${phone_id}/messages`, body);
+  if (!res.ok) {
+    // Usually 470 if no session (expected); just log
+    try { console.log("[wa] text send failed", res.status, res.json); } catch {}
+  }
+  return !!res.ok;
 }
+
+/**
+ * Send order/ticket delivery message (simple deep-link to ticket page).
+ * - Keeps it universal (no templates hardcoded here) so the routes can
+ *   decide whether to use a specific template via sendViaTemplateKey().
+ */
+export async function sendOrderOnWhatsApp(env, to, order) {
+  try {
+    const msisdn = normMSISDN(to);
+    if (!msisdn) return false;
+
+    const base = await baseURL(env);
+    const code = (order && order.short_code) ? String(order.short_code) : "";
+    const link = code ? `${base}/t/${encodeURIComponent(code)}` : base;
+
+    const lines = [
+      order?.buyer_name ? `Hallo ${order.buyer_name}` : `Hallo!`,
+      ``,
+      `Jou kaartjies is gereed 🎟️`,
+      code ? `Bestelling: ${code}` : ``,
+      link ? `Wys/aflaai: ${link}` : ``,
+    ].filter(Boolean);
+
+    return await sendWhatsAppTextIfSession(env, msisdn, lines.join("\n"));
+  } catch {
+    return false;
+  }
+}
+
+export default {
+  sendWhatsAppTemplate,
+  sendWhatsAppTextIfSession,
+  sendOrderOnWhatsApp
+};
