@@ -114,13 +114,13 @@ async function markPaidAndLog(env, code, meta = {}) {
      VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
   ).bind(o.id, amount, ts, txref).run().catch(()=>{});
 
-  /* WhatsApp: payment confirmation + ticket delivery (params per template) */
+  /* WhatsApp: payment confirmation + ticket delivery (send immediately) */
   try {
     const base = await currentPublicBase(env);
     const link = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : base;
 
     if (o.buyer_phone) {
-      // Payment confirmation (2 vars: name, order)
+      // 1) Payment confirmation (2 vars: name, order)
       const payMsg = [
         `Hi ${o.buyer_name || ""}`,
         ``,
@@ -128,21 +128,27 @@ async function markPaidAndLog(env, code, meta = {}) {
         `Bestelling: ${o.short_code}`
       ].filter(Boolean).join("\n");
       const payParams = [o.buyer_name || "", o.short_code || ""];
-      await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", String(o.buyer_phone), payMsg, payParams);
+      await sendViaTemplateKey(
+        env,
+        "WA_TMP_PAYMENT_CONFIRM",
+        String(o.buyer_phone),
+        payMsg,
+        payParams
+      );
 
-      // Ticket delivery (3 vars: name, order, ticket url) a few seconds later
-      setTimeout(async () => {
-        const deliverMsg = `Jou kaartjies is gereed. Bestel: ${o.short_code}${link ? "\n" + link : ""}`;
-        const deliverParams = [o.buyer_name || "", o.short_code || "", link || ""];
-        await sendViaTemplateKey(
-          env,
-          "WA_TMP_TICKET_DELIVERY",
-          String(o.buyer_phone),
-          deliverMsg,
-          deliverParams
-        );
-        await sendTickets(env, o);
-      }, 5000);
+      // 2) Ticket delivery (3 vars: name, order, ticket url) — no delay
+      const deliverMsg = `Jou kaartjies is gereed. Bestel: ${o.short_code}${link ? "\n" + link : ""}`;
+      const deliverParams = [o.buyer_name || "", o.short_code || "", link || ""];
+      await sendViaTemplateKey(
+        env,
+        "WA_TMP_TICKET_DELIVERY",
+        String(o.buyer_phone),
+        deliverMsg,
+        deliverParams
+      );
+
+      // 3) Fallback text (if user has a session)
+      await sendTickets(env, o);
     }
   } catch {}
 
@@ -217,9 +223,7 @@ async function createYocoCheckout(env, order) {
     if (typeof order.id !== "undefined") {
       try {
         await env.DB.prepare(`UPDATE orders SET checkout_id=?1 WHERE id=?2`).bind(checkoutId, order.id).run();
-      } catch (_e) {
-        // Column may not exist; ignore
-      }
+      } catch (_e) { /* column may not exist */ }
     }
     if (env.EVENTS_KV) {
       await env.EVENTS_KV.put(`yoco:cx:${code}`, JSON.stringify({ id: checkoutId, at: Date.now() }), { expirationTtl: 86400 });
@@ -263,10 +267,9 @@ async function reconcileCheckout(env, code) {
 }
 
 /* -------------------------------------------------------
- * Webhook helpers: prefer new Yoco payload structure
+ * Webhook helpers
  * ----------------------------------------------------- */
 function extractWebhookBasics(payload) {
-  // Expected: { type: "payment.succeeded", payload: { ... } }  (your sample)
   const type = String(payload?.type || "").toLowerCase();
   const data = payload?.payload || payload?.data || payload?.object || {};
   const amount_cents = Number(data?.amount || data?.amount_cents || data?.amountInCents || 0) || null;
@@ -292,7 +295,6 @@ function extractWebhookBasics(payload) {
  * Router
  * ----------------------------------------------------- */
 export function mountPayments(router) {
-  /* Create a real Yoco checkout */
   router.add("POST", "/api/payments/yoco/intent", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
@@ -315,7 +317,6 @@ export function mountPayments(router) {
     return json({ ok: true, redirect_url: res.redirect_url });
   });
 
-  /* Webhook from Yoco (primary source of truth) */
   router.add("POST", "/api/payments/yoco/webhook", async (req, env) => {
     let payload;
     try { payload = await req.json(); }
@@ -329,23 +330,14 @@ export function mountPayments(router) {
       return json({ ok: true, ignored: true, type: info.type || null, status: info.status || null });
     }
 
-    // Prefer checkoutId mapping
     if (info.checkoutId) {
-      const meta = {
-        amount_cents: info.amount_cents,
-        tx_ref: payload?.id || info.raw?.id || null
-      };
+      const meta = { amount_cents: info.amount_cents, tx_ref: payload?.id || info.raw?.id || null };
       const m = await markPaidByCheckoutId(env, info.checkoutId, meta);
       if (m.ok) return json({ ok: true, processed: true, mode: "by_checkoutId", already_paid: !!m.already_paid });
-      // If not found by checkoutId, try code fallback
     }
 
-    // Fallback: short_code recovery (legacy)
     if (info.code) {
-      const meta = {
-        amount_cents: info.amount_cents,
-        tx_ref: payload?.id || info.raw?.id || null
-      };
+      const meta = { amount_cents: info.amount_cents, tx_ref: payload?.id || info.raw?.id || null };
       const res = await markPaidAndLog(env, info.code, meta);
       return json({ ok: true, processed: res.ok, mode: "by_code", already_paid: !!res.already_paid });
     }
@@ -354,7 +346,6 @@ export function mountPayments(router) {
     return json({ ok: true, ignored: true, reason: "no_mapping" });
   });
 
-  /* Optional ops: manual reconcile via stored checkoutId (KV) */
   router.add("POST", "/api/payments/yoco/reconcile", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
