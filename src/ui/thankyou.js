@@ -1,32 +1,27 @@
-/* Thank-you page logic
- * - Polls /api/public/orders/status/:code
- * - Shows a “Gaan betaal” recovery button if ?next=<yoco_url> is present
- * - Enables “Wys my kaartjies” ONLY when status === "paid"
- * Exposed as: window.App.mountThankYou(root)
- */
-(function () {
-  function qs(sel, root) { return (root || document).querySelector(sel); }
+// src/ui/thankyou.js
+//
+// Thank-you page with payment recovery + gated tickets.
+// - Polls /api/public/orders/status/:code
+// - Shows “Gaan betaal” button if ?next=<yoco_url> was provided
+// - Enables “Wys my kaartjies” only when status === "paid"
+// No ESM exports; attaches to window.
 
+(function (global) {
+  function qs(sel, root = document) { return root.querySelector(sel); }
   async function getJSON(url) {
     const r = await fetch(url, { credentials: "same-origin" });
     if (!r.ok) throw new Error(await r.text());
     return r.json();
   }
 
-  function mountThankYou(root, opts) {
-    root = root || document;
-    opts = opts || {};
-
+  function mountThankYou(root, options = {}) {
     // Code can be passed in, or inferred from /thanks/:code
-    let code = String(opts.code || "");
+    let code = String(options.code || "");
     if (!code) {
       const m = location.pathname.match(/\/thanks\/([^/?#]+)/i);
       code = m ? decodeURIComponent(m[1]) : "";
     }
-    if (!code) {
-      console.warn("[thankyou] missing order code");
-      return;
-    }
+    if (!code) return console.warn("[thankyou] missing order code");
 
     const statusDot = qs("[data-status-dot]", root);
     const showBtn   = qs("[data-show-tickets]", root);
@@ -37,7 +32,7 @@
     const next = u.searchParams.get("next") || "";
 
     gateTickets(false);
-    if (payBtn)  payBtn.style.display  = next ? "" : "none";
+    if (payBtn) payBtn.style.display = next ? "" : "none";
     if (payHint) payHint.style.display = next ? "" : "none";
 
     if (payBtn && next) {
@@ -50,7 +45,7 @@
       });
     }
 
-    // If we have a payment URL and the browser didn’t follow it earlier,
+    // If we have a payment URL and the browser didn't follow it earlier,
     // nudge once automatically (non-blocking).
     if (next) setTimeout(() => { try { window.location.assign(next); } catch {} }, 400);
 
@@ -70,7 +65,7 @@
       } catch {
         // ignore transient errors
       }
-      if (tries > 120) clearInterval(iv); // ~6 minutes
+      if (tries > 120) clearInterval(iv); // ~6 minutes @ 3s if you change interval
     }, 3000);
 
     function gateTickets(isPaid) {
@@ -100,15 +95,6 @@
     }
   }
 
-  // expose + auto-mount
-  window.App = window.App || {};
-  window.App.mountThankYou = mountThankYou;
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", () => {
-      if (qs("[data-thankyou]")) mountThankYou(document);
-    });
-  } else {
-    if (qs("[data-thankyou]")) mountThankYou(document);
-  }
-})();
+  // expose globally
+  global.mountThankYou = mountThankYou;
+})(typeof window !== "undefined" ? window : self);
