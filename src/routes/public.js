@@ -14,15 +14,18 @@ async function parseTpl(env, key) {
   const [n, l] = String(sel).split(":");
   return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
 }
-async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
+async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText, params = []) {
   if (!toMsisdn) return;
   let svc = null; try { svc = await import("../services/whatsapp.js"); } catch { return; }
   const sendTpl = svc.sendWhatsAppTemplate || null;
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
   const { name, lang } = await parseTpl(env, tplKey);
   try {
-    if (name && sendTpl) await sendTpl(env, toMsisdn, fallbackText, lang, name);
-    else if (sendTxt)   await sendTxt(env, toMsisdn, fallbackText);
+    if (name && sendTpl) {
+      await sendTpl(env, toMsisdn, fallbackText, lang, name, params); // pass vars
+    } else if (sendTxt) {
+      await sendTxt(env, toMsisdn, fallbackText);
+    }
   } catch {}
 }
 
@@ -172,7 +175,7 @@ export function mountPublic(router) {
       }
     }
 
-    // WhatsApp: Order confirmation
+    // WhatsApp: Order confirmation (2 vars: name, order)
     try {
       const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
       const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
@@ -185,7 +188,8 @@ export function mountPublic(router) {
         `Ons stuur jou kaartjies sodra betaling klaar is.`
       ].filter(Boolean).join("\n");
       if (buyer_phone) {
-        await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg);
+        const params = [buyer_name, short_code]; // EXACTLY 2 vars
+        await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg, params);
       }
     } catch {}
 
