@@ -1,29 +1,26 @@
-// src/ui/thankyou.js
-//
-// Thank-you page with payment recovery + ticket gating.
-// - Polls /api/public/orders/status/:code
-// - Shows a "Gaan betaal" button if ?next=<yoco_url> is present
-// - Enables "Wys my kaartjies" only when status === "paid"
-
-(function (global) {
-  "use strict";
-
+/* Thank-you page logic
+ * - Polls /api/public/orders/status/:code
+ * - Shows a “Gaan betaal” recovery button if ?next=<yoco_url> is present
+ * - Enables “Wys my kaartjies” ONLY when status === "paid"
+ * Exposed as: window.App.mountThankYou(root)
+ */
+(function () {
   function qs(sel, root) { return (root || document).querySelector(sel); }
-  function getJSON(url) {
-    return fetch(url, { credentials: "same-origin" }).then(function (r) {
-      if (!r.ok) return r.text().then(function (t) { throw new Error(t || "Request failed"); });
-      return r.json();
-    });
+
+  async function getJSON(url) {
+    const r = await fetch(url, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(await r.text());
+    return r.json();
   }
 
-  function mountThankYou(root, options) {
+  function mountThankYou(root, opts) {
     root = root || document;
-    options = options || {};
+    opts = opts || {};
 
     // Code can be passed in, or inferred from /thanks/:code
-    var code = String(options.code || "");
+    let code = String(opts.code || "");
     if (!code) {
-      var m = (location.pathname || "").match(/\/thanks\/([^\/?#]+)/i);
+      const m = location.pathname.match(/\/thanks\/([^/?#]+)/i);
       code = m ? decodeURIComponent(m[1]) : "";
     }
     if (!code) {
@@ -31,80 +28,63 @@
       return;
     }
 
-    var statusDot = qs("[data-status-dot]", root);
-    var showBtn   = qs("[data-show-tickets]", root);
-    var payBtn    = qs("[data-pay-now]", root);
-    var payHint   = qs("[data-pay-alert]", root);
+    const statusDot = qs("[data-status-dot]", root);
+    const showBtn   = qs("[data-show-tickets]", root);
+    const payBtn    = qs("[data-pay-now]", root);
+    const payHint   = qs("[data-pay-alert]", root);
 
-    var u = new URL(location.href);
-    var nextRaw = u.searchParams.get("next") || "";
-    var next = "";
-    try {
-      // Accept only absolute HTTPS URLs pointing to pay.yoco.com
-      var nextUrl = new URL(nextRaw);
-      if (
-        nextUrl.protocol === "https:" &&
-        nextUrl.hostname === "pay.yoco.com"
-      ) {
-        next = nextUrl.href;
-      }
-    } catch (_) {
-      // Invalid URL, fall through and leave next = ""
-    }
+    const u = new URL(location.href);
+    const next = u.searchParams.get("next") || "";
 
     gateTickets(false);
     if (payBtn)  payBtn.style.display  = next ? "" : "none";
     if (payHint) payHint.style.display = next ? "" : "none";
 
     if (payBtn && next) {
-      payBtn.addEventListener("click", function () {
-        try { window.location.assign(next); } catch (_) {}
-      });
+      payBtn.addEventListener("click", () => window.location.assign(next));
     }
     if (showBtn) {
-      showBtn.addEventListener("click", function () {
-        if (!showBtn.getAttribute("data-enabled")) return; // guard
-        window.location.href = "/t/" + encodeURIComponent(code);
+      showBtn.addEventListener("click", () => {
+        if (!showBtn.dataset.enabled) return; // guard
+        window.location.href = `/t/${encodeURIComponent(code)}`;
       });
     }
 
-    // If we have a payment URL and the browser didn't follow it earlier,
+    // If we have a payment URL and the browser didn’t follow it earlier,
     // nudge once automatically (non-blocking).
-    if (next) setTimeout(function () {
-      try { window.location.assign(next); } catch (_) {}
-    }, 400);
+    if (next) setTimeout(() => { try { window.location.assign(next); } catch {} }, 400);
 
     // Poll status until paid
-    var tries = 0;
-    var iv = setInterval(function () {
-      tries += 1;
-      getJSON("/api/public/orders/status/" + encodeURIComponent(code))
-        .then(function (j) {
-          var st = String((j && j.status) || "").toLowerCase();
-          if (st === "paid") {
-            clearInterval(iv);
-            gateTickets(true);
-          } else {
-            gateTickets(false);
-          }
-        })
-        .catch(function () { /* ignore transient errors */ });
-
-      if (tries > 120) clearInterval(iv); // ~6 minutes at 3s
+    let tries = 0;
+    const iv = setInterval(async () => {
+      tries++;
+      try {
+        const j = await getJSON(`/api/public/orders/status/${encodeURIComponent(code)}`);
+        const st = String(j?.status || "").toLowerCase();
+        if (st === "paid") {
+          clearInterval(iv);
+          gateTickets(true);
+        } else {
+          gateTickets(false);
+        }
+      } catch {
+        // ignore transient errors
+      }
+      if (tries > 120) clearInterval(iv); // ~6 minutes
     }, 3000);
 
     function gateTickets(isPaid) {
       if (statusDot) {
         statusDot.className = isPaid ? "dot dot--green" : "dot dot--waiting";
-        statusDot.textContent = isPaid ? "Betaalbevestig" : "Wag vir betaalbevestiging...";
+        statusDot.textContent = isPaid ? "Betaalbevestig ✔" : "Wag vir betaalbevestiging…";
       }
       if (showBtn) {
         showBtn.disabled = !isPaid;
         if (isPaid) {
-          showBtn.setAttribute("data-enabled", "1");
+          showBtn.dataset.enabled = "1";
           showBtn.classList.remove("is-disabled");
         } else {
-          showBtn.removeAttribute("data-enabled");
+          delete showBtn.dataset.enabled;
           showBtn.classList.add("is-disabled");
         }
       }
@@ -120,8 +100,15 @@
     }
   }
 
-  // expose on window.App
-  var App = global.App = global.App || {};
-  App.mountThankYou = mountThankYou;
+  // expose + auto-mount
+  window.App = window.App || {};
+  window.App.mountThankYou = mountThankYou;
 
-})(typeof window !== "undefined" ? window : (typeof globalThis !== "undefined" ? globalThis : this));
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", () => {
+      if (qs("[data-thankyou]")) mountThankYou(document);
+    });
+  } else {
+    if (qs("[data-thankyou]")) mountThankYou(document);
+  }
+})();
