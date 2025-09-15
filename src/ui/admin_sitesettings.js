@@ -143,13 +143,13 @@ export const adminSiteSettingsJS = `
         <div>
           <label>Mode</label>
           <select id="YOCO_MODE">
-            <option value="sandbox">Sandbox</option>
+            <option value="test">Test</option>
             <option value="live">Live</option>
           </select>
         </div>
         <div></div>
-        <div><label>Sandbox Public Key</label><input id="YOCO_TEST_PUBLIC_KEY"/></div>
-        <div><label>Sandbox Secret Key</label><input id="YOCO_TEST_SECRET_KEY"/></div>
+        <div><label>Test Public Key</label><input id="YOCO_TEST_PUBLIC_KEY"/></div>
+        <div><label>Test Secret Key</label><input id="YOCO_TEST_SECRET_KEY"/></div>
         <div><label>Live Public Key</label><input id="YOCO_LIVE_PUBLIC_KEY"/></div>
         <div><label>Live Secret Key</label><input id="YOCO_LIVE_SECRET_KEY"/></div>
       </div>
@@ -262,7 +262,7 @@ export const adminSiteSettingsJS = `
     msgEl.textContent = r.ok ? 'Saved.' : ('Failed. ' + (r.error||''));
   }
 
-  // ---------- Settings load (adds WA auto-reply + mapping fields) ----------
+  // ---------- Settings load ----------
   async function loadSettings(){
     const j = await fetch('/api/admin/settings', { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
     if (!j.ok) return;
@@ -278,19 +278,19 @@ export const adminSiteSettingsJS = `
     $('#WA_AUTOREPLY_ENABLED').value = s.WA_AUTOREPLY_ENABLED || '0';
     $('#WA_AUTOREPLY_TEXT').value = s.WA_AUTOREPLY_TEXT || '';
 
-    // Template variable mappings (defaults: 1=Name, 2=Order no, 3=Ticket url)
+    // Template variable mappings
     $('#WA_MAP_VAR1').value = s.WA_MAP_VAR1 || 'name';
     $('#WA_MAP_VAR2').value = s.WA_MAP_VAR2 || 'order_no';
     $('#WA_MAP_VAR3').value = s.WA_MAP_VAR3 || 'ticket_url';
 
-    // stash template selector values
+    // Template picks
     $('#WA_TMP_ORDER_CONFIRM').dataset.value   = s.WA_TMP_ORDER_CONFIRM || '';
     $('#WA_TMP_PAYMENT_CONFIRM').dataset.value = s.WA_TMP_PAYMENT_CONFIRM || '';
     $('#WA_TMP_TICKET_DELIVERY').dataset.value = s.WA_TMP_TICKET_DELIVERY || '';
     $('#WA_TMP_SKOU_SALES').dataset.value      = s.WA_TMP_SKOU_SALES || '';
 
-    // yoco
-    $('#YOCO_MODE').value = (s.YOCO_MODE||'sandbox').toLowerCase();
+    // Yoco
+    $('#YOCO_MODE').value = (s.YOCO_MODE||'test').toLowerCase();
     $('#YOCO_TEST_PUBLIC_KEY').value = s.YOCO_TEST_PUBLIC_KEY || '';
     $('#YOCO_TEST_SECRET_KEY').value = s.YOCO_TEST_SECRET_KEY || '';
     $('#YOCO_LIVE_PUBLIC_KEY').value = s.YOCO_LIVE_PUBLIC_KEY || '';
@@ -354,11 +354,9 @@ export const adminSiteSettingsJS = `
     BUSINESS_ID: $('#BUSINESS_ID').value,
     WA_AUTOREPLY_ENABLED: $('#WA_AUTOREPLY_ENABLED').value,
     WA_AUTOREPLY_TEXT: $('#WA_AUTOREPLY_TEXT').value,
-    // mappings
     WA_MAP_VAR1: $('#WA_MAP_VAR1').value,
     WA_MAP_VAR2: $('#WA_MAP_VAR2').value,
     WA_MAP_VAR3: $('#WA_MAP_VAR3').value,
-    // template picks
     WA_TMP_ORDER_CONFIRM: $('#WA_TMP_ORDER_CONFIRM').value,
     WA_TMP_PAYMENT_CONFIRM: $('#WA_TMP_PAYMENT_CONFIRM').value,
     WA_TMP_TICKET_DELIVERY: $('#WA_TMP_TICKET_DELIVERY').value,
@@ -379,7 +377,7 @@ export const adminSiteSettingsJS = `
     loadTemplates();
   };
 
-  // ---------- Past visitors: helpers ----------
+  // Past visitors helpers + actions (unchanged)...
   function parseCSV(text) {
     const lines = String(text || "").split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
     const rows = [];
@@ -432,7 +430,6 @@ export const adminSiteSettingsJS = `
     };
   }
 
-  // ---------- Past visitors: wire buttons ----------
   $('#pv-import').onclick = async ()=>{
     const rows = parseCSV($('#pv-csv').value);
     const overwrite = $('#pv-overwrite').value === '1';
@@ -480,7 +477,7 @@ export const adminSiteSettingsJS = `
     refreshList();
   };
 
-  // ---------- WA test send ----------
+  // WA test send
   function parseVars(raw){ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; }
   $('#sendWATest').onclick = async ()=>{
     const to = msisdn($('#TEST_PHONE').value);
