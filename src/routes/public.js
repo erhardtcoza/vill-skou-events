@@ -29,6 +29,32 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText, params = 
   } catch {}
 }
 
+/* ------------------------------ utils ------------------------------- */
+
+// tiny base62
+function base62(n) {
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  let out = "";
+  do { out = alphabet[n % 62] + out; n = Math.floor(n / 62); } while (n > 0);
+  return out;
+}
+function randToken8() {
+  // timestamp-ish + random, then base62 → 8 chars
+  const x = (Date.now() >>> 8) ^ Math.floor(Math.random() * 1e9);
+  const s = base62(x).padStart(8, "0").slice(-8);
+  return s;
+}
+async function newUniqueTicketToken(env) {
+  // loop until not found (cheap check even if DB doesn't enforce UNIQUE)
+  for (let i = 0; i < 10; i++) {
+    const tok = randToken8();
+    const ex = await env.DB.prepare(`SELECT id FROM tickets WHERE token=?1 LIMIT 1`).bind(tok).first();
+    if (!ex) return tok;
+  }
+  // last-resort long token
+  return randToken8() + randToken8();
+}
+
 /* --------------------------- public routes --------------------------- */
 export function mountPublic(router) {
   /* Events list (active) */
@@ -143,7 +169,7 @@ export function mountPublic(router) {
 
     const order_id = r.meta.last_row_id;
 
-    // Attach attendees (FIFO per ticket_type)
+    // Attach attendees (FIFO per ticket_type) + generate per-ticket tokens
     const queues = new Map();
     for (const a of attendees) {
       const tid = Number(a?.ticket_type_id || 0);
@@ -157,6 +183,7 @@ export function mountPublic(router) {
       });
       queues.set(tid, arr);
     }
+
     for (const it of order_items) {
       await env.DB.prepare(
         `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
@@ -167,11 +194,17 @@ export function mountPublic(router) {
       for (let i=0;i<it.qty;i++){
         const qr = short_code + "-" + it.ticket_type_id + "-" + Math.random().toString(36).slice(2,8).toUpperCase();
         const a = q.length ? q.shift() : {first:null,last:null,gender:null,phone:null};
+
+        // NEW: per-ticket token (8 chars, tries to be unique)
+        const token = await newUniqueTicketToken(env);
+
         await env.DB.prepare(
           `INSERT INTO tickets
-             (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, issued_at)
-           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)`
-        ).bind(order_id, event_id, it.ticket_type_id, a.first, a.last, a.gender, a.phone, qr, now).run();
+             (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, token, issued_at)
+           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`
+        ).bind(order_id, event_id, it.ticket_type_id,
+               a.first, a.last, a.gender, a.phone,
+               qr, token, now).run();
       }
     }
 
@@ -216,7 +249,7 @@ export function mountPublic(router) {
     return json({ ok:true, status: row.status });
   });
 
-  /* Public ticket lookup by code */
+  /* Public ticket lookup by code (batch view still works) */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code||"").trim().toUpperCase();
     if (!c) return bad("code required");
@@ -231,5 +264,27 @@ export function mountPublic(router) {
         ORDER BY t.id ASC`
     ).bind(c).all();
     return json({ ok:true, tickets: q.results || [] });
+  });
+
+  /* NEW: Public ticket lookup by single token */
+  router.add("GET", "/api/public/tickets/by-token/:token", async (_req, env, _ctx, { token }) => {
+    const tok = String(token||"").trim();
+    if (!tok) return bad("token required");
+    const row = await env.DB.prepare(
+      `SELECT t.id, t.token, t.qr, t.state,
+              t.attendee_first, t.attendee_last, t.phone,
+              tt.name AS type_name, tt.price_cents,
+              o.short_code, o.buyer_name,
+              e.name AS event_name, e.venue AS event_venue
+         FROM tickets t
+         JOIN ticket_types tt ON tt.id=t.ticket_type_id
+         LEFT JOIN orders o    ON o.id=t.order_id
+         JOIN events e         ON e.id=t.event_id
+        WHERE t.token=?1
+        LIMIT 1`
+    ).bind(tok).first();
+
+    if (!row) return json({ ok:false, error:"not_found" }, 404);
+    return json({ ok:true, ticket: row });
   });
 }
