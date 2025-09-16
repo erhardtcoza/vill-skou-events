@@ -20,40 +20,36 @@ export function landingHTML() {
       border-radius:14px;
       overflow:hidden;
       background:#000;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      max-height:200px; /* better fit on mobile */
     }
     .poster img{
       display:block;
       width:100%;
-      height:100%;
-      object-fit:contain;  /* full image visible */
+      height:auto;             /* key: size by natural height */
+      max-height:60vh;         /* don’t get taller than viewport */
+      object-fit:contain;      /* always show full image */
       object-position:center;
     }
-    @media (min-width:821px){
-      .poster{ max-height:320px }
+    @media (max-width:820px){
+      .hero-grid{grid-template-columns:1fr}
     }
     .hero-text{text-align:center;padding:8px}
     .brand{color:var(--accent);font-weight:800;margin-bottom:6px}
     .hero-title{font-size:clamp(26px,4.5vw,42px);font-weight:900;letter-spacing:.2px;margin:0}
     .hero-link{color:inherit;text-decoration:none}
     .hero-link:hover{text-decoration:underline}
-    .cta-row{margin-top:14px}
+    .cta-row{margin-top:14px;display:flex;justify-content:center}
     .cta{
       display:inline-block;
       background:var(--accent);
       color:#fff;
       border:none;
-      border-radius:999px; /* pill style */
+      border-radius:999px;     /* pill */
       padding:12px 24px;
       font-weight:700;
       text-decoration:none;
     }
-    @media (max-width:820px){
-      .hero-grid{grid-template-columns:1fr}
-      .hero-text{padding-top:4px}
+    @media (max-width:640px){
+      .cta{width:100%;max-width:420px} /* full-width CTA on phones */
     }
 
     /* event list */
@@ -67,7 +63,7 @@ export function landingHTML() {
       background:var(--accent);
       color:#fff;
       border:none;
-      border-radius:999px; /* pill button */
+      border-radius:999px;
       padding:10px 18px;
       text-decoration:none;
       font-weight:700;
@@ -91,7 +87,7 @@ export function landingHTML() {
         </a>
       </div>
       <div class="hero-text">
-        <div class="brand" id="heroBrand">Villiersdorp Landbou Skou</div>
+        <div class="brand" id="heroBrand">Villiersdorp Skou 2025</div>
         <h2 class="hero-title">
           <a id="heroTitleLink" class="hero-link" href="#">Tickets &amp; Inligting</a>
         </h2>
