@@ -23,6 +23,7 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   .err{ color:#b42318; margin-top:8px; font-weight:600 }
   .ok{ color:#0a7d2b; margin-top:8px; font-weight:600 }
   .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
+  .notice{ background:#fff3cd; border:1px solid #ffe69c; color:#7a5a00; padding:12px 14px; border-radius:10px; margin:0 0 12px 0; font-size:14px; line-height:1.35 }
 </style>
 </head><body>
 <div class="wrap">
@@ -31,6 +32,13 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   <div class="grid">
     <div class="card">
       <div id="eventMeta" class="muted" style="margin-bottom:10px"></div>
+
+      <!-- Notice -->
+      <div class="notice">
+        <strong>Let wel:</strong>
+        Vul asb die besoekker inligting in sodat ons die toegangs kaartjie direk aan die besoekker kan stuur.
+        Indien jy jou inligting inlos gaan al die kaartjies na jou toe gestuur word.
+      </div>
 
       <h2>Koper Inligting</h2>
       <div class="row">
@@ -93,9 +101,10 @@ const $ = (id)=>document.getElementById(id);
 function rands(cents){ return 'R' + ((cents||0)/100).toFixed(2); }
 function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
 
-// Normalize ZA phone
+// Normalize ZA phone -> 27XXXXXXXXX (drop leading 0)
 function normPhone(raw){
   const s = String(raw||'').replace(/\\D+/g,'');
+  if (s.startsWith('27')) return s;
   if (s.length===10 && s.startsWith('0')) return '27'+s.slice(1);
   return s;
 }
@@ -103,10 +112,14 @@ function normPhone(raw){
 let catalog = null;
 let cart = null;
 
+// ---------- Attendee UI -----------------------------------------------------
 function buildAttendeeForms(){
   const wrap = $('attWrap');
   wrap.innerHTML = '';
-  const phoneSeed = normPhone($('buyer_phone').value);
+
+  const seedPhone = normPhone($('buyer_phone').value);
+  const seedName  = getBuyerFullName();
+
   const ttypesById = new Map((catalog.ticket_types||[]).map(t=>[t.id, t]));
   let idx = 1;
   (cart.items||[]).forEach(it=>{
@@ -120,7 +133,7 @@ function buildAttendeeForms(){
         <div class="row">
           <div>
             <label>Volle naam</label>
-            <input class="att_name" data-tid="\${tt.id}" placeholder="Naam en Van"/>
+            <input class="att_name" data-tid="\${tt.id}" placeholder="Naam en Van" value="\${esc(seedName)}"/>
           </div>
           <div>
             <label>Geslag</label>
@@ -135,7 +148,7 @@ function buildAttendeeForms(){
         <div class="row">
           <div>
             <label>Selfoon (vir aflewering)</label>
-            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(phoneSeed)}" />
+            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(seedPhone)}" />
           </div>
           <div></div>
         </div>\`;
@@ -143,13 +156,13 @@ function buildAttendeeForms(){
     }
   });
 
-  wrap.addEventListener('focusin', (e)=>{
-    if (e.target && e.target.classList.contains('att_phone')) {
-      if (!e.target.value) e.target.value = normPhone($('buyer_phone').value);
-    }
+  // Mark attendee fields "manual" once edited so we don't overwrite later
+  wrap.querySelectorAll('.att_name, .att_phone').forEach(el=>{
+    el.addEventListener('input', ()=>{ el.dataset.manual = '1'; });
   });
 }
 
+// ---------- Summary ---------------------------------------------------------
 function renderSummary(){
   const list = $('cartList');
   if (!cart || !(cart.items||[]).length){ list.textContent = 'Geen items'; $('total').textContent='R0.00'; return; }
@@ -164,6 +177,7 @@ function renderSummary(){
   $('total').textContent = rands(total);
 }
 
+// ---------- Collect/Validate ------------------------------------------------
 function collectPayload(){
   const buyer = {
     first: String($('buyer_first').value||'').trim(),
@@ -184,9 +198,9 @@ function collectPayload(){
       const ph = normPhone(attPhones[pointer]?.value||'');
       const gd = String(attGenders[pointer]?.value||'').trim() || null;
 
-      const firstLast = nm.split(/\\s+/);
-      const first = firstLast.shift() || '';
-      const last  = firstLast.join(' ') || '';
+      const nameParts = nm.split(/\\s+/);
+      const first = nameParts.shift() || '';
+      const last  = nameParts.join(' ') || '';
 
       attendees.push({
         ticket_type_id: it.ticket_type_id,
@@ -215,15 +229,60 @@ function showMsg(kind, text){
   el.textContent = text;
 }
 
+// ---------- Sync logic (buyer -> attendees) ---------------------------------
+function getBuyerFullName(){
+  const f = String($('buyer_first').value||'').trim();
+  const l = String($('buyer_last').value||'').trim();
+  return (f + ' ' + l).trim();
+}
+
+function syncAttendeeNamesFromBuyer(){
+  const full = getBuyerFullName();
+  if (!full) return;
+  document.querySelectorAll('.att_name').forEach(n=>{
+    if (!n.dataset.manual) n.value = full;
+  });
+}
+
+function syncAttendeePhonesFromBuyer(){
+  const norm = normPhone($('buyer_phone').value);
+  // write back normalised value to buyer field (e.g., 071… -> 2771…)
+  if (norm && norm !== $('buyer_phone').value) $('buyer_phone').value = norm;
+  document.querySelectorAll('.att_phone').forEach(n=>{
+    if (!n.dataset.manual) n.value = norm;
+  });
+}
+
+function wireBuyerSync(){
+  const bf = $('buyer_first');
+  const bl = $('buyer_last');
+  const bp = $('buyer_phone');
+
+  if (bf) bf.addEventListener('input', syncAttendeeNamesFromBuyer);
+  if (bl) bl.addEventListener('input', syncAttendeeNamesFromBuyer);
+
+  if (bp){
+    // live propagate as user types (without forcing)…
+    bp.addEventListener('input', ()=>{
+      const val = $('buyer_phone').value;
+      document.querySelectorAll('.att_phone').forEach(n=>{
+        if (!n.dataset.manual) n.value = val;
+      });
+    });
+    // …and on blur normalise to 27 and sync
+    bp.addEventListener('blur', syncAttendeePhonesFromBuyer);
+  }
+}
+
+// ---------- Submit ----------------------------------------------------------
 async function submit(){
   showMsg('', '');
-  const methodSel = $('pay_method').value; // 'pay_now' | 'pay_at_event'
+  const methodSel = $('pay_method').value;
   const { buyer, attendees } = collectPayload();
   const err = validateBuyer(buyer);
   if (err){ showMsg('err', err); return; }
 
   try{
-    // 1) Create order
     const orderPayload = {
       event_id: cart.event_id,
       items: cart.items,
@@ -242,7 +301,6 @@ async function submit(){
 
     const code = j.order?.short_code || 'THANKS';
 
-    // 2) Pay now → request Yoco checkout and redirect to it
     if (methodSel === 'pay_now'){
       const y = await fetch('/api/payments/yoco/intent', {
         method:'POST', headers:{'content-type':'application/json'},
@@ -254,34 +312,18 @@ async function submit(){
         location.href = '/thanks/' + encodeURIComponent(code) + '?pay=err';
         return;
       }
-
-      try{
-        sessionStorage.setItem('last_yoco', JSON.stringify({ code, url: link, ts: Date.now() }));
-      }catch{}
-
-      location.href = link;   // ✅ Go to Yoco
+      try{ sessionStorage.setItem('last_yoco', JSON.stringify({ code, url: link, ts: Date.now() })); }catch{}
+      location.href = link;
       return;
     }
 
-    // 3) Pay at event → go to thanks
     location.href = '/thanks/' + encodeURIComponent(code);
   }catch(e){
     showMsg('err', e.message||'Fout');
   }
 }
 
-function attachBuyerPhonePropagation(){
-  let lastValue = normPhone($('buyer_phone').value);
-  $('buyer_phone').addEventListener('input', ()=>{
-    const v = normPhone($('buyer_phone').value);
-    const nodes = document.querySelectorAll('.att_phone');
-    nodes.forEach(n=>{
-      if (!n.value || normPhone(n.value)===lastValue) n.value = v;
-    });
-    lastValue = v;
-  });
-}
-
+// ---------- Load ------------------------------------------------------------
 async function load(){
   try{
     cart = JSON.parse(sessionStorage.getItem('pending_cart') || 'null');
@@ -302,7 +344,11 @@ async function load(){
 
   renderSummary();
   buildAttendeeForms();
-  attachBuyerPhonePropagation();
+  wireBuyerSync();
+
+  // Initial sync pass (if buyer fields already prefilled by the browser)
+  syncAttendeeNamesFromBuyer();
+  syncAttendeePhonesFromBuyer();
 
   $('submitBtn').onclick = submit;
 }
