@@ -27,6 +27,8 @@ import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
 import { loginHTML } from "./ui/login.js";
 import { thankYouHTML } from "./ui/thankyou.js";
+// NEW: single-ticket UI
+import { ticketSingleHTML } from "./ui/ticket_single.js";
 
 // Auth guard for UI pages
 import { requireRole } from "./utils/auth.js";
@@ -128,9 +130,14 @@ function initWithEnv(env) {
     renderHTML(() => checkoutHTML(slug))
   );
 
-  // Ticket display
+  // Ticket display (batch)
   router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) =>
     renderHTML(() => ticketHTML(code))
+  );
+
+  // NEW: Single-ticket display by token
+  router.add("GET", "/tt/:token", async (_req, _env2, _ctx, { token }) =>
+    renderHTML(() => ticketSingleHTML(token))
   );
 
   // Thank-you page after checkout
