@@ -1,141 +1,190 @@
-// /src/ui/tickets.js
-export const ticketsHTML = (orderCode) => `<!doctype html><html><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Jou kaartjies · ${orderCode || ''}</title>
-<style>
-  :root{ --green:#0a7d2b; --muted:#6b7280; --ink:#0b1320; --bg:#f7f7f8; --card:#fff; }
-  *{ box-sizing:border-box }
-  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg) }
-  .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
-  h1{ margin:0 0 6px; font-size:clamp(22px,4.5vw,36px) }
-  .muted{ color:var(--muted) }
-  .topActions{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 18px }
-  .btn{ appearance:none; border:0; background:var(--green); color:#fff; padding:10px 14px; border-radius:10px; font-weight:700; cursor:pointer }
-  .btn.secondary{ background:#fff; color:#111; border:1px solid #e5e7eb }
+// /src/ui/ticket.js
+export function ticketHTML(code) {
+  const safe = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[m]));
 
-  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px }
-  @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
+  return /*html*/ `
+<!doctype html>
+<html lang="af">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Jou kaartjies · ${safe(code)}</title>
+  <link rel="icon" href="/favicon.ico"/>
+  <style>
+    :root{
+      --bg:#f7f7f8; --card:#fff; --ink:#0b1320; --muted:#6b7280;
+      --green:#0a7d2b; --chip:#e5e7eb; --ok:#136c2e; --warn:#92400e; --void:#991b1b;
+    }
+    *{ box-sizing:border-box }
+    html,body{ margin:0; background:var(--bg); color:var(--ink);
+      font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial }
+    .wrap{ max-width:1100px; margin:18px auto 40px; padding:0 14px }
+    h1{ margin:0 0 6px; font-size:clamp(22px,4.5vw,36px) }
+    .lead{ color:var(--muted); margin:0 0 16px }
+    .topbar{ display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 18px }
+    .btn{ appearance:none; border:0; background:var(--green); color:#fff; padding:10px 14px; border-radius:10px; font-weight:700; cursor:pointer }
+    .btn.ghost{ background:#fff; color:#111; border:1px solid #e5e7eb }
 
-  .ticket{ background:var(--card); border-radius:16px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
-  .head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px }
-  .head h2{ margin:0; font-size:20px }
-  .pill{ font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid #e5e7eb; color:#374151; background:#fff }
-  .pill.ok{ background:#e7f7ec; border-color:#b9ebc6; color:#136c2e }
-  .pill.warn{ background:#fff8e6; border-color:#fde68a; color:#92400e }
+    .grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px }
+    @media (max-width:900px){ .grid{ grid-template-columns:1fr } }
 
-  .who{ font-weight:700; margin:4px 0 2px }
-  .typePrice{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:10px }
-  .type{ font-size:16px }
-  .price{ font-weight:800 }
+    .card{ background:var(--card); border-radius:16px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:16px }
+    .head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+    .head h2{ margin:0; font-size:20px }
+    .pill{ font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid #e5e7eb; color:#374151; background:#fff }
+    .pill.ok{ background:#e7f7ec; border-color:#b9ebc6; color:var(--ok) }
+    .pill.warn{ background:#fff8e6; border-color:#fde68a; color:var(--warn) }
+    .pill.void{ background:#fee2e2; border-color:#fecaca; color:var(--void) }
 
-  .qr{ display:flex; justify-content:center; align-items:center; padding:10px; }
-  .qr img{ width:min(280px,72vw); height:auto; display:block }
+    .who{ font-weight:800; font-size:18px; margin:2px 0 4px }
+    .typePrice{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:8px }
+    .type{ font-size:16px }
+    .price{ font-weight:800 }
 
-  .actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px }
-  .foot{ margin-top:14px; text-align:center; color:#4b5563; font-size:14px }
+    .qr{ display:flex; justify-content:center; align-items:center; padding:10px }
+    .qr img{ width:min(280px,72vw); height:auto; display:block; image-rendering:pixelated }
 
-  /* print */
-  @media print{
-    .topActions{ display:none }
-    .grid{ grid-template-columns:1fr 1fr }
-    body{ background:#fff }
-    .ticket{ box-shadow:none; border:1px solid #e5e7eb }
-  }
-</style>
-</head><body>
+    .actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px }
+    .foot{ margin-top:12px; text-align:center; color:#4b5563; font-size:14px }
+
+    .empty{ color:var(--muted); margin-top:10px }
+
+    /* Print */
+    @media print{
+      .topbar{ display:none !important }
+      body{ background:#fff }
+      .grid{ grid-template-columns:1fr 1fr }
+      .card{ box-shadow:none; border:1px solid #e5e7eb; page-break-inside:avoid; page-break-after:always }
+      .qr img{ width:360px }
+    }
+  </style>
+</head>
+<body>
 <div class="wrap">
-  <h1>Jou kaartjies · <span id="code">${orderCode || ''}</span></h1>
-  <div class="muted">Wys die QR by die hek sodat dit gescan kan word.</div>
+  <h1>Jou kaartjies · <span id="hdrCode">${safe(code)}</span></h1>
+  <div class="lead">Wys die QR by die hek sodat dit gescan kan word.</div>
 
-  <div class="topActions">
-    <button class="btn" id="printBtn">Druk | Stoor as PDF</button>
+  <div class="topbar">
+    <button id="printAll" class="btn">Druk | Stoor as PDF</button>
   </div>
 
-  <div id="list" class="grid">
-    <!-- tickets render here -->
-  </div>
+  <div id="list" class="grid" aria-live="polite"></div>
+  <div id="empty" class="empty" hidden>Kon nie kaartjies vind met kode <strong>${safe(code)}</strong> nie.</div>
 </div>
 
-<script>
-const code = ${JSON.stringify(orderCode||'')};
-const R = cents => 'R' + ((cents||0)/100).toFixed(2);
+<script type="module">
+  const orderCode = ${JSON.stringify(String(code||""))};
 
-function normalize(raw){
-  // Normalize server payload into { order:{short_code,buyer_name}, tickets:[...] }
-  const order = raw.order || raw || {};
-  const tickets = raw.tickets || raw.items || [];
-  return {
-    order: {
-      short_code: order.short_code || order.code || code || '',
-      buyer_name: order.buyer_name || order.name || order.customer_name || ''
-    },
-    tickets: tickets.map(t => ({
+  const money = (c)=> 'R' + (Number(c||0)/100).toFixed(2);
+  const qrURL = (data, size=220, fmt='png') =>
+    \`https://api.qrserver.com/v1/create-qr-code/?format=\${fmt}&size=\${size}x\${size}&data=\${encodeURIComponent(data)}\`;
+
+  document.getElementById('printAll').addEventListener('click',()=>window.print());
+
+  function pill(status){
+    const s = String(status||'').toLowerCase();
+    if (s==='used' || s==='out') return '<span class="pill warn">used</span>';
+    if (s==='void') return '<span class="pill void">void</span>';
+    return '<span class="pill ok">unused</span>';
+  }
+
+  // Make response shape robust across backends
+  function normalize(raw){
+    const order = raw.order || {};
+    const buyer = order.buyer_name || raw.buyer_name || raw.customer_name || '';
+    const short = order.short_code || raw.short_code || orderCode;
+
+    const tix = (raw.tickets || raw.items || []).map(t => ({
       id: t.id || t.ticket_id,
-      status: (t.status || '').toLowerCase(),        // 'unused' | 'used' | etc
+      status: t.status || t.state || 'unused',
       type_name: t.type_name || t.name || t.category || 'Kaartjie',
       price_cents: t.price_cents ?? t.priceCents ?? t.amount_cents ?? 0,
       attendee_first: t.attendee_first || t.first || t.first_name || '',
       attendee_last:  t.attendee_last  || t.last  || t.last_name  || '',
-      qr_png_url: t.qr_png_url || t.qr || t.qr_url || ''
-    }))
-  };
-}
+      qr_string: t.qr || t.qr_string || t.verify || '',          // data string to encode
+      qr_png_url: t.qr_png_url || t.qr_url || ''                 // if server gives a ready PNG
+    }));
 
-function statusPill(s){
-  if (s==='used') return '<span class="pill warn">redeem</span>';
-  if (s==='unused' || !s) return '<span class="pill ok">unused</span>';
-  return '<span class="pill">'+String(s)+'</span>';
-}
-
-function render(listEl, data){
-  listEl.innerHTML = data.tickets.map(t => {
-    const who = (t.attendee_first + ' ' + t.attendee_last).trim() || data.order.buyer_name || '';
-    return \`
-      <div class="ticket">
-        <div class="head">
-          <h2>Jou kaartjie</h2>
-          \${statusPill(t.status)}
-        </div>
-
-        <div class="who">\${who ? who : ''}</div>
-
-        <div class="typePrice">
-          <div class="type">\${t.type_name}</div>
-          <div class="price">\${R(t.price_cents)}</div>
-        </div>
-
-        <div class="qr">
-          \${t.qr_png_url ? '<img alt="QR" src="'+t.qr_png_url+'"/>' : '<div class="muted">Geen QR beskikbaar</div>'}
-        </div>
-
-        <div class="actions">
-          \${t.qr_png_url ? '<a class="btn secondary" download="ticket-'+(t.id||'')+'.png" href="'+t.qr_png_url+'">Download PNG</a>' : ''}
-        </div>
-
-        <div class="foot">Bestel \${data.order.short_code || ''} · paid by \${data.order.buyer_name || '—'}</div>
-      </div>\`;
-  }).join('');
-}
-
-async function load(){
-  const list = document.getElementById('list');
-
-  try{
-    // Try a sensible default endpoint; adjust on server if needed.
-    const res = await fetch('/api/public/orders/' + encodeURIComponent(code) + '/tickets', {
-      credentials: 'include'
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!res || res.ok === false){ list.innerHTML = '<div class="muted">Kon nie kaartjies laai nie.</div>'; return; }
-
-    const data = normalize(res);
-    render(list, data);
-  }catch(e){
-    list.innerHTML = '<div class="muted">Fout met laai.</div>';
+    return { order: { short_code: short, buyer_name: buyer }, tickets: tix };
   }
 
-  document.getElementById('printBtn').onclick = ()=> window.print();
-}
+  async function downloadPNG(data, name){
+    const url = qrURL(data, 600, 'png');
+    const res = await fetch(url, { mode:'cors' });
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name || 'ticket.png';
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(a.href);
+    a.remove();
+  }
 
-load();
+  function render(listEl, data){
+    listEl.innerHTML = data.tickets.map(t=>{
+      const who = [t.attendee_first, t.attendee_last].filter(Boolean).join(' ');
+      const price = typeof t.price_cents === 'number' ? money(t.price_cents) : '';
+      const qrImg = t.qr_png_url ? t.qr_png_url : qrURL(t.qr_string||String(t.id||''), 280, 'png');
+
+      return \`
+        <div class="card">
+          <div class="head">
+            <h2>Jou kaartjie</h2>
+            \${pill(t.status)}
+          </div>
+
+          <div class="who">\${who || ''}</div>
+
+          <div class="typePrice">
+            <div class="type">\${t.type_name}</div>
+            <div class="price">\${price}</div>
+          </div>
+
+          <div class="qr">
+            <img alt="QR vir toegang" src="\${qrImg}"/>
+          </div>
+
+          <div class="actions">
+            \${(t.qr_string||t.qr_png_url) ? '<button class="btn ghost" data-dl="'+String(t.qr_string||'')+'" data-id="'+String(t.id||'')+'">Download PNG</button>' : ''}
+          </div>
+
+          <div class="foot">Bestel \${data.order.short_code || ''} · paid by \${data.order.buyer_name || '—'}</div>
+        </div>\`;
+    }).join('');
+
+    // wire downloads
+    listEl.querySelectorAll('[data-dl]').forEach(btn=>{
+      btn.addEventListener('click',()=>downloadPNG(btn.getAttribute('data-dl')||'', \`ticket-\${btn.getAttribute('data-id')||''}.png\`));
+    });
+  }
+
+  async function load(){
+    const list = document.getElementById('list');
+    const empty = document.getElementById('empty');
+
+    try{
+      // Your existing endpoint
+      const r = await fetch('/api/public/tickets/by-code/' + encodeURIComponent(orderCode), { credentials:'include' });
+      const j = await r.json().catch(()=>({ ok:false }));
+      if (!j || j.ok === false){
+        empty.hidden = false;
+        empty.textContent = 'Kon nie kaartjies laai nie.';
+        return;
+      }
+      const data = normalize(j);
+      if (!data.tickets.length){ empty.hidden = false; return; }
+      empty.hidden = true;
+      render(list, data);
+    }catch(e){
+      empty.hidden = false;
+      empty.textContent = 'Kon nie kaartjies laai nie: ' + (e.message || 'fout');
+    }
+  }
+
+  load();
 </script>
-</body></html>`;
+</body>
+</html>`;
+}
