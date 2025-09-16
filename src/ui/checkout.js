@@ -1,4 +1,4 @@
-// /src/ui/checkout.js
+<!-- /src/ui/checkout.js -->
 export const checkoutHTML = (slug) => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Checkout · Villiersdorp Skou</title>
@@ -10,11 +10,13 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   @media (max-width:900px){ .grid{ grid-template-columns:1fr; } }
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
   h1{ margin:0 0 10px } h2{ margin:14px 0 10px } .muted{ color:var(--muted) }
-  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start }
+  .note{ background:#f3f4f6; border:1px dashed #e5e7eb; padding:10px 12px; border-radius:10px; margin:8px 0 14px; color:#374151 }
+  .row{ display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end }
   @media (max-width:680px){ .row{ grid-template-columns:1fr; } }
   label{ display:block; font-size:13px; color:#444; margin:10px 0 6px }
   input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff; min-height:40px }
   .btn{ padding:12px 14px; border-radius:10px; border:0; background:var(--green); color:#fff; font-weight:700; cursor:pointer }
+  .btn[disabled]{ opacity:.7; cursor:not-allowed }
   .btn.secondary{ background:#fff; color:#111; border:1px solid #e5e7eb }
   .att{ border:1px solid #eef0f2; border-radius:12px; padding:12px; margin:10px 0 }
   .att h3{ margin:0 0 8px; font-size:16px }
@@ -23,22 +25,18 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   .err{ color:#b42318; margin-top:8px; font-weight:600 }
   .ok{ color:#0a7d2b; margin-top:8px; font-weight:600 }
   .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
-  .notice{ background:#fff3cd; border:1px solid #ffe69c; color:#7a5a00; padding:12px 14px; border-radius:10px; margin:0 0 12px 0; font-size:14px; line-height:1.35 }
+  .actions{ display:flex; gap:8px; align-items:end }
+  .spin{ width:16px; height:16px; border-radius:50%; border:2px solid #fff; border-top-color:transparent; display:inline-block; vertical-align:-3px; animation:sp 0.8s linear infinite; margin-right:8px }
+  @keyframes sp{ to{ transform:rotate(360deg) } }
 </style>
 </head><body>
 <div class="wrap">
   <h1>Betaal en Voltooi</h1>
+  <div class="note"><strong>Let wel:</strong> Vul asb die besoeker(s) se inligting in sodat ons die toegangs kaartjie direk aan die besoeker kan stuur. Indien jy slegs jou inligting gee, gaan al die kaartjies na jou toe gestuur word.</div>
   <div id="status" class="muted" style="margin-bottom:10px"></div>
   <div class="grid">
     <div class="card">
       <div id="eventMeta" class="muted" style="margin-bottom:10px"></div>
-
-      <!-- Notice -->
-      <div class="notice">
-        <strong>Let wel:</strong>
-        Vul asb die besoeker(s) se inligting in sodat ons die toegangs kaartjie direk aan die besoeker kan stuur.
-        Indien jy slegs jou inligting gee, gaan al die kaartjies na jou toe gestuur word.
-      </div>
 
       <h2>Koper Inligting</h2>
       <div class="row">
@@ -73,8 +71,8 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
             <option value="pay_at_event">Betaal by hek</option>
           </select>
         </div>
-        <div style="display:flex; align-items:flex-end; gap:8px">
-          <button id="submitBtn" class="btn">Voltooi</button>
+        <div class="actions">
+          <button id="submitBtn" class="btn">Gaan voort</button>
           <span id="msg" class="muted"></span>
         </div>
       </div>
@@ -110,27 +108,34 @@ function normPhone(raw){
 
 let catalog = null;
 let cart = null;
+let lastBuyerFull = '';
+
+function currentBuyerFull(){
+  return (String($('buyer_first').value||'').trim() + ' ' + String($('buyer_last').value||'').trim()).trim();
+}
 
 function buildAttendeeForms(){
   const wrap = $('attWrap');
   wrap.innerHTML = '';
-  const phoneSeed = normPhone($('buyer_phone').value);
-  const buyerFirst = $('buyer_first').value.trim();
-  const buyerLast  = $('buyer_last').value.trim();
+
+  const seedPhone = normPhone($('buyer_phone').value);
+  const seedName  = currentBuyerFull();
+  lastBuyerFull = seedName;
+
   const ttypesById = new Map((catalog.ticket_types||[]).map(t=>[t.id, t]));
   let idx = 1;
   (cart.items||[]).forEach(it=>{
     const tt = ttypesById.get(it.ticket_type_id);
     if (!tt) return;
     for (let i=0;i<it.qty;i++){
-      const block = document.createElement('div');
-      block.className = 'att';
-      block.innerHTML = \`
+      const el = document.createElement('div');
+      el.className = 'att';
+      el.innerHTML = \`
         <h3>Besoeker \${idx++} · <span class="muted">\${esc(tt.name)}</span></h3>
         <div class="row">
           <div>
             <label>Volle naam</label>
-            <input class="att_name" data-tid="\${tt.id}" value="\${esc(buyerFirst + ' ' + buyerLast)}" />
+            <input class="att_name" data-tid="\${tt.id}" placeholder="Naam en Van" value="\${esc(seedName)}"/>
           </div>
           <div>
             <label>Geslag</label>
@@ -145,14 +150,15 @@ function buildAttendeeForms(){
         <div class="row">
           <div>
             <label>Selfoon (vir aflewering)</label>
-            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(phoneSeed)}" />
+            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(seedPhone)}"/>
           </div>
           <div></div>
         </div>\`;
-      wrap.appendChild(block);
+      wrap.appendChild(el);
     }
   });
 
+  // If an attendee phone field gains focus while empty, seed with buyer phone
   wrap.addEventListener('focusin', (e)=>{
     if (e.target && e.target.classList.contains('att_phone')) {
       if (!e.target.value) e.target.value = normPhone($('buyer_phone').value);
@@ -221,18 +227,39 @@ function validateBuyer(b){
 
 function showMsg(kind, text){
   const el = $('msg');
-  el.className = kind==='err' ? 'err' : 'ok';
+  el.className = kind==='err' ? 'err' : kind==='ok' ? 'ok' : 'muted';
   el.textContent = text;
+}
+
+function setSubmitting(on){
+  const btn = $('submitBtn');
+  if (on){
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spin"></span>Gaan voort…';
+    showMsg('muted', 'Skakel na betaalportaal…');
+  }else{
+    btn.disabled = false;
+    btn.textContent = 'Gaan voort';
+    showMsg('', '');
+  }
 }
 
 async function submit(){
   showMsg('', '');
-  const methodSel = $('pay_method').value;
+  const methodSel = $('pay_method').value; // 'pay_now' | 'pay_at_event'
+
+  // Normalize buyer phone immediately (update field so user sees 27…)
+  $('buyer_phone').value = normPhone($('buyer_phone').value||'');
+  propagateBuyerPhone(); // push to attendees if applicable
+
   const { buyer, attendees } = collectPayload();
   const err = validateBuyer(buyer);
   if (err){ showMsg('err', err); return; }
 
+  setSubmitting(true);
+
   try{
+    // 1) Create order
     const orderPayload = {
       event_id: cart.event_id,
       items: cart.items,
@@ -251,6 +278,7 @@ async function submit(){
 
     const code = j.order?.short_code || 'THANKS';
 
+    // 2) Pay now → request Yoco checkout and redirect to it
     if (methodSel === 'pay_now'){
       const y = await fetch('/api/payments/yoco/intent', {
         method:'POST', headers:{'content-type':'application/json'},
@@ -262,31 +290,67 @@ async function submit(){
         location.href = '/thanks/' + encodeURIComponent(code) + '?pay=err';
         return;
       }
-      try{ sessionStorage.setItem('last_yoco', JSON.stringify({ code, url: link, ts: Date.now() })); }catch{}
-      location.href = link;
+
+      try{
+        sessionStorage.setItem('last_yoco', JSON.stringify({ code, url: link, ts: Date.now() }));
+      }catch{}
+
+      location.href = link;   // ✅ Go to Yoco
       return;
     }
+
+    // 3) Pay at event → go to thanks
     location.href = '/thanks/' + encodeURIComponent(code);
   }catch(e){
+    setSubmitting(false);
     showMsg('err', e.message||'Fout');
   }
 }
 
-function attachBuyerPhonePropagation(){
-  let lastValue = normPhone($('buyer_phone').value);
-  $('buyer_phone').addEventListener('input', ()=>{
-    const v = normPhone($('buyer_phone').value);
-    const nodes = document.querySelectorAll('.att_phone');
-    nodes.forEach(n=>{
-      if (!n.value || normPhone(n.value)===lastValue) n.value = v;
-    });
-    lastValue = v;
+/* ---------- propagation helpers ---------- */
+function propagateBuyerPhone(){
+  const v = normPhone($('buyer_phone').value);
+  const nodes = document.querySelectorAll('.att_phone');
+  nodes.forEach(n=>{
+    // only overwrite empty or previously-matching numbers
+    const cur = normPhone(n.value||'');
+    if (!cur || cur === propagateBuyerPhone._last) n.value = v;
   });
+  propagateBuyerPhone._last = v;
+}
+propagateBuyerPhone._last = '';
+
+function propagateBuyerName(){
+  const full = currentBuyerFull();
+  const nodes = document.querySelectorAll('.att_name');
+  nodes.forEach(n=>{
+    const cur = String(n.value||'').trim();
+    if (!cur || cur === lastBuyerFull) n.value = full;
+  });
+  lastBuyerFull = full;
+}
+
+function attachBuyerFieldPropagation(){
+  // Phone: normalize on blur and propagate; also live-propagate as they type
+  $('buyer_phone').addEventListener('input', propagateBuyerPhone);
+  $('buyer_phone').addEventListener('blur', ()=>{
+    $('buyer_phone').value = normPhone($('buyer_phone').value);
+    propagateBuyerPhone();
+  });
+
+  // Name: keep attendee names in sync while blank / unchanged
+  $('buyer_first').addEventListener('input', propagateBuyerName);
+  $('buyer_last').addEventListener('input', propagateBuyerName);
 }
 
 async function load(){
-  try{ cart = JSON.parse(sessionStorage.getItem('pending_cart') || 'null'); }catch{ cart = null; }
-  if (!cart || !(cart.items||[]).length){ $('status').textContent = 'Geen items in mandjie nie.'; return; }
+  try{
+    cart = JSON.parse(sessionStorage.getItem('pending_cart') || 'null');
+  }catch{ cart = null; }
+  if (!cart || !(cart.items||[]).length){
+    $('status').textContent = 'Geen items in mandjie nie.';
+    return;
+  }
 
   const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
   if (!res.ok){ $('status').textContent = 'Kon nie event laai nie.'; return; }
@@ -299,7 +363,7 @@ async function load(){
 
   renderSummary();
   buildAttendeeForms();
-  attachBuyerPhonePropagation();
+  attachBuyerFieldPropagation();
 
   $('submitBtn').onclick = submit;
 }
