@@ -36,8 +36,8 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
       <!-- Notice -->
       <div class="notice">
         <strong>Let wel:</strong>
-        Vul asb die besoekker inligting in sodat ons die toegangs kaartjie direk aan die besoekker kan stuur.
-        Indien jy jou inligting inlos gaan al die kaartjies na jou toe gestuur word.
+        Vul asb die besoeker(s) se inligting in sodat ons die toegangs kaartjie direk aan die besoeker kan stuur.
+        Indien jy slegs jou inligting gee, gaan al die kaartjies na jou toe gestuur word.
       </div>
 
       <h2>Koper Inligting</h2>
@@ -101,10 +101,9 @@ const $ = (id)=>document.getElementById(id);
 function rands(cents){ return 'R' + ((cents||0)/100).toFixed(2); }
 function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
 
-// Normalize ZA phone -> 27XXXXXXXXX (drop leading 0)
+// Normalize ZA phone
 function normPhone(raw){
   const s = String(raw||'').replace(/\\D+/g,'');
-  if (s.startsWith('27')) return s;
   if (s.length===10 && s.startsWith('0')) return '27'+s.slice(1);
   return s;
 }
@@ -112,14 +111,12 @@ function normPhone(raw){
 let catalog = null;
 let cart = null;
 
-// ---------- Attendee UI -----------------------------------------------------
 function buildAttendeeForms(){
   const wrap = $('attWrap');
   wrap.innerHTML = '';
-
-  const seedPhone = normPhone($('buyer_phone').value);
-  const seedName  = getBuyerFullName();
-
+  const phoneSeed = normPhone($('buyer_phone').value);
+  const buyerFirst = $('buyer_first').value.trim();
+  const buyerLast  = $('buyer_last').value.trim();
   const ttypesById = new Map((catalog.ticket_types||[]).map(t=>[t.id, t]));
   let idx = 1;
   (cart.items||[]).forEach(it=>{
@@ -133,7 +130,7 @@ function buildAttendeeForms(){
         <div class="row">
           <div>
             <label>Volle naam</label>
-            <input class="att_name" data-tid="\${tt.id}" placeholder="Naam en Van" value="\${esc(seedName)}"/>
+            <input class="att_name" data-tid="\${tt.id}" value="\${esc(buyerFirst + ' ' + buyerLast)}" />
           </div>
           <div>
             <label>Geslag</label>
@@ -148,7 +145,7 @@ function buildAttendeeForms(){
         <div class="row">
           <div>
             <label>Selfoon (vir aflewering)</label>
-            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(seedPhone)}" />
+            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(phoneSeed)}" />
           </div>
           <div></div>
         </div>\`;
@@ -156,13 +153,13 @@ function buildAttendeeForms(){
     }
   });
 
-  // Mark attendee fields "manual" once edited so we don't overwrite later
-  wrap.querySelectorAll('.att_name, .att_phone').forEach(el=>{
-    el.addEventListener('input', ()=>{ el.dataset.manual = '1'; });
+  wrap.addEventListener('focusin', (e)=>{
+    if (e.target && e.target.classList.contains('att_phone')) {
+      if (!e.target.value) e.target.value = normPhone($('buyer_phone').value);
+    }
   });
 }
 
-// ---------- Summary ---------------------------------------------------------
 function renderSummary(){
   const list = $('cartList');
   if (!cart || !(cart.items||[]).length){ list.textContent = 'Geen items'; $('total').textContent='R0.00'; return; }
@@ -177,7 +174,6 @@ function renderSummary(){
   $('total').textContent = rands(total);
 }
 
-// ---------- Collect/Validate ------------------------------------------------
 function collectPayload(){
   const buyer = {
     first: String($('buyer_first').value||'').trim(),
@@ -198,9 +194,9 @@ function collectPayload(){
       const ph = normPhone(attPhones[pointer]?.value||'');
       const gd = String(attGenders[pointer]?.value||'').trim() || null;
 
-      const nameParts = nm.split(/\\s+/);
-      const first = nameParts.shift() || '';
-      const last  = nameParts.join(' ') || '';
+      const firstLast = nm.split(/\\s+/);
+      const first = firstLast.shift() || '';
+      const last  = firstLast.join(' ') || '';
 
       attendees.push({
         ticket_type_id: it.ticket_type_id,
@@ -229,52 +225,6 @@ function showMsg(kind, text){
   el.textContent = text;
 }
 
-// ---------- Sync logic (buyer -> attendees) ---------------------------------
-function getBuyerFullName(){
-  const f = String($('buyer_first').value||'').trim();
-  const l = String($('buyer_last').value||'').trim();
-  return (f + ' ' + l).trim();
-}
-
-function syncAttendeeNamesFromBuyer(){
-  const full = getBuyerFullName();
-  if (!full) return;
-  document.querySelectorAll('.att_name').forEach(n=>{
-    if (!n.dataset.manual) n.value = full;
-  });
-}
-
-function syncAttendeePhonesFromBuyer(){
-  const norm = normPhone($('buyer_phone').value);
-  // write back normalised value to buyer field (e.g., 071… -> 2771…)
-  if (norm && norm !== $('buyer_phone').value) $('buyer_phone').value = norm;
-  document.querySelectorAll('.att_phone').forEach(n=>{
-    if (!n.dataset.manual) n.value = norm;
-  });
-}
-
-function wireBuyerSync(){
-  const bf = $('buyer_first');
-  const bl = $('buyer_last');
-  const bp = $('buyer_phone');
-
-  if (bf) bf.addEventListener('input', syncAttendeeNamesFromBuyer);
-  if (bl) bl.addEventListener('input', syncAttendeeNamesFromBuyer);
-
-  if (bp){
-    // live propagate as user types (without forcing)…
-    bp.addEventListener('input', ()=>{
-      const val = $('buyer_phone').value;
-      document.querySelectorAll('.att_phone').forEach(n=>{
-        if (!n.dataset.manual) n.value = val;
-      });
-    });
-    // …and on blur normalise to 27 and sync
-    bp.addEventListener('blur', syncAttendeePhonesFromBuyer);
-  }
-}
-
-// ---------- Submit ----------------------------------------------------------
 async function submit(){
   showMsg('', '');
   const methodSel = $('pay_method').value;
@@ -316,22 +266,27 @@ async function submit(){
       location.href = link;
       return;
     }
-
     location.href = '/thanks/' + encodeURIComponent(code);
   }catch(e){
     showMsg('err', e.message||'Fout');
   }
 }
 
-// ---------- Load ------------------------------------------------------------
+function attachBuyerPhonePropagation(){
+  let lastValue = normPhone($('buyer_phone').value);
+  $('buyer_phone').addEventListener('input', ()=>{
+    const v = normPhone($('buyer_phone').value);
+    const nodes = document.querySelectorAll('.att_phone');
+    nodes.forEach(n=>{
+      if (!n.value || normPhone(n.value)===lastValue) n.value = v;
+    });
+    lastValue = v;
+  });
+}
+
 async function load(){
-  try{
-    cart = JSON.parse(sessionStorage.getItem('pending_cart') || 'null');
-  }catch{ cart = null; }
-  if (!cart || !(cart.items||[]).length){
-    $('status').textContent = 'Geen items in mandjie nie.';
-    return;
-  }
+  try{ cart = JSON.parse(sessionStorage.getItem('pending_cart') || 'null'); }catch{ cart = null; }
+  if (!cart || !(cart.items||[]).length){ $('status').textContent = 'Geen items in mandjie nie.'; return; }
 
   const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
   if (!res.ok){ $('status').textContent = 'Kon nie event laai nie.'; return; }
@@ -344,11 +299,7 @@ async function load(){
 
   renderSummary();
   buildAttendeeForms();
-  wireBuyerSync();
-
-  // Initial sync pass (if buyer fields already prefilled by the browser)
-  syncAttendeeNamesFromBuyer();
-  syncAttendeePhonesFromBuyer();
+  attachBuyerPhonePropagation();
 
   $('submitBtn').onclick = submit;
 }
