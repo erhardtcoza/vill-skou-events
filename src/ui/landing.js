@@ -10,34 +10,55 @@ export function landingHTML() {
     :root { --bg:#f6f8f7; --card:#ffffff; --ink:#0b1320; --muted:#6c7a7a; --accent:#0a7d2b; }
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--ink)}
     .wrap{max-width:1100px;margin:auto;padding:22px 16px}
-    h1{font-size:clamp(28px,4.5vw,40px);line-height:1.05;margin:0 0 8px}
-    h2{font-size:clamp(22px,3.5vw,30px);margin:28px 0 12px}
 
-    /* hero */
-    .hero{background:linear-gradient(135deg,#eaf7ee,#f5faf7);border-radius:18px;padding:14px;box-shadow:0 12px 30px rgba(0,0,0,.08)}
-    .hero-grid{display:grid;grid-template-columns:minmax(320px,520px) 1fr;gap:18px;align-items:center}
-    .poster{border-radius:20px;overflow:hidden;background:#000}
-    .poster img{display:block;width:100%;height:auto}
-    .hero-text{padding:8px}
-    .brand{color:var(--accent);font-weight:800;margin-bottom:6px}
-    .hero-title{font-size:clamp(26px,4.5vw,42px);font-weight:900;letter-spacing:.2px;margin:0}
-    .hero-link{color:inherit;text-decoration:none}
-    .hero-link:hover{text-decoration:underline}
-    .cta-row{margin-top:14px}
-    .cta{display:inline-block;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:12px 18px;font-weight:700;text-decoration:none}
-    @media (max-width:820px){
-      .hero-grid{grid-template-columns:1fr}
-      .hero-text{padding-top:4px}
+    /* page title */
+    .page-title{ text-align:center; margin:0 0 10px }
+    .page-title h1{ font-size:clamp(24px,4.4vw,36px); line-height:1.1; margin:0; font-weight:800 }
+
+    /* HERO CARD */
+    .hero{
+      background:#fff; border-radius:16px; padding:12px;
+      box-shadow:0 10px 26px rgba(0,0,0,.06);
+    }
+    .hero-grid{
+      display:grid; grid-template-columns:minmax(280px,520px) 1fr;
+      gap:16px; align-items:center;
+    }
+    /* smaller hero image on mobile */
+    .poster{ border-radius:14px; overflow:hidden; background:#000; max-height:220px }
+    .poster img{ display:block; width:100%; height:100%; object-fit:cover; object-position:center }
+
+    /* center the “Villiersdorp Skou 2025 / Tickets & Inligting / Koop kaartjies” section */
+    .hero-text{ padding:6px; text-align:center }
+    .brand{ color:var(--accent); font-weight:800; margin-bottom:6px }
+    .hero-title{ font-size:clamp(20px,4vw,30px); font-weight:900; letter-spacing:.2px; margin:0 }
+    .hero-link{ color:inherit; text-decoration:none }
+    .hero-link:hover{ text-decoration:underline }
+    .cta-row{ margin-top:12px }
+    .cta{
+      display:inline-block; padding:12px 18px; border:0; border-radius:999px;
+      background:var(--accent); color:#fff; font-weight:700; text-decoration:none;
+      box-shadow:0 6px 14px rgba(10,125,43,.25);
     }
 
     /* event list */
+    h2{font-size:clamp(18px,3.2vw,24px);margin:18px 0 10px;font-weight:800}
     .card{background:var(--card);border-radius:14px;padding:16px;box-shadow:0 6px 18px rgba(0,0,0,.06);margin-bottom:14px}
     .ev{display:grid;grid-template-columns:120px 1fr auto;gap:14px;align-items:center}
     .ev .thumb{border-radius:10px;overflow:hidden;background:#000}
     .ev .thumb img{display:block;width:100%;height:auto}
     .ev h3{margin:0 0 6px}
     .muted{color:var(--muted)}
-    .btn{background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 14px;text-decoration:none;font-weight:700}
+    .btn{background:var(--accent);color:#fff;border:none;border-radius:999px;padding:10px 16px;text-decoration:none;font-weight:700}
+
+    /* responsive tweaks */
+    @media (max-width:820px){
+      .hero-grid{ grid-template-columns:1fr }
+      .hero-text{ padding-top:4px }
+    }
+    @media (min-width:821px){
+      .poster{ max-height:360px } /* a bit taller on desktop */
+    }
     @media (max-width:640px){
       .ev{grid-template-columns:90px 1fr}
       .ev .go{grid-column:1/-1}
@@ -46,7 +67,8 @@ export function landingHTML() {
 </head>
 <body>
 <div class="wrap">
-  <h1>Villiersdorp Landbou Skou Events</h1> <!-- hidden by CSS in production, kept for consistency -->
+  <!-- centered page title; removed the word “Events” -->
+  <div class="page-title"><h1>Villiersdorp Landbou Skou</h1></div>
 
   <!-- HERO -->
   <section id="hero" class="hero" aria-live="polite">
@@ -68,7 +90,7 @@ export function landingHTML() {
     </div>
   </section>
 
-  <h2>Opkomende Vertonings</h2>
+  <h2 style="text-align:left">Opkomende Vertonings</h2>
   <div id="events"></div>
 </div>
 
