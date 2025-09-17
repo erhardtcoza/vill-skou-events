@@ -49,7 +49,7 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
     box-shadow:0 8px 24px rgba(10,125,43,.25); cursor:pointer;
   }
 
-  /* TICKETS (desktop list & mobile sheet share rows) */
+  /* TICKETS */
   h2{ margin:10px 0 12px }
   .ticket{ display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid #f1f3f5 }
   .ticket:last-child{ border-bottom:0 }
@@ -120,7 +120,6 @@ function render(cat){
     <div class="grid">
       <div class="card">
         <h2>Inligting</h2>
-        \${renderInfo(ev)}
         \${renderInfoRich(ev)}
       </div>
 
@@ -172,18 +171,7 @@ function render(cat){
   wireCheckoutButtons();
 }
 
-/* Info header (date + venue chips) */
-function renderInfo(ev){
-  const when = fmtWhen(ev.starts_at, ev.ends_at);
-  return \`
-    <div style="background:#eaf5e8;border-radius:10px;padding:10px;margin:10px 0">
-      🟢 \${escapeHtml(when)}
-    </div>
-    \${ev.venue ? '<div style="background:#eaf5e8;border-radius:10px;padding:10px;margin:10px 0">🟢 '+escapeHtml(ev.venue)+'</div>' : ''}
-  \`;
-}
-
-/* Rich, formatted details (your copy) */
+/* Rich, formatted details */
 function renderInfoRich(ev){
   const when = fmtWhen(ev.starts_at, ev.ends_at);
   const venue = ev.venue ? escapeHtml(ev.venue) : 'Villiersdorp Skougronde';
@@ -301,16 +289,13 @@ function wireDesktopQty(){
 }
 
 function wireSheet(types){
-  // populate sheet body
   const sb = document.getElementById('sheetBody');
   if (sb) sb.innerHTML = renderTicketRows(types, 'sheet');
-  // open/close
   const open = document.getElementById('openSheet');
   const sheet = document.getElementById('sheet');
   const close = document.getElementById('sheetClose');
   if (open) open.onclick = ()=>{ sheet.style.bottom='0'; sheet.setAttribute('aria-hidden','false'); };
   if (close) close.onclick = ()=>{ sheet.style.bottom='-100%'; sheet.setAttribute('aria-hidden','true'); };
-  // qty buttons
   document.querySelectorAll('[data-sheet-inc]').forEach(b=>{
     b.onclick = ()=> changeQty(Number(b.dataset.sheetInc), +1);
   });
@@ -347,13 +332,11 @@ function changeQty(id, delta){
   const next = Math.max(0, cur+delta);
   if (next===0) globalState.items.delete(id); else globalState.items.set(id,next);
 
-  // reflect qty in both UIs if present
   const dq = document.getElementById('dq'+id);
   const sq = document.getElementById('sq'+id);
   if (dq) dq.textContent = String(next);
   if (sq) sq.textContent = String(next);
 
-  // rebuild mobile cart list
   const list = document.getElementById('cartList');
   const empty = document.getElementById('cartEmpty');
   const arr = Array.from(globalState.items.entries());
@@ -370,7 +353,6 @@ function changeQty(id, delta){
     }).join('');
   }
 
-  // totals + buttons
   const totalCents = arr.reduce((sum,[tid,qty])=>{
     const tt = globalState.ttypes.get(tid) || {price_cents:0};
     return sum + qty*(tt.price_cents||0);
@@ -392,7 +374,6 @@ function changeQty(id, delta){
 async function load(){
   const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
   if (!res.ok){ document.getElementById('app').textContent = 'Kon nie laai nie'; return; }
-  // attach ticket types to event for quick access if needed elsewhere
   res.event = res.event || {};
   res.event.ticket_types = res.ticket_types || [];
   render(res);
