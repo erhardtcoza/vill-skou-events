@@ -34,14 +34,6 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, textIfNoTpl, vars = [])
     else if (sendTxt)   await sendTxt(env, toMsisdn, textIfNoTpl);
   } catch {}
 }
-async function sendTickets(env, order) {
-  try {
-    const svc = await import("../services/whatsapp.js");
-    if (svc?.sendOrderOnWhatsApp) {
-      await svc.sendOrderOnWhatsApp(env, order?.buyer_phone, order);
-    }
-  } catch {}
-}
 
 function normPhone(raw){
   const s = String(raw||"").replace(/\D+/g,"");
@@ -75,12 +67,16 @@ async function yocoConfig(env) {
  * ----------------------------------------------------- */
 async function activateTickets(env, orderId) {
   const ts = nowTs();
-  await env.DB.prepare(
-    `UPDATE tickets
-        SET state='active', activated_at=?1
-      WHERE order_id=?2 AND state!='active'`
-  ).bind(ts, orderId).run();
+  // If you use 'active' as a ticket state, ensure column exists; otherwise skip.
+  try {
+    await env.DB.prepare(
+      `UPDATE tickets
+          SET state='active', activated_at=?1
+        WHERE order_id=?2 AND state!='active'`
+    ).bind(ts, orderId).run();
+  } catch {}
 }
+
 function findShortCodeAnywhere(obj) {
   const re = /C[A-Z0-9]{6,8}/g;
   try {
@@ -90,10 +86,13 @@ function findShortCodeAnywhere(obj) {
   } catch { return null; }
 }
 
+/* Core: mark paid once + send WA with idempotency guards */
 async function markPaidAndLog(env, code, meta = {}) {
   if (!code) return { ok: false, reason: "no_code" };
+
   const o = await env.DB.prepare(
-    `SELECT id, short_code, total_cents, buyer_name, buyer_phone, buyer_email, event_id, status
+    `SELECT id, short_code, total_cents, buyer_name, buyer_phone, buyer_email, event_id, status,
+            wa_payment_notified_at, wa_tickets_notified_at
        FROM orders
       WHERE UPPER(short_code)=UPPER(?1)
       LIMIT 1`
@@ -101,33 +100,37 @@ async function markPaidAndLog(env, code, meta = {}) {
   if (!o) return { ok: false, reason: "order_not_found" };
 
   const ts = nowTs();
-  if (String(o.status || "").toLowerCase() === "paid") {
-    await activateTickets(env, o.id).catch(()=>{});
-    return { ok: true, already_paid: true, order: o };
-  }
+  const alreadyPaid = String(o.status || "").toLowerCase() === "paid";
 
-  await env.DB.prepare(
-    `UPDATE orders
-        SET status='paid', paid_at=?1, updated_at=?1
-      WHERE id=?2`
-  ).bind(ts, o.id).run();
+  if (!alreadyPaid) {
+    await env.DB.prepare(
+      `UPDATE orders
+          SET status='paid', paid_at=?1, updated_at=?1
+        WHERE id=?2`
+    ).bind(ts, o.id).run();
+  }
 
   await activateTickets(env, o.id).catch(()=>{});
 
-  const amount = Number(meta.amount_cents || o.total_cents || 0);
-  const txref  = String(meta.tx_ref || meta.txid || meta.reference || "") || null;
-  await env.DB.prepare(
-    `INSERT INTO payments (order_id, amount_cents, method, status, created_at, updated_at, reference)
-     VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
-  ).bind(o.id, amount, ts, txref).run().catch(()=>{});
+  if (!alreadyPaid) {
+    const amount = Number(meta.amount_cents || o.total_cents || 0);
+    const txref  = String(meta.tx_ref || meta.txid || meta.reference || "") || null;
+    await env.DB.prepare(
+      `INSERT INTO payments (order_id, amount_cents, method, status, created_at, updated_at, reference)
+       VALUES (?1, ?2, 'online_yoco', 'approved', ?3, ?3, ?4)`
+    ).bind(o.id, amount, ts, txref).run().catch(()=>{});
+  }
 
-  /* WhatsApp: payment confirmation + ticket delivery */
+  /* WhatsApp: guarded by idempotency flags */
   try {
     const base = await currentPublicBase(env);
-    const batchLink = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : base;
+    const batchLink = o.short_code ? `${base}/t/${encodeURIComponent(o.short_code)}` : "";
 
-    // Payment confirmation (2 vars: name, order)
-    if (o.buyer_phone) {
+    // 1) Payment confirmation (send ONCE)
+    const rowPay = o.wa_payment_notified_at ? { wa_payment_notified_at: o.wa_payment_notified_at } :
+      await env.DB.prepare(`SELECT wa_payment_notified_at FROM orders WHERE id=?1`).bind(o.id).first();
+
+    if (!rowPay?.wa_payment_notified_at && o.buyer_phone) {
       const payVars = [o.buyer_name || "", o.short_code || ""];
       const payMsg = [
         `Hi ${o.buyer_name || ""}`,
@@ -136,44 +139,55 @@ async function markPaidAndLog(env, code, meta = {}) {
         `Bestelling: ${o.short_code}`,
         batchLink ? `Jou kaartjies: ${batchLink}` : ``
       ].filter(Boolean).join("\n");
+
       await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", String(o.buyer_phone), payMsg, payVars);
+
+      await env.DB.prepare(
+        `UPDATE orders SET wa_payment_notified_at=?1 WHERE id=?2`
+      ).bind(ts, o.id).run();
     }
 
-    // Ticket delivery
-    // 1) Always send batch link to buyer
-    if (o.buyer_phone) {
-      const ticketVarsBuyer = [o.buyer_name || "", o.short_code || "", batchLink || ""];
-      const ticketMsgBuyer = `Jou kaartjies is gereed. Bestel: ${o.short_code}${batchLink ? "\n" + batchLink : ""}`;
-      await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(o.buyer_phone), ticketMsgBuyer, ticketVarsBuyer);
-      await sendTickets(env, o); // legacy text fallback, harmless if template already sent
-    }
+    // 2) Ticket delivery (send ONCE to buyer, and per-attendee if different phone)
+    const rowTix = o.wa_tickets_notified_at ? { wa_tickets_notified_at: o.wa_tickets_notified_at } :
+      await env.DB.prepare(`SELECT wa_tickets_notified_at FROM orders WHERE id=?1`).bind(o.id).first();
 
-    // 2) Send single-ticket links to attendees whose phone != buyer phone
-    const buyerMSISDN = normPhone(o.buyer_phone || "");
-    const tQ = await env.DB.prepare(
-      `SELECT t.id, t.token, t.attendee_first, t.attendee_last, t.phone
-         FROM tickets t
-        WHERE t.order_id = ?1`
-    ).bind(o.id).all();
+    if (!rowTix?.wa_tickets_notified_at) {
+      // Always send batch link to buyer (template)
+      if (o.buyer_phone) {
+        const ticketVarsBuyer = [o.buyer_name || "", o.short_code || "", batchLink || ""];
+        const ticketMsgBuyer = `Jou kaartjies is gereed. Bestel: ${o.short_code}${batchLink ? "\n" + batchLink : ""}`;
+        await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(o.buyer_phone), ticketMsgBuyer, ticketVarsBuyer);
+      }
 
-    const rows = tQ.results || [];
-    for (const t of rows) {
-      const attPhone = normPhone(t.phone || "");
-      if (!attPhone || (buyerMSISDN && attPhone === buyerMSISDN)) continue; // only send if different
-      if (!t.token) continue;
+      // Per-attendee single links only if number differs from buyer
+      const buyerMSISDN = normPhone(o.buyer_phone || "");
+      const tQ = await env.DB.prepare(
+        `SELECT t.id, t.token, t.attendee_first, t.attendee_last, t.phone
+           FROM tickets t
+          WHERE t.order_id = ?1`
+      ).bind(o.id).all();
 
-      const attName = [t.attendee_first, t.attendee_last].filter(Boolean).join(" ") || (o.buyer_name || "");
-      const singleLink = `${base}/tt/${encodeURIComponent(t.token)}`;
+      for (const t of (tQ.results || [])) {
+        const attPhone = normPhone(t.phone || "");
+        if (!attPhone || (buyerMSISDN && attPhone === buyerMSISDN)) continue;
+        if (!t.token) continue;
 
-      // NOTE: Template has exactly 3 vars → (name, order_no, ticket_url)
-      const vars = [attName, o.short_code || "", singleLink];
-      const msg = `Jou kaartjie is gereed. Bestel: ${o.short_code}\n${singleLink}`;
+        const attName = [t.attendee_first, t.attendee_last].filter(Boolean).join(" ") || (o.buyer_name || "");
+        const singleLink = `${base}/tt/${encodeURIComponent(t.token)}`;
 
-      await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(attPhone), msg, vars);
+        // Reuse the same ticket template (vars: name, order_no, ticket_url)
+        const vars = [attName, o.short_code || "", singleLink];
+        const msg = `Jou kaartjie is gereed. Bestel: ${o.short_code}\n${singleLink}`;
+        await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", String(attPhone), msg, vars);
+      }
+
+      await env.DB.prepare(
+        `UPDATE orders SET wa_tickets_notified_at=?1 WHERE id=?2`
+      ).bind(ts, o.id).run();
     }
   } catch {}
 
-  return { ok: true, order: { ...o, status: "paid", paid_at: ts } };
+  return { ok: true, order: { ...o, status: "paid", paid_at: o.paid_at || ts } };
 }
 
 /* Map checkoutId → order.short_code, then reuse markPaidAndLog */
@@ -198,7 +212,7 @@ async function markPaidByCheckoutId(env, checkoutId, meta = {}) {
       if (hit) {
         const code = hit.name.split(":").pop();
         if (code) {
-          return markPaidAndLog(env, code.replace(checkoutId, "")); // not reliable; ignore
+          return markPaidAndLog(env, code.replace(checkoutId, "")); // best-effort
         }
       }
     }
@@ -296,7 +310,7 @@ async function reconcileCheckout(env, code) {
     const amount_cents = Number(d?.amount || 0) || null;
     const meta = { amount_cents, tx_ref: d?.paymentId || d?.id || null };
     const m = await markPaidAndLog(env, code, meta);
-    return { ok: true, reconciled: m.ok, state: "paid" };
+    return { ok: true, reconciled: m.ok, state: "paid", already_paid: !!m.already_paid };
   }
   return { ok: true, reconciled: false, state: String(d?.status || "unknown") };
 }
