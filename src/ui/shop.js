@@ -49,7 +49,7 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
     box-shadow:0 8px 24px rgba(10,125,43,.25); cursor:pointer;
   }
 
-  /* TICKETS */
+  /* TICKETS (desktop list & mobile sheet share rows) */
   h2{ margin:10px 0 12px }
   .ticket{ display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid #f1f3f5 }
   .ticket:last-child{ border-bottom:0 }
@@ -74,11 +74,10 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
   #sheetFoot{ display:flex; gap:8px; padding:12px 16px; border-top:1px solid #f0f2f5 }
   .grab{ width:40px; height:4px; border-radius:999px; background:#e5e7eb; margin:0 auto 10px }
 
-  /* Content tweaks for overview readability */
-  .info h3{ margin:0 0 8px }
-  .info p{ margin:6px 0 }
-  .info ul{ margin:0 0 10px 18px; padding:0 }
-  .info hr{ border:none; height:1px; background:#e5e7eb; margin:10px 0 }
+  /* Rich info block */
+  .infoRich h3{ margin:14px 0 6px; font-size:18px }
+  .infoRich p{ margin:6px 0 }
+  .infoRich ul{ margin:6px 0 10px 0; padding-left:18px }
 </style>
 </head><body>
 <div class="wrap" id="app">Loading…</div>
@@ -91,7 +90,7 @@ function rands(cents){ return 'R' + ( (cents||0)/100 ).toFixed(2); }
 function fmtWhen(s,e){
   const sdt = new Date((s||0)*1000), edt=new Date((e||0)*1000);
   const opts = { weekday:'short', day:'2-digit', month:'short' };
-  return sdt.toLocaleDateString('af-ZA',opts) + ' – ' + edt.toLocaleDateString('af-ZA',opts);
+  return sdt.toLocaleDateString('af-ZA',opts) + ' &ndash; ' + edt.toLocaleDateString('af-ZA',opts);
 }
 function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 function tryParseJSON(s){ try{ return JSON.parse(s); }catch{ return null; } }
@@ -122,6 +121,7 @@ function render(cat){
       <div class="card">
         <h2>Inligting</h2>
         \${renderInfo(ev)}
+        \${renderInfoRich(ev)}
       </div>
 
       <!-- DESKTOP TICKETS ONLY -->
@@ -172,87 +172,91 @@ function render(cat){
   wireCheckoutButtons();
 }
 
-/* Info (full description block) */
+/* Info header (date + venue chips) */
 function renderInfo(ev){
   const when = fmtWhen(ev.starts_at, ev.ends_at);
-  const venue = ev.venue ? String(ev.venue) : 'Villiersdorp Skougronde';
   return \`
-    <div class="info">
-      <h3>🎉 Villiersdorp Skou 2025 – Alles wat jy moet weet</h3>
+    <div style="background:#eaf5e8;border-radius:10px;padding:10px;margin:10px 0">
+      🟢 \${escapeHtml(when)}
+    </div>
+    \${ev.venue ? '<div style="background:#eaf5e8;border-radius:10px;padding:10px;margin:10px 0">🟢 '+escapeHtml(ev.venue)+'</div>' : ''}
+  \`;
+}
 
-      <p>📅 <strong>\${escapeHtml(when.replace('–', '&ndash;'))}</strong><br>
-      📍 <strong>\${escapeHtml(venue)}</strong></p>
+/* Rich, formatted details (your copy) */
+function renderInfoRich(ev){
+  const when = fmtWhen(ev.starts_at, ev.ends_at);
+  const venue = ev.venue ? escapeHtml(ev.venue) : 'Villiersdorp Skougronde';
+  return \`
+    <div class="infoRich" style="border:2px dashed #e5e7eb;border-radius:12px;padding:12px;margin-top:8px">
+      <p><strong>🎉 Villiersdorp Skou 2025 – Alles wat jy moet weet</strong></p>
+      <p>📅 \${when}<br/>📍 \${venue}</p>
+      <hr style="border:0;border-top:1px solid #eee;margin:10px 0"/>
 
-      <hr>
-
-      <p><strong>🎶 Musiek & Aandprogram</strong></p>
+      <h3>🎶 Musiek & Aandprogram</h3>
       <ul>
         <li>Juan Boucher en Barto sorg vir ’n groot aand van musiek, kuier en dans (Saterdag 25 Oktober).</li>
         <li>Ander plaaslike kunstenaars en sangers tree ook deur die dag op.</li>
         <li>Skoudans en kuier in die kuiertuin – feesvibes soos min.</li>
       </ul>
 
-      <p><strong>🐴 Perde-afdeling</strong></p>
+      <h3>🐴 Perde-afdeling</h3>
       <ul>
         <li>Perdeprogram elke dag van 08:00 tot 17:30.</li>
         <li>Kompetisies en vertonings wat styl, energie en ware wow-oomblikke bring.</li>
       </ul>
 
-      <p><strong>🐑🐐 Veekamp & Jeugskou</strong></p>
+      <h3>🐑🐐 Veekamp & Jeugskou</h3>
       <ul>
-        <li>Theewaterskloof Jeugskou (25 Oktober) – boerbokke, melkbokke, angorabokke, wolskaap, vleisskaap, vleisbeeste, pluimvee, duiwe, honde, konyn, fotografie en meer.</li>
+        <li>Theewaterskloof Jeugskou (25 Oktober) – boerbokke, melkbokke, angorabokke, wolskaap, vleisskaap, vleisbeeste, pluimvee, duiwe, konyn, fotografie en meer.</li>
         <li>Grootvee- en kleinvee-vertonings.</li>
         <li>Kinder-appelpak kompetisie – unieke plaaslike hoogtepunt.</li>
       </ul>
 
-      <p><strong>🍳 Landbou Ontbyt</strong></p>
+      <h3>🍳 Landbou Ontbyt</h3>
       <ul>
         <li>Vrydag, 24 Oktober om 09:00.</li>
         <li>Georganiseer saam met FNB, Hollard en Overberg Agri.</li>
         <li>Sprekers soos Prof. Abel Esterhuyse en Anton Kruger bespreek belangrike landbou- en wêreldkwessies.</li>
       </ul>
 
-      <p><strong>👨‍👩‍👧‍👦 Familie & Kinders</strong></p>
+      <h3>👨‍👩‍👧‍👦 Familie & Kinders</h3>
       <ul>
         <li>Kindervermaak vanaf 08:00 beide dae.</li>
         <li>Worcester Soft Play: springkastele, sagte blokke, klim- en speelareas – ’n speelparadys vir kleuters en kinders.</li>
         <li>Fantasy Faces gesigverf vir kleurvolle pret.</li>
       </ul>
 
-      <p><strong>🛍️ Uitstallings & Kos</strong></p>
+      <h3>🛍️ Uitstallings & Kos</h3>
       <ul>
         <li>Stalletjies met klere, kuns, handwerk, plaasprodukte en meer (oop vanaf 08:00).</li>
         <li>Kosstalletjies en food court vir heerlike eetgoed.</li>
         <li>Kontant kroeg in die kuiertuin.</li>
       </ul>
 
-      <p><strong>🐔 Pluimvee</strong></p>
+      <h3>🐔 Pluimvee</h3>
       <ul>
         <li>Pluimveeskou beide Vrydag en Saterdag in die Brandweer Stoor.</li>
       </ul>
 
-      <hr>
-
-      <p><strong>💰 Toegangspryse</strong></p>
+      <h3>💰 Toegangspryse</h3>
+      <p><strong>Vrydag 24 Oktober:</strong></p>
       <ul>
-        <li><strong>Vrydag 24 Oktober</strong>:
-          <div>• Laerskool: R30</div>
-          <div>• Pensioenarisse: R40</div>
-          <div>• Volwassenes: R60</div>
-        </li>
+        <li>Laerskool: R30</li>
+        <li>Pensioenarisse: R40</li>
+        <li>Volwassenes: R60</li>
       </ul>
+      <p><strong>Saterdag 25 Oktober:</strong></p>
       <ul>
-        <li><strong>Saterdag 25 Oktober</strong>:
-          <div>• Laerskool: R100</div>
-          <div>• Pensioenarisse: R80</div>
-          <div>• Volwassenes: R150</div>
-        </li>
+        <li>Laerskool: R100</li>
+        <li>Pensioenarisse: R80</li>
+        <li>Volwassenes: R150</li>
       </ul>
-      <p><strong>👶 Kinders onder 7 jaar:</strong> gratis toegang</p>
+      <p>👶 Kinders onder 7 jaar: gratis toegang</p>
 
-      <hr>
-
-      <p>👉 Die Villiersdorp Skou 2025 bied iets vir almal – van musiek en vermaak tot perde-, vee- en jeugskoue, lekker kos en gesinsvriendelike aktiwiteite. ’n Fees wat jy nie wil misloop nie!</p>
+      <hr style="border:0;border-top:1px solid #eee;margin:10px 0"/>
+      <p>👉 Die Villiersdorp Skou 2025 bied iets vir almal – van musiek en vermaak tot perde-, vee- en jeugskoue, lekker kos en gesinsvriendelike aktiwiteite. <br/>’n Fees wat jy nie wil misloop nie!</p>
+      <p><strong>NB:</strong> Geen honde word op die perseel toegelaat nie, jammer.</p>
     </div>\`;
 }
 
@@ -388,6 +392,7 @@ function changeQty(id, delta){
 async function load(){
   const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
   if (!res.ok){ document.getElementById('app').textContent = 'Kon nie laai nie'; return; }
+  // attach ticket types to event for quick access if needed elsewhere
   res.event = res.event || {};
   res.event.ticket_types = res.ticket_types || [];
   render(res);
