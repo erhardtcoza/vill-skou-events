@@ -49,9 +49,7 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
     box-shadow:0 8px 24px rgba(10,125,43,.25); cursor:pointer;
   }
 
-  /* GALLERY (kept simple: just the hero in this page) */
-
-  /* TICKETS (desktop list & mobile sheet share rows) */
+  /* TICKETS */
   h2{ margin:10px 0 12px }
   .ticket{ display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid #f1f3f5 }
   .ticket:last-child{ border-bottom:0 }
@@ -75,6 +73,12 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
   #sheetBody{ padding:10px 16px; overflow:auto }
   #sheetFoot{ display:flex; gap:8px; padding:12px 16px; border-top:1px solid #f0f2f5 }
   .grab{ width:40px; height:4px; border-radius:999px; background:#e5e7eb; margin:0 auto 10px }
+
+  /* Content tweaks for overview readability */
+  .info h3{ margin:0 0 8px }
+  .info p{ margin:6px 0 }
+  .info ul{ margin:0 0 10px 18px; padding:0 }
+  .info hr{ border:none; height:1px; background:#e5e7eb; margin:10px 0 }
 </style>
 </head><body>
 <div class="wrap" id="app">Loading…</div>
@@ -118,7 +122,6 @@ function render(cat){
       <div class="card">
         <h2>Inligting</h2>
         \${renderInfo(ev)}
-        \${renderOverviewPlaceholder()}
       </div>
 
       <!-- DESKTOP TICKETS ONLY -->
@@ -169,21 +172,87 @@ function render(cat){
   wireCheckoutButtons();
 }
 
-/* Info + placeholder */
+/* Info (full description block) */
 function renderInfo(ev){
   const when = fmtWhen(ev.starts_at, ev.ends_at);
+  const venue = ev.venue ? String(ev.venue) : 'Villiersdorp Skougronde';
   return \`
-    <div style="background:#eaf5e8;border-radius:10px;padding:10px;margin:10px 0">
-      🟢 \${escapeHtml(when)}
-    </div>
-    \${ev.venue ? '<div style="background:#eaf5e8;border-radius:10px;padding:10px;margin:10px 0">🟢 '+escapeHtml(ev.venue)+'</div>' : ''}
-  \`;
-}
-function renderOverviewPlaceholder(){
-  return \`
-    <div style="border:2px dashed #e5e7eb;border-radius:12px;padding:12px;margin-top:8px">
-      <b>Oorsig</b>
-      <p class="muted" style="margin:6px 0 0">Meer besonderhede volg binnekort. (Plak hier jou beskrywing, program/hoogtepunte, ens.)</p>
+    <div class="info">
+      <h3>🎉 Villiersdorp Skou 2025 – Alles wat jy moet weet</h3>
+
+      <p>📅 <strong>\${escapeHtml(when.replace('–', '&ndash;'))}</strong><br>
+      📍 <strong>\${escapeHtml(venue)}</strong></p>
+
+      <hr>
+
+      <p><strong>🎶 Musiek & Aandprogram</strong></p>
+      <ul>
+        <li>Juan Boucher en Barto sorg vir ’n groot aand van musiek, kuier en dans (Saterdag 25 Oktober).</li>
+        <li>Ander plaaslike kunstenaars en sangers tree ook deur die dag op.</li>
+        <li>Skoudans en kuier in die kuiertuin – feesvibes soos min.</li>
+      </ul>
+
+      <p><strong>🐴 Perde-afdeling</strong></p>
+      <ul>
+        <li>Perdeprogram elke dag van 08:00 tot 17:30.</li>
+        <li>Kompetisies en vertonings wat styl, energie en ware wow-oomblikke bring.</li>
+      </ul>
+
+      <p><strong>🐑🐐 Veekamp & Jeugskou</strong></p>
+      <ul>
+        <li>Theewaterskloof Jeugskou (25 Oktober) – boerbokke, melkbokke, angorabokke, wolskaap, vleisskaap, vleisbeeste, pluimvee, duiwe, honde, konyn, fotografie en meer.</li>
+        <li>Grootvee- en kleinvee-vertonings.</li>
+        <li>Kinder-appelpak kompetisie – unieke plaaslike hoogtepunt.</li>
+      </ul>
+
+      <p><strong>🍳 Landbou Ontbyt</strong></p>
+      <ul>
+        <li>Vrydag, 24 Oktober om 09:00.</li>
+        <li>Georganiseer saam met FNB, Hollard en Overberg Agri.</li>
+        <li>Sprekers soos Prof. Abel Esterhuyse en Anton Kruger bespreek belangrike landbou- en wêreldkwessies.</li>
+      </ul>
+
+      <p><strong>👨‍👩‍👧‍👦 Familie & Kinders</strong></p>
+      <ul>
+        <li>Kindervermaak vanaf 08:00 beide dae.</li>
+        <li>Worcester Soft Play: springkastele, sagte blokke, klim- en speelareas – ’n speelparadys vir kleuters en kinders.</li>
+        <li>Fantasy Faces gesigverf vir kleurvolle pret.</li>
+      </ul>
+
+      <p><strong>🛍️ Uitstallings & Kos</strong></p>
+      <ul>
+        <li>Stalletjies met klere, kuns, handwerk, plaasprodukte en meer (oop vanaf 08:00).</li>
+        <li>Kosstalletjies en food court vir heerlike eetgoed.</li>
+        <li>Kontant kroeg in die kuiertuin.</li>
+      </ul>
+
+      <p><strong>🐔 Pluimvee</strong></p>
+      <ul>
+        <li>Pluimveeskou beide Vrydag en Saterdag in die Brandweer Stoor.</li>
+      </ul>
+
+      <hr>
+
+      <p><strong>💰 Toegangspryse</strong></p>
+      <ul>
+        <li><strong>Vrydag 24 Oktober</strong>:
+          <div>• Laerskool: R30</div>
+          <div>• Pensioenarisse: R40</div>
+          <div>• Volwassenes: R60</div>
+        </li>
+      </ul>
+      <ul>
+        <li><strong>Saterdag 25 Oktober</strong>:
+          <div>• Laerskool: R100</div>
+          <div>• Pensioenarisse: R80</div>
+          <div>• Volwassenes: R150</div>
+        </li>
+      </ul>
+      <p><strong>👶 Kinders onder 7 jaar:</strong> gratis toegang</p>
+
+      <hr>
+
+      <p>👉 Die Villiersdorp Skou 2025 bied iets vir almal – van musiek en vermaak tot perde-, vee- en jeugskoue, lekker kos en gesinsvriendelike aktiwiteite. ’n Fees wat jy nie wil misloop nie!</p>
     </div>\`;
 }
 
@@ -319,7 +388,6 @@ function changeQty(id, delta){
 async function load(){
   const res = await fetch('/api/public/events/'+encodeURIComponent(slug)).then(r=>r.json()).catch(()=>({ok:false}));
   if (!res.ok){ document.getElementById('app').textContent = 'Kon nie laai nie'; return; }
-  // attach ticket types to event for quick access if needed elsewhere
   res.event = res.event || {};
   res.event.ticket_types = res.ticket_types || [];
   render(res);
