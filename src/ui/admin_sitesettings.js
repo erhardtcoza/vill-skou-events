@@ -264,6 +264,53 @@ export const adminSiteSettingsJS = `
           <span id="pv-send-msg" class="muted"></span>
         </div>
       </div>
+
+      <!-- NEW: Campaigns -->
+      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px;">
+        <h3 style="margin:0 0 8px">Campaigns (advanced)</h3>
+        <p class="muted" style="margin-top:0">Create a campaign from the <b>currently selected rows</b>, then run/continue it in batches.</p>
+
+        <div class="grid">
+          <div style="grid-column:1/-1">
+            <label>Campaign name</label>
+            <input id="pv-camp-name" placeholder="Villiersdorp Skou push — Oct 2025"/>
+          </div>
+          <div>
+            <label>Template</label>
+            <select id="pv-camp-tpl">
+              <option value="WA_TMP_SKOU_SALES">Skou reminders (recommended)</option>
+              <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
+              <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
+              <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
+            </select>
+          </div>
+          <div>
+            <label>Body variables (comma separated, optional)</label>
+            <input id="pv-camp-vars" placeholder="e.g. Villiersdorp Skou, 24–25 Okt"/>
+          </div>
+        </div>
+
+        <div class="row-actions">
+          <button id="pv-camp-create" class="btn">Create campaign from selected</button>
+          <span id="pv-camp-create-msg" class="muted"></span>
+        </div>
+
+        <div class="hr"></div>
+
+        <div class="grid">
+          <div><label>Campaign ID</label><input id="pv-camp-id" placeholder="e.g. 12"/></div>
+          <div><label>Batch size</label><input id="pv-camp-batch" value="30"/></div>
+          <div><label>Delay (ms) between messages</label><input id="pv-camp-delay" value="350"/></div>
+        </div>
+
+        <div class="row-actions">
+          <button id="pv-camp-run" class="btn">Run/continue batch</button>
+          <button id="pv-camp-status" class="btn outline">Refresh status</button>
+          <span id="pv-camp-run-msg" class="muted"></span>
+        </div>
+
+        <div id="pv-camp-status-box" class="muted"></div>
+      </div>
     </section>
   \`;
 
@@ -397,53 +444,7 @@ export const adminSiteSettingsJS = `
     if (r.ok){ $('#wa_reply_text').value=''; loadInbox(); }
   };
 
-  // ---------- Actions: save sections ----------
-  $('#saveGen').onclick = ()=>save({
-    SITE_NAME: $('#SITE_NAME').value,
-    SITE_LOGO_URL: $('#SITE_LOGO_URL').value,
-    PUBLIC_BASE_URL: $('#PUBLIC_BASE_URL').value,
-    VERIFY_TOKEN: $('#VERIFY_TOKEN').value,
-  }, $('#msgGen'));
-
-  $('#saveYoco').onclick = ()=>save({
-    YOCO_MODE: $('#YOCO_MODE').value,
-    YOCO_TEST_PUBLIC_KEY: $('#YOCO_TEST_PUBLIC_KEY').value,
-    YOCO_TEST_SECRET_KEY: $('#YOCO_TEST_SECRET_KEY').value,
-    YOCO_LIVE_PUBLIC_KEY: $('#YOCO_LIVE_PUBLIC_KEY').value,
-    YOCO_LIVE_SECRET_KEY: $('#YOCO_LIVE_SECRET_KEY').value,
-  }, $('#msgYoco'));
-
-  $('#saveWA').onclick = ()=>save({
-    WHATSAPP_TOKEN: $('#WHATSAPP_TOKEN').value,
-    PHONE_NUMBER_ID: $('#PHONE_NUMBER_ID').value,
-    BUSINESS_ID: $('#BUSINESS_ID').value,
-    // ✅ persist as "1"/"0"
-    WA_AUTOREPLY_ENABLED: $('#WA_AUTOREPLY_ENABLED').checked ? '1' : '0',
-    WA_AUTOREPLY_TEXT: $('#WA_AUTOREPLY_TEXT').value,
-    WA_MAP_VAR1: $('#WA_MAP_VAR1').value,
-    WA_MAP_VAR2: $('#WA_MAP_VAR2').value,
-    WA_MAP_VAR3: $('#WA_MAP_VAR3').value,
-    WA_TMP_ORDER_CONFIRM: $('#WA_TMP_ORDER_CONFIRM').value,
-    WA_TMP_PAYMENT_CONFIRM: $('#WA_TMP_PAYMENT_CONFIRM').value,
-    WA_TMP_TICKET_DELIVERY: $('#WA_TMP_TICKET_DELIVERY').value,
-    WA_TMP_SKOU_SALES: $('#WA_TMP_SKOU_SALES').value,
-  }, $('#msgWA'));
-
-  $('#syncWA').onclick = async ()=>{
-    $('#msgWA').textContent = 'Syncing…';
-    const j = await fetch('/api/admin/whatsapp/sync', { method:'POST', credentials:'include' })
-      .then(r=>r.json()).catch(()=>({ok:false}));
-    if (!j.ok){
-      const d = await fetch('/api/admin/whatsapp/diag', { credentials:'include' }).then(r=>r.json()).catch(()=>({}));
-      alert('Sync failed: ' + (j.error||'unknown') + (d?.metaError?.message ? ('\\n'+d.metaError.message) : ''));
-    } else {
-      alert('Templates synced. Added/updated: ' + (j.fetched||0) + '. In DB: ' + (j.total||0));
-    }
-    $('#msgWA').textContent = '';
-    loadTemplates();
-  };
-
-  // Past visitors helpers + actions (unchanged)...
+  // ---------- Past visitors: helpers ----------
   function parseCSV(text) {
     const lines = String(text || "").split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
     const rows = [];
@@ -460,6 +461,7 @@ export const adminSiteSettingsJS = `
   async function refreshList() {
     const q = $('#pv-q').value.trim();
     const tag = $('#pv-tag').value.trim();
+    thead = null;
     const opt = $('#pv-optout').value;
     const url = new URL('/api/admin/past/list', location.origin);
     if (q) url.searchParams.set('query', q);
@@ -496,6 +498,7 @@ export const adminSiteSettingsJS = `
     };
   }
 
+  // ---------- Past visitors: actions ----------
   $('#pv-import').onclick = async ()=>{
     const rows = parseCSV($('#pv-csv').value);
     const overwrite = $('#pv-overwrite').value === '1';
@@ -543,8 +546,76 @@ export const adminSiteSettingsJS = `
     refreshList();
   };
 
-  // WA test send
+  // ---------- Campaign helpers ----------
   function parseVars(raw){ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; }
+
+  async function campaignStatus(cid){
+    const box = $('#pv-camp-status-box');
+    box.textContent = 'Loading status…';
+    const j = await fetch('/api/admin/past/campaigns/'+encodeURIComponent(cid)+'/status', { credentials:'include' })
+      .then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok){ box.textContent = 'Status not available.'; return; }
+    const c = j.campaign || {};
+    const st = j.stats || {};
+    box.innerHTML = \`
+      <div><b>\${esc(c.name||('Campaign '+cid))}</b></div>
+      <div class="muted">Status: \${esc(c.status||'')}</div>
+      <div style="margin-top:6px">
+        <span class="pill">queued: \${st.queued||0}</span>
+        <span class="pill">sent: \${st.sent||0}</span>
+        <span class="pill">failed: \${st.failed||0}</span>
+      </div>\`;
+  }
+
+  // ---------- Campaign actions ----------
+  $('#pv-camp-create').onclick = async ()=>{
+    const ids = Array.from(document.querySelectorAll('.pv-chk'))
+      .filter(c=>c.checked).map(c=>Number(c.dataset.id));
+    const msg = $('#pv-camp-create-msg');
+    if (!ids.length){ msg.textContent='Select some rows first.'; return; }
+    const template_key = $('#pv-camp-tpl').value;
+    const name = $('#pv-camp-name').value.trim() || ('Ad-hoc '+new Date().toLocaleString());
+    const vars = parseVars($('#pv-camp-vars').value);
+
+    msg.textContent = 'Creating…';
+    const j = await fetch('/api/admin/past/campaigns/create', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ name, template_key, vars, visitor_ids: ids })
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+
+    if (j.ok){
+      $('#pv-camp-id').value = j.campaign_id;
+      msg.textContent = 'Created ✓ (ID '+j.campaign_id+').';
+      campaignStatus(j.campaign_id);
+    } else {
+      msg.textContent = 'Failed: ' + (j.error||'');
+    }
+  };
+
+  $('#pv-camp-run').onclick = async ()=>{
+    const cid = Number($('#pv-camp-id').value || 0);
+    const msg = $('#pv-camp-run-msg');
+    if (!cid){ msg.textContent='Enter campaign ID.'; return; }
+    const batch = Number($('#pv-camp-batch').value || 30);
+    const delay = Number($('#pv-camp-delay').value || 350);
+
+    msg.textContent = 'Processing…';
+    const j = await fetch('/api/admin/past/campaigns/run', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ campaign_id: cid, batch_size: batch, delay_ms: delay })
+    }).then(r=>r.json()).catch(()=>({ok:false}));
+
+    msg.textContent = j.ok ? ('Processed '+(j.processed||0)+(j.done?' (done)':'') ) : ('Failed: '+(j.error||''));
+    campaignStatus(cid);
+  };
+
+  $('#pv-camp-status').onclick = ()=>{
+    const cid = Number($('#pv-camp-id').value || 0);
+    if (!cid){ $('#pv-camp-run-msg').textContent='Enter campaign ID.'; return; }
+    campaignStatus(cid);
+  };
+
+  // WA test send
   $('#sendWATest').onclick = async ()=>{
     const to = msisdn($('#TEST_PHONE').value);
     const template_key = $('#TEST_TEMPLATE_KEY').value;
