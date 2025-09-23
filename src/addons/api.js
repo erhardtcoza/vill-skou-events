@@ -50,7 +50,12 @@ export function registerAddonRoutes(router){
       const payload={ messaging_product:"whatsapp", to:String(b.to), type:"template", template:{ name:t.name, language:{code:t.lang}, ...(b.components?{components:b.components}:{}) } };
       const r=await fetch(`https://graph.facebook.com/v20.0/${env.PHONE_NUMBER_ID}/messages`,{method:"POST",headers:{Authorization:`Bearer ${env.WHATSAPP_TOKEN}`,"Content-Type":"application/json"},body:JSON.stringify(payload)}); const J=await r.json();
       if(!r.ok) return json({error:"meta_error",meta:J},502); return json({ok:true,meta:J});
-    }catch(e){ return json({error:String(e.message||e)},500); }});
+    }catch(e){
+      // Server-side logging of full error for diagnostics
+      console.error("POST /api/whatsapp/send error:", e);
+      // Send a generic error message to the client
+      return json({error:"Internal server error"},500);
+    }});
   router.add("POST","/api/admin/orders/:code/whatsapp",async(req,env,_c,p)=>{ const b=await readJson(req); const to=b?.to||b?.phone; if(!to) return json({error:"Missing 'to' (E.164 without +)"},400); const order=await row(env.DB,"SELECT id,code FROM orders WHERE code=?1 LIMIT 1",p.code); if(!order) return json({error:"Order not found"},404);
     const resp=await fetch(new URL("/api/whatsapp/send",req.url),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({to})}); const J=await resp.json(); return new Response(JSON.stringify(J),{status:resp.status,headers:{"content-type":"application/json"}}); });
 
