@@ -7,10 +7,10 @@ import { requireRole } from "../utils/auth.js";
 function normalizeMsisdn(raw) {
   const d = String(raw || "").replace(/\D+/g, "");
   if (!d) return "";
-  if (d.startsWith("27") && d.length === 11) return d;           // already correct
+  if (d.startsWith("27") && d.length === 11) return d;                // already correct
   if (d.startsWith("0")  && d.length === 10) return "27" + d.slice(1); // SA local -> intl
-  if (d.length === 9) return "27" + d;                            // missing leading 0/27
-  return "";                                                      // invalid for our rules
+  if (d.length === 9) return "27" + d;                                 // missing leading 0/27
+  return "";                                                           // invalid for our rules
 }
 
 // Back-compat alias used in some flows
@@ -86,28 +86,28 @@ function parseTplSel(sel) {
 export function mountPastVisitors(router) {
   const guard = (fn) => requireRole("admin", fn);
 
-  /* ---------- Normalize all numbers ---------- */
+  /* ---------- Normalize all numbers (merge duplicates safely) ---------- */
   router.add("POST", "/api/admin/past/normalize", guard(async (_req, env) => {
-    // fetch in a single pass (dataset expected to be modest). For very large sets, chunking can be added.
     const rs = await env.DB.prepare(
-      `SELECT id, phone FROM past_visitors`
+      `SELECT id, name, phone, tags, seen_count, first_seen_at, last_seen_at, last_contacted_at, last_send_status
+         FROM past_visitors`
     ).all();
 
     const rows = rs.results || [];
-    let fixed = 0, unchanged = 0, invalid = 0, total = rows.length;
+    let fixed = 0, unchanged = 0, invalid = 0, merged = 0, total = rows.length;
+
+    // Helper to split tags CSV -> set
+    const splitTags = (s) => (String(s||"").split(",").map(x=>x.trim()).filter(Boolean));
+    const joinTags  = (a,b) => Array.from(new Set([...(a||[]), ...(b||[])])).join(",");
 
     for (const r of rows) {
       const cur = String(r.phone || "");
+      if (!cur) { invalid++; continue; }
+
       const norm = normalizeMsisdn(cur);
-
-      if (!cur) {
-        invalid++;
-        continue;
-      }
-
       if (!norm) {
-        // mark invalid but keep the number so you can still inspect later
         invalid++;
+        // mark invalid (don’t nuke data)
         await env.DB.prepare(
           `UPDATE past_visitors
              SET last_send_status = COALESCE(NULLIF(last_send_status,''),'invalid_phone')
@@ -116,19 +116,85 @@ export function mountPastVisitors(router) {
         continue;
       }
 
-      if (norm === cur) {
-        unchanged++;
+      if (norm === cur) { unchanged++; continue; }
+
+      // Will this update hit a UNIQUE(phone) collision?
+      const other = await env.DB.prepare(
+        `SELECT id, name, tags, seen_count, first_seen_at, last_seen_at, last_contacted_at, last_send_status
+           FROM past_visitors
+          WHERE phone=?1 LIMIT 1`
+      ).bind(norm).first();
+
+      if (!other) {
+        // No collision: safe update
+        await env.DB.prepare(`UPDATE past_visitors SET phone=?2 WHERE id=?1`).bind(r.id, norm).run();
+        fixed++;
         continue;
       }
 
-      // If another row already has this normalized phone, we keep both; if you want to dedupe, add a UNIQUE(phone) and handle conflicts.
+      if (other.id === r.id) { unchanged++; continue; } // (very unlikely)
+
+      // Collision: MERGE r -> other (other is survivor)
+      const survivor = other;
+      const dupe     = r;
+
+      // Decide name: prefer longer non-empty
+      const nameA = String(survivor.name || "").trim();
+      const nameB = String(dupe.name || "").trim();
+      const nameFinal = nameB && (!nameA || nameB.length > nameA.length) ? nameB : nameA || null;
+
+      // Merge tags
+      const tagsFinal = joinTags(splitTags(survivor.tags), splitTags(dupe.tags));
+
+      // Aggregate counters & times
+      const seenFinal   = Number(survivor.seen_count||0) + Number(dupe.seen_count||0);
+      const firstFinal  = Math.min(
+        Number(survivor.first_seen_at || nowTs()),
+        Number(dupe.first_seen_at || nowTs())
+      );
+      const lastFinal   = Math.max(
+        Number(survivor.last_seen_at || firstFinal),
+        Number(dupe.last_seen_at || firstFinal)
+      );
+      const lcA = Number(survivor.last_contacted_at || 0);
+      const lcB = Number(dupe.last_contacted_at || 0);
+      const lastContactFinal = Math.max(lcA, lcB) || null;
+
+      // Pick send status from the more recent contact time
+      const lssFinal =
+        lcB > lcA ? (dupe.last_send_status || survivor.last_send_status || null)
+                  : (survivor.last_send_status || dupe.last_send_status || null);
+
+      // 1) Update survivor with merged data
       await env.DB.prepare(
-        `UPDATE past_visitors SET phone=?2 WHERE id=?1`
-      ).bind(r.id, norm).run();
-      fixed++;
+        `UPDATE past_visitors
+            SET name=?2, tags=?3, seen_count=?4, first_seen_at=?5, last_seen_at=?6,
+                last_contacted_at=?7, last_send_status=?8
+          WHERE id=?1`
+      ).bind(
+        survivor.id,
+        nameFinal,
+        tagsFinal || null,
+        seenFinal,
+        firstFinal,
+        lastFinal,
+        lastContactFinal,
+        lssFinal
+      ).run();
+
+      // 2) Repoint any campaign_sends from dupe -> survivor
+      await env.DB.prepare(
+        `UPDATE wa_campaign_sends SET visitor_id=?2 WHERE visitor_id=?1`
+      ).bind(dupe.id, survivor.id).run();
+
+      // 3) Remove dupe row
+      await env.DB.prepare(`DELETE FROM past_visitors WHERE id=?1`).bind(dupe.id).run();
+
+      merged++;
+      fixed++; // counts as a successful normalization outcome too
     }
 
-    return json({ ok: true, fixed, unchanged, invalid, total });
+    return json({ ok: true, fixed, merged, unchanged, invalid, total });
   }));
 
   /* ---------- Import CSV ---------- */
@@ -238,7 +304,7 @@ export function mountPastVisitors(router) {
     return json({ ok: true, visitors: rows.results || [] });
   }));
 
-  /* ---------- Send to selected (quick send; unchanged) ---------- */
+  /* ---------- Send to selected ---------- */
   router.add("POST", "/api/admin/past/send", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const ids = Array.isArray(b?.visitor_ids) ? b.visitor_ids.slice(0, 50) : [];
@@ -513,7 +579,7 @@ export function mountPastVisitors(router) {
          SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END)                                  AS sent,
          SUM(CASE WHEN status LIKE 'failed%' THEN 1 ELSE 0 END)                           AS failed,
          SUM(CASE WHEN status='queued' OR status IS NULL THEN 1 ELSE 0 END)               AS queued,
-         SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END)                          AS skipped
+        SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END)                           AS skipped
        FROM wa_campaign_sends
       WHERE campaign_id=?1`
     ).bind(id).first();
