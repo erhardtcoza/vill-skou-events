@@ -2,36 +2,27 @@
 import { json, bad } from "../utils/http.js";
 import { requireRole } from "../utils/auth.js";
 
-/* ---------------------------- utils ---------------------------- */
-const nowTs = () => Math.floor(Date.now() / 1000);
-
+/* -------------------------- helpers -------------------------- */
 function msisdn(raw) {
   const s = String(raw || "").replace(/\D+/g, "");
-  if (!s) return "";
-  if (s.startsWith("27") && s.length >= 11) return s;
   if (s.length === 10 && s.startsWith("0")) return "27" + s.slice(1);
   return s;
 }
-
-async function getSetting(env, key) {
-  const row = await env.DB.prepare(
-    `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
-  ).bind(key).first();
-  return row ? row.value : null;
-}
+const nowTs = () => Math.floor(Date.now() / 1000);
 
 async function upsertVisitor(env, { name, phone, source, source_ref, tag, overwriteName = false }) {
   const ph = msisdn(phone);
   if (!ph) return { ok: false, reason: "bad_phone" };
 
+  // fetch existing
   const ex = await env.DB.prepare(
     `SELECT id, name, seen_count, tags FROM past_visitors WHERE phone=?1 LIMIT 1`
   ).bind(ph).first();
 
   const ts = nowTs();
   if (ex) {
-    const curTags = String(ex.tags || "")
-      .split(",").map(x => x.trim()).filter(Boolean);
+    // merge tags (very simple CSV dedupe)
+    const curTags = (ex.tags || "").split(",").map(x => x.trim()).filter(Boolean);
     if (tag) curTags.push(tag);
     const dedup = Array.from(new Set(curTags)).join(",");
 
@@ -72,27 +63,22 @@ async function upsertVisitor(env, { name, phone, source, source_ref, tag, overwr
   }
 }
 
-/* ---------------------- WA helpers (service) -------------------- */
-async function sendTemplate(env, to, templateKey, vars = []) {
-  // templateKey is a site_settings key like WA_TMP_SKOU_SALES with value "name:lang"
-  const sel = await getSetting(env, templateKey);
+async function getSetting(env, key) {
+  const row = await env.DB.prepare(
+    `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+  ).bind(key).first();
+  return row ? row.value : null;
+}
+function parseTplSel(sel) {
   const [name, lang] = String(sel || "").split(":");
-  if (!name) return { ok: false, error: `template_not_configured:${templateKey}` };
-
-  // Lazy import service
-  let svc = null;
-  try { svc = await import("../services/whatsapp.js"); } catch {}
-  if (!svc?.sendWhatsAppTemplate) return { ok: false, error: "wa_service_missing" };
-
-  const ok = await svc.sendWhatsAppTemplate(env, to, "", lang || "en_US", name, vars);
-  return { ok };
+  return { name: (name || "").trim(), lang: (lang || "en_US").trim() };
 }
 
-/* ---------------------------- router --------------------------- */
+/* ------------------------- main mount ------------------------ */
 export function mountPastVisitors(router) {
   const guard = (fn) => requireRole("admin", fn);
 
-  /* -------- Import CSV rows -------- */
+  /* ---------- Import CSV ---------- */
   router.add("POST", "/api/admin/past/import", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const rows = Array.isArray(b?.rows) ? b.rows : [];
@@ -104,8 +90,10 @@ export function mountPastVisitors(router) {
 
     for (const r of rows) {
       const name = (r?.name || "").trim();
-      const ph = msisdn(r?.phone || "");
+      const phone = r?.phone || "";
+      const ph = msisdn(phone);
       if (!ph) { skipped_invalid++; continue; }
+
       const res = await upsertVisitor(env, {
         name, phone: ph, source: "import", source_ref: filename, tag: "2025", overwriteName: overwrite
       });
@@ -117,7 +105,7 @@ export function mountPastVisitors(router) {
     return json({ ok: true, inserted, updated, skipped_invalid, total });
   }));
 
-  /* -------- Sync from existing data -------- */
+  /* ---------- Sync from orders/pos/attendees ---------- */
   router.add("POST", "/api/admin/past/sync", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const from = String(b?.from || "").toLowerCase();
@@ -135,7 +123,8 @@ export function mountPastVisitors(router) {
       rows = (await env.DB.prepare(
         `SELECT DISTINCT TRIM(COALESCE(buyer_name,'')) AS name, buyer_phone AS phone
            FROM orders
-          WHERE COALESCE(buyer_phone,'')!='' AND payment_method LIKE 'pos_%' ${event_id ? "AND event_id="+event_id : ""}`
+          WHERE COALESCE(buyer_phone,'')!=''
+            AND payment_method LIKE 'pos_%' ${event_id ? "AND event_id="+event_id : ""}`
       ).all()).results || [];
     } else if (from === "attendees") {
       rows = (await env.DB.prepare(
@@ -167,7 +156,7 @@ export function mountPastVisitors(router) {
     return json({ ok: true, inserted, updated, skipped_invalid, total });
   }));
 
-  /* -------- List + filter (limit 50) -------- */
+  /* ---------- List / filter ---------- */
   router.add("GET", "/api/admin/past/list", guard(async (req, env) => {
     const u = new URL(req.url);
     const q = (u.searchParams.get("query") || "").trim();
@@ -196,154 +185,7 @@ export function mountPastVisitors(router) {
     return json({ ok: true, visitors: rows.results || [] });
   }));
 
-  /* -------- Create a campaign (optional) --------
-     Body: { name?, template_key, vars?:[], visitor_ids?:[] }
-     - if visitor_ids provided, we seed wa_campaign_sends rows in 'queued'
-  */
-  router.add("POST", "/api/admin/past/campaigns/create", guard(async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const template_key = String(b?.template_key || "WA_TMP_SKOU_SALES");
-    const vars = Array.isArray(b?.vars) ? b.vars : [];
-    const name = (b?.name || `Ad-hoc ${new Date().toLocaleString()}`).slice(0, 120);
-    const visitor_ids = Array.isArray(b?.visitor_ids) ? b.visitor_ids.slice(0, 500) : [];
-    const ts = nowTs();
-
-    const r = await env.DB.prepare(
-      `INSERT INTO wa_campaigns (name, template_key, template_vars_json, status, created_at)
-       VALUES (?1, ?2, ?3, 'created', ?4)`
-    ).bind(name, template_key, JSON.stringify(vars), ts).run();
-    const campaign_id = r.meta.last_row_id;
-
-    if (visitor_ids.length) {
-      // seed sends as 'queued' (skip dupes for this campaign)
-      const recs = await env.DB.prepare(
-        `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${"?,".repeat(visitor_ids.length).slice(0,-1)})`
-      ).bind(...visitor_ids).all();
-
-      for (const v of (recs.results || [])) {
-        const ph = msisdn(v.phone);
-        if (!ph || v.opt_out) continue;
-        await env.DB.prepare(
-          `INSERT INTO wa_campaign_sends (campaign_id, visitor_id, phone, status, sent_at)
-           VALUES (?1, ?2, ?3, 'queued', 0)`
-        ).bind(campaign_id, v.id, ph).run().catch(()=>{});
-      }
-    }
-
-    return json({ ok: true, campaign_id });
-  }));
-
-  /* -------- Run/continue a campaign (batch) --------
-     Body: { campaign_id, batch_size?:30, delay_ms?:350 }
-  */
-  router.add("POST", "/api/admin/past/campaigns/run", guard(async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const campaign_id = Number(b?.campaign_id || 0);
-    if (!campaign_id) return bad("campaign_id required");
-    const batch_size = Math.min(Math.max(Number(b?.batch_size || 30), 1), 100);
-    const delay_ms = Math.min(Math.max(Number(b?.delay_ms || 350), 100), 2000);
-
-    const c = await env.DB.prepare(
-      `SELECT id, template_key, template_vars_json, status FROM wa_campaigns WHERE id=?1 LIMIT 1`
-    ).bind(campaign_id).first();
-    if (!c) return bad("campaign not found", 404);
-
-    // ensure status
-    if (c.status !== "running") {
-      await env.DB.prepare(`UPDATE wa_campaigns SET status='running', started_at=?2 WHERE id=?1`)
-        .bind(campaign_id, nowTs()).run();
-    }
-
-    const vars = (()=>{ try { return JSON.parse(c.template_vars_json||"[]"); } catch { return []; } })();
-
-    // fetch a batch
-    const batch = await env.DB.prepare(
-      `SELECT s.id, s.visitor_id, s.phone
-         FROM wa_campaign_sends s
-        WHERE s.campaign_id=?1 AND (s.status IS NULL OR s.status='queued')
-        LIMIT ?2`
-    ).bind(campaign_id, batch_size).all();
-
-    const rows = batch.results || [];
-    if (!rows.length) {
-      await env.DB.prepare(`UPDATE wa_campaigns SET status='finished', finished_at=?2 WHERE id=?1`)
-        .bind(campaign_id, nowTs()).run();
-      return json({ ok: true, done: true, processed: 0 });
-    }
-
-    // template send key ready?
-    for (const r of rows) {
-      const to = msisdn(r.phone);
-      let ok = false, error = null, msgId = null;
-
-      try {
-        const res = await sendTemplate(env, to, c.template_key, vars);
-        ok = !!res.ok;
-        if (!ok) error = res.error || "send_failed";
-      } catch (e) {
-        error = String(e?.message || e);
-      }
-
-      // log
-      const ts = nowTs();
-      await env.DB.prepare(
-        `UPDATE wa_campaign_sends
-            SET status=?3, provider_message_id=COALESCE(?4, provider_message_id), error=COALESCE(?5,''), sent_at=?6
-          WHERE id=?1 AND campaign_id=?2`
-      ).bind(r.id, campaign_id, ok ? "sent" : "failed", msgId, error || null, ts).run().catch(()=>{});
-
-      // backfill past_visitors status
-      if (r.visitor_id) {
-        await env.DB.prepare(
-          `UPDATE past_visitors
-              SET last_contacted_at=?2,
-                  last_send_status=?3
-            WHERE id=?1`
-        ).bind(r.visitor_id, ts, ok ? "sent" : ("failed:" + (error || ""))).run().catch(()=>{});
-      }
-
-      // optional wa_logs row
-      await env.DB.prepare(
-        `INSERT INTO wa_logs (to_msisdn, type, payload, status, created_at)
-         VALUES (?1,'template',?2,?3,?4)`
-      ).bind(to, JSON.stringify({ template_key: c.template_key, vars }), ok ? "ok" : ("err:" + (error || "")), ts).run().catch(()=>{});
-
-      // throttle
-      await new Promise(res => setTimeout(res, delay_ms));
-    }
-
-    return json({ ok: true, processed: rows.length });
-  }));
-
-  /* -------- Campaign status -------- */
-  router.add("GET", "/api/admin/past/campaigns/:id/status", guard(async (_req, env, _ctx, { id }) => {
-    const cid = Number(id || 0);
-    const c = await env.DB.prepare(
-      `SELECT id, name, template_key, status, created_at, started_at, finished_at
-         FROM wa_campaigns WHERE id=?1 LIMIT 1`
-    ).bind(cid).first();
-    if (!c) return bad("not_found", 404);
-
-    const stats = await env.DB.prepare(
-      `SELECT
-         SUM(status='queued') AS queued,
-         SUM(status='sent')   AS sent,
-         SUM(status='failed') AS failed
-       FROM wa_campaign_sends WHERE campaign_id=?1`
-    ).bind(cid).first();
-
-    return json({ ok: true, campaign: c, stats: {
-      queued:  Number(stats?.queued || 0),
-      sent:    Number(stats?.sent   || 0),
-      failed:  Number(stats?.failed || 0),
-    }});
-  }));
-
-  /* -------- Ad-hoc send (UI “Send to selected”) --------
-     Body: { visitor_ids:[], template_key, vars?:[] }
-     - Creates a one-off campaign behind the scenes so duplicate sends
-       are prevented and everything is logged.
-  */
+  /* ---------- Send to selected (quick send; unchanged) ---------- */
   router.add("POST", "/api/admin/past/send", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const ids = Array.isArray(b?.visitor_ids) ? b.visitor_ids.slice(0, 50) : [];
@@ -351,76 +193,304 @@ export function mountPastVisitors(router) {
     const vars = Array.isArray(b?.vars) ? b.vars : [];
     if (!ids.length) return bad("visitor_ids required");
 
-    // create an ad-hoc campaign
-    const name = `Ad-hoc (${template_key}) · ${new Date().toLocaleString()}`;
-    const cRes = await env.DB.prepare(
-      `INSERT INTO wa_campaigns (name, template_key, template_vars_json, status, created_at)
-       VALUES (?1, ?2, ?3, 'created', ?4)`
-    ).bind(name, template_key, JSON.stringify(vars), nowTs()).run();
-    const campaign_id = cRes.meta.last_row_id;
+    const token = await getSetting(env, "WA_TOKEN") || await getSetting(env, "WHATSAPP_TOKEN");
+    const pnid  = await getSetting(env, "WA_PHONE_NUMBER_ID") || await getSetting(env, "PHONE_NUMBER_ID");
+    if (!token || !pnid) return bad("WhatsApp credentials missing in settings");
 
-    // fetch recipients
+    const selRow = await env.DB.prepare(`SELECT value FROM site_settings WHERE key=?1 LIMIT 1`).bind(template_key).first();
+    const { name: tplName, lang: tplLang } = parseTplSel(selRow?.value || "");
+    if (!tplName) return bad(`Template not configured for ${template_key}`);
+
+    const ts = nowTs();
+    const results = [];
+    const vs = vars.length
+      ? [{ type: "body", parameters: vars.map(v => ({ type: "text", text: String(v) })) }]
+      : [];
+
+    // recipients
     const recs = await env.DB.prepare(
       `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${"?,".repeat(ids.length).slice(0,-1)})`
     ).bind(...ids).all();
 
-    const results = [];
     for (const r of (recs.results || [])) {
-      const ph = msisdn(r.phone);
-      if (!ph || r.opt_out) {
+      if (!r.phone || r.opt_out) {
         results.push({ id: r.id, skipped: true, reason: r.opt_out ? "opt_out" : "no_phone" });
         continue;
       }
-
-      // prevent duplicate sends for this campaign + visitor
-      const already = await env.DB.prepare(
-        `SELECT id FROM wa_campaign_sends WHERE campaign_id=?1 AND visitor_id=?2 LIMIT 1`
-      ).bind(campaign_id, r.id).first();
-      if (already) { results.push({ id: r.id, skipped: true, reason: "already_queued" }); continue; }
-
-      // send
-      let ok = false, errMsg = null, msgId = null;
+      const payload = {
+        messaging_product: "whatsapp",
+        to: r.phone,
+        type: "template",
+        template: { name: tplName, language: { code: tplLang }, components: vs }
+      };
+      let ok = false, msgId = null, errMsg = null;
       try {
-        const res = await sendTemplate(env, ph, template_key, vars);
-        ok = !!res.ok;
-        if (!ok) errMsg = res.error || "send_failed";
+        const res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pnid)}/messages`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const y = await res.json().catch(()=> ({}));
+        ok = res.ok;
+        msgId = y?.messages?.[0]?.id || null;
+        errMsg = y?.error?.message || (!res.ok ? `HTTP ${res.status}` : null);
       } catch (e) {
         errMsg = String(e?.message || e);
       }
 
-      const ts = nowTs();
-
-      // log in campaign_sends
-      await env.DB.prepare(
-        `INSERT INTO wa_campaign_sends (campaign_id, visitor_id, phone, status, provider_message_id, error, sent_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7)`
-      ).bind(campaign_id, r.id, ph, ok ? "sent" : "failed", msgId, errMsg || null, ts).run().catch(()=>{});
-
-      // backfill last_contacted on past_visitors
       await env.DB.prepare(
         `UPDATE past_visitors
             SET last_contacted_at=?2,
                 last_send_status=?3
           WHERE id=?1`
-      ).bind(r.id, ts, ok ? "sent" : ("failed:" + (errMsg || ""))).run().catch(()=>{});
-
-      // optional raw log
-      await env.DB.prepare(
-        `INSERT INTO wa_logs (to_msisdn, type, payload, status, created_at)
-         VALUES (?1,'template',?2,?3,?4)`
-      ).bind(ph, JSON.stringify({ template_key, vars }), ok ? "ok" : ("err:" + (errMsg || "")), ts).run().catch(()=>{});
+      ).bind(r.id, ts, ok ? "sent" : ("failed:" + (errMsg || ""))).run();
 
       results.push({ id: r.id, ok, message_id: msgId, error: errMsg || null });
-
-      // be gentle
       await new Promise(r => setTimeout(r, 350));
     }
 
-    // mark campaign as finished for this ad-hoc run
-    await env.DB.prepare(
-      `UPDATE wa_campaigns SET status='finished', started_at=COALESCE(started_at,?2), finished_at=?2 WHERE id=?1`
-    ).bind(campaign_id, nowTs()).run().catch(()=>{});
+    return json({ ok: true, results });
+  }));
 
-    return json({ ok: true, campaign_id, results });
+  /* ===========================================================
+   *                CAMPAIGNS (create/run/status)
+   * ===========================================================
+   */
+
+  // Helper: resolve recipients from explicit ids OR a filter object
+  async function resolveRecipients(env, filter) {
+    if (Array.isArray(filter?.ids) && filter.ids.length) {
+      const ids = filter.ids.map(Number).filter(Boolean);
+      const rs = await env.DB.prepare(
+        `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${"?,".repeat(ids.length).slice(0,-1)})`
+      ).bind(...ids).all();
+      return (rs.results || []).map(r => ({ id: r.id, phone: r.phone, opt_out: r.opt_out ? 1 : 0 }));
+    }
+    // filter by query/tag/optout
+    const q = (filter?.query || "").trim();
+    const tag = (filter?.tag || "").trim();
+    const opt = filter?.optout; // undefined | 0 | 1
+    const where = [];
+    if (q) where.push("(phone LIKE ?1 OR name LIKE ?1)");
+    if (tag) where.push("(tags LIKE ?2)");
+    if (opt === 0) where.push("opt_out=0");
+    if (opt === 1) where.push("opt_out=1");
+    const sql = `
+      SELECT id, phone, opt_out
+        FROM past_visitors
+       ${where.length ? "WHERE "+where.join(" AND ") : ""}
+       ORDER BY last_seen_at DESC
+       LIMIT ${Math.min(Number(filter?.limit || 5000), 10000)}
+    `;
+    const rs = await env.DB.prepare(sql)
+      .bind(q ? `%${q}%` : undefined, tag ? `%${tag}%` : undefined)
+      .all();
+    return (rs.results || []).map(r => ({ id: r.id, phone: r.phone, opt_out: r.opt_out ? 1 : 0 }));
+  }
+
+  // Create campaign from current selection/filter
+  router.add("POST", "/api/admin/past/campaign/create", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const name = (b?.name || "").trim() || `Campaign ${new Date().toLocaleString()}`;
+    const template_key = String(b?.template_key || "WA_TMP_SKOU_SALES");
+    const template_vars = Array.isArray(b?.template_vars) ? b.template_vars.map(v => String(v)) : [];
+    const filter = b?.filter && typeof b.filter === "object" ? b.filter : {};
+
+    // Validate template configured
+    const sel = await getSetting(env, template_key);
+    const { name: tplName } = parseTplSel(sel || "");
+    if (!tplName) return bad(`Template not configured for ${template_key}`);
+
+    // Insert campaign
+    const ts = nowTs();
+    const r = await env.DB.prepare(
+      `INSERT INTO wa_campaigns (name, template_key, template_vars_json, filter_json, status, created_at)
+       VALUES (?1,?2,?3,?4,'draft',?5)`
+    ).bind(name, template_key, JSON.stringify(template_vars), JSON.stringify(filter || {}), ts).run();
+    const cid = r.meta.last_row_id;
+
+    // Resolve targets
+    const recips = await resolveRecipients(env, filter);
+    let queued = 0;
+    for (const vv of recips) {
+      if (!vv.phone) continue;
+      try {
+        await env.DB.prepare(
+          `INSERT OR IGNORE INTO wa_campaign_sends
+             (campaign_id, visitor_id, phone, status, sent_at)
+           VALUES (?1, ?2, ?3, 'queued', NULL)`
+        ).bind(cid, vv.id, vv.phone).run();
+        queued++;
+      } catch {}
+    }
+    await env.DB.prepare(`UPDATE wa_campaigns SET total_targets=?2 WHERE id=?1`).bind(cid, queued).run();
+
+    return json({ ok: true, campaign_id: cid, total_targets: queued });
+  }));
+
+  // Run/continue batch
+  router.add("POST", "/api/admin/past/campaign/run", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const id = Number(b?.campaign_id || 0);
+    const batch = Math.min(Math.max(Number(b?.batch_size || 30), 1), 200);
+    const delay = Math.max(Number(b?.delay_ms || 350), 0);
+    if (!id) return bad("campaign_id required");
+
+    const camp = await env.DB.prepare(`SELECT * FROM wa_campaigns WHERE id=?1 LIMIT 1`).bind(id).first();
+    if (!camp) return bad("campaign not found", 404);
+    if (camp.status === "paused") return bad("campaign is paused");
+    if (camp.status === "done")   return json({ ok:true, done:true });
+
+    // WhatsApp config & template
+    const token = await getSetting(env, "WA_TOKEN") || await getSetting(env, "WHATSAPP_TOKEN");
+    const pnid  = await getSetting(env, "WA_PHONE_NUMBER_ID") || await getSetting(env, "PHONE_NUMBER_ID");
+    if (!token || !pnid) return bad("WhatsApp credentials missing in settings");
+    const sel = await getSetting(env, camp.template_key);
+    const { name: tplName, lang: tplLang } = parseTplSel(sel || "");
+    if (!tplName) return bad(`Template not configured for ${camp.template_key}`);
+
+    const vars = (()=>{ try { return JSON.parse(camp.template_vars_json||"[]"); } catch { return []; } })();
+    const components = vars.length
+      ? [{ type:"body", parameters: vars.map(v => ({ type:"text", text:String(v) })) }]
+      : [];
+
+    // mark running/started
+    if (!camp.started_at) {
+      await env.DB.prepare(`UPDATE wa_campaigns SET status='running', started_at=?2 WHERE id=?1`)
+        .bind(id, nowTs()).run();
+    } else {
+      await env.DB.prepare(`UPDATE wa_campaigns SET status='running' WHERE id=?1`).bind(id).run();
+    }
+
+    // Fetch next queued items (skip hard-opted out visitors)
+    const rows = await env.DB.prepare(
+      `SELECT s.id, s.visitor_id, s.phone, v.opt_out
+         FROM wa_campaign_sends s
+         LEFT JOIN past_visitors v ON v.id = s.visitor_id
+        WHERE s.campaign_id=?1 AND (s.status IS NULL OR s.status='queued')
+        ORDER BY s.id ASC
+        LIMIT ?2`
+    ).bind(id, batch).all();
+
+    const todos = rows.results || [];
+    let sent = 0, failed = 0, skipped = 0;
+
+    for (const r of todos) {
+      if (!r.phone || r.opt_out) {
+        skipped++;
+        await env.DB.prepare(
+          `UPDATE wa_campaign_sends SET status=?2 WHERE id=?1`
+        ).bind(r.id, r.opt_out ? "skipped:optout" : "skipped:nophone").run();
+        continue;
+      }
+      const payload = {
+        messaging_product: "whatsapp",
+        to: r.phone,
+        type: "template",
+        template: { name: tplName, language: { code: tplLang }, components }
+      };
+      let ok=false, msgId=null, err=null;
+      try {
+        const res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pnid)}/messages`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const y = await res.json().catch(()=>({}));
+        ok = res.ok;
+        msgId = y?.messages?.[0]?.id || null;
+        err = y?.error?.message || (!res.ok ? `HTTP ${res.status}` : null);
+      } catch (e) {
+        err = String(e?.message || e);
+      }
+
+      await env.DB.prepare(
+        `UPDATE wa_campaign_sends
+            SET status=?2, provider_message_id=?3, error=?4, sent_at=?5
+          WHERE id=?1`
+      ).bind(r.id, ok ? "sent" : ("failed:"+(err||"")), msgId, err || null, nowTs()).run();
+
+      // mirror on past_visitors
+      await env.DB.prepare(
+        `UPDATE past_visitors
+            SET last_contacted_at=?2, last_send_status=?3
+          WHERE id=?1`
+      ).bind(r.visitor_id, nowTs(), ok ? "sent" : ("failed:"+(err||""))).run();
+
+      if (ok) sent++; else failed++;
+      if (delay) await new Promise(res => setTimeout(res, delay));
+    }
+
+    // Update tallies
+    await env.DB.prepare(
+      `UPDATE wa_campaigns
+          SET sent_count = COALESCE(sent_count,0)+?2,
+              fail_count = COALESCE(fail_count,0)+?3
+        WHERE id=?1`
+    ).bind(id, sent, failed).run();
+
+    // Are there any queued left?
+    const leftRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM wa_campaign_sends WHERE campaign_id=?1 AND (status IS NULL OR status='queued')`
+    ).bind(id).first();
+    const left = Number(leftRow?.c || 0);
+
+    if (left === 0) {
+      await env.DB.prepare(
+        `UPDATE wa_campaigns SET status='done', finished_at=?2 WHERE id=?1`
+      ).bind(id, nowTs()).run();
+    }
+
+    return json({ ok:true, processed: todos.length, sent, failed, skipped, left,
+      status: left ? "running" : "done" });
+  }));
+
+  // Status
+  router.add("GET", "/api/admin/past/campaign/status", guard(async (req, env) => {
+    const u = new URL(req.url);
+    const id = Number(u.searchParams.get("id") || 0);
+    if (!id) return bad("id required");
+
+    const c = await env.DB.prepare(`SELECT * FROM wa_campaigns WHERE id=?1`).bind(id).first();
+    if (!c) return bad("campaign not found", 404);
+
+    const q = await env.DB.prepare(
+      `SELECT
+         SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END)                                  AS sent,
+         SUM(CASE WHEN status LIKE 'failed%' THEN 1 ELSE 0 END)                           AS failed,
+         SUM(CASE WHEN status='queued' OR status IS NULL THEN 1 ELSE 0 END)               AS queued,
+         SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END)                          AS skipped
+       FROM wa_campaign_sends
+      WHERE campaign_id=?1`
+    ).bind(id).first();
+
+    return json({ ok:true, campaign: {
+      id: c.id, name: c.name, status: c.status,
+      total_targets: Number(c.total_targets||0),
+      sent_count: Number(c.sent_count||0),
+      fail_count: Number(c.fail_count||0),
+      started_at: c.started_at || null,
+      finished_at: c.finished_at || null,
+      queued: Number(q?.queued||0),
+      sent: Number(q?.sent||0),
+      failed: Number(q?.failed||0),
+      skipped: Number(q?.skipped||0),
+      last_error: c.last_error || null
+    }});
+  }));
+
+  // Pause / Resume
+  router.add("POST", "/api/admin/past/campaign/pause", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const id = Number(b?.id || 0); if (!id) return bad("id required");
+    await env.DB.prepare(`UPDATE wa_campaigns SET status='paused' WHERE id=?1`).bind(id).run();
+    return json({ ok:true });
+  }));
+  router.add("POST", "/api/admin/past/campaign/resume", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const id = Number(b?.id || 0); if (!id) return bad("id required");
+    await env.DB.prepare(`UPDATE wa_campaigns SET status='running' WHERE id=?1`).bind(id).run();
+    return json({ ok:true });
   }));
 }
