@@ -3,33 +3,28 @@ import { json, bad } from "../utils/http.js";
 import { requireRole } from "../utils/auth.js";
 
 /* -------------------------- helpers -------------------------- */
-// Strict SA MSISDN normalizer for WhatsApp (must be 27 + 9 = 11 digits total)
+// Strict SA MSISDN normalizer for WhatsApp (27 + 9 = 11 digits)
 function normalizeMsisdn(raw) {
   const d = String(raw || "").replace(/\D+/g, "");
   if (!d) return "";
-  if (d.startsWith("27") && d.length === 11) return d;                // already correct
-  if (d.startsWith("0")  && d.length === 10) return "27" + d.slice(1); // SA local -> intl
-  if (d.length === 9) return "27" + d;                                 // missing leading 0/27
-  return "";                                                           // invalid for our rules
+  if (d.startsWith("27") && d.length === 11) return d;
+  if (d.startsWith("0") && d.length === 10) return "27" + d.slice(1);
+  if (d.length === 9) return "27" + d;
+  return "";
 }
-
-// Back-compat alias used in some flows
 const msisdn = normalizeMsisdn;
-
 const nowTs = () => Math.floor(Date.now() / 1000);
 
 async function upsertVisitor(env, { name, phone, source, source_ref, tag, overwriteName = false }) {
   const ph = normalizeMsisdn(phone);
   if (!ph) return { ok: false, reason: "bad_phone" };
 
-  // fetch existing
   const ex = await env.DB.prepare(
     `SELECT id, name, seen_count, tags FROM past_visitors WHERE phone=?1 LIMIT 1`
   ).bind(ph).first();
 
   const ts = nowTs();
   if (ex) {
-    // merge tags (very simple CSV dedupe)
     const curTags = (ex.tags || "").split(",").map(x => x.trim()).filter(Boolean);
     if (tag) curTags.push(tag);
     const dedup = Array.from(new Set(curTags)).join(",");
@@ -82,11 +77,14 @@ function parseTplSel(sel) {
   return { name: (name || "").trim(), lang: (lang || "en_US").trim() };
 }
 
-/* ------------------------- main mount ------------------------ */
+/* ===========================================================
+ *                    main mount
+ * ===========================================================
+ */
 export function mountPastVisitors(router) {
   const guard = (fn) => requireRole("admin", fn);
 
-  /* ---------- Normalize all numbers (merge duplicates safely) ---------- */
+  /* ---------- Normalize (merge duplicates on UNIQUE phone) ---------- */
   router.add("POST", "/api/admin/past/normalize", guard(async (_req, env) => {
     const rs = await env.DB.prepare(
       `SELECT id, name, phone, tags, seen_count, first_seen_at, last_seen_at, last_contacted_at, last_send_status
@@ -96,7 +94,6 @@ export function mountPastVisitors(router) {
     const rows = rs.results || [];
     let fixed = 0, unchanged = 0, invalid = 0, merged = 0, total = rows.length;
 
-    // Helper to split tags CSV -> set
     const splitTags = (s) => (String(s||"").split(",").map(x=>x.trim()).filter(Boolean));
     const joinTags  = (a,b) => Array.from(new Set([...(a||[]), ...(b||[])])).join(",");
 
@@ -107,7 +104,6 @@ export function mountPastVisitors(router) {
       const norm = normalizeMsisdn(cur);
       if (!norm) {
         invalid++;
-        // mark invalid (don’t nuke data)
         await env.DB.prepare(
           `UPDATE past_visitors
              SET last_send_status = COALESCE(NULLIF(last_send_status,''),'invalid_phone')
@@ -118,7 +114,6 @@ export function mountPastVisitors(router) {
 
       if (norm === cur) { unchanged++; continue; }
 
-      // Will this update hit a UNIQUE(phone) collision?
       const other = await env.DB.prepare(
         `SELECT id, name, tags, seen_count, first_seen_at, last_seen_at, last_contacted_at, last_send_status
            FROM past_visitors
@@ -126,72 +121,49 @@ export function mountPastVisitors(router) {
       ).bind(norm).first();
 
       if (!other) {
-        // No collision: safe update
         await env.DB.prepare(`UPDATE past_visitors SET phone=?2 WHERE id=?1`).bind(r.id, norm).run();
         fixed++;
         continue;
       }
 
-      if (other.id === r.id) { unchanged++; continue; } // (very unlikely)
+      if (other.id === r.id) { unchanged++; continue; }
 
-      // Collision: MERGE r -> other (other is survivor)
       const survivor = other;
       const dupe     = r;
 
-      // Decide name: prefer longer non-empty
       const nameA = String(survivor.name || "").trim();
       const nameB = String(dupe.name || "").trim();
-      const nameFinal = nameB && (!nameA || nameB.length > nameA.length) ? nameB : nameA || null;
+      const nameFinal = nameB && (!nameA || nameB.length > nameA.length) ? nameB : (nameA || null);
 
-      // Merge tags
       const tagsFinal = joinTags(splitTags(survivor.tags), splitTags(dupe.tags));
 
-      // Aggregate counters & times
       const seenFinal   = Number(survivor.seen_count||0) + Number(dupe.seen_count||0);
-      const firstFinal  = Math.min(
-        Number(survivor.first_seen_at || nowTs()),
-        Number(dupe.first_seen_at || nowTs())
-      );
-      const lastFinal   = Math.max(
-        Number(survivor.last_seen_at || firstFinal),
-        Number(dupe.last_seen_at || firstFinal)
-      );
+      const firstFinal  = Math.min(Number(survivor.first_seen_at||nowTs()), Number(dupe.first_seen_at||nowTs()));
+      const lastFinal   = Math.max(Number(survivor.last_seen_at||firstFinal), Number(dupe.last_seen_at||firstFinal));
       const lcA = Number(survivor.last_contacted_at || 0);
       const lcB = Number(dupe.last_contacted_at || 0);
       const lastContactFinal = Math.max(lcA, lcB) || null;
+      const lssFinal = lcB > lcA
+        ? (dupe.last_send_status || survivor.last_send_status || null)
+        : (survivor.last_send_status || dupe.last_send_status || null);
 
-      // Pick send status from the more recent contact time
-      const lssFinal =
-        lcB > lcA ? (dupe.last_send_status || survivor.last_send_status || null)
-                  : (survivor.last_send_status || dupe.last_send_status || null);
-
-      // 1) Update survivor with merged data
       await env.DB.prepare(
         `UPDATE past_visitors
             SET name=?2, tags=?3, seen_count=?4, first_seen_at=?5, last_seen_at=?6,
                 last_contacted_at=?7, last_send_status=?8
           WHERE id=?1`
       ).bind(
-        survivor.id,
-        nameFinal,
-        tagsFinal || null,
-        seenFinal,
-        firstFinal,
-        lastFinal,
-        lastContactFinal,
-        lssFinal
+        survivor.id, nameFinal, tagsFinal || null, seenFinal,
+        firstFinal, lastFinal, lastContactFinal, lssFinal
       ).run();
 
-      // 2) Repoint any campaign_sends from dupe -> survivor
       await env.DB.prepare(
         `UPDATE wa_campaign_sends SET visitor_id=?2 WHERE visitor_id=?1`
       ).bind(dupe.id, survivor.id).run();
 
-      // 3) Remove dupe row
       await env.DB.prepare(`DELETE FROM past_visitors WHERE id=?1`).bind(dupe.id).run();
 
-      merged++;
-      fixed++; // counts as a successful normalization outcome too
+      merged++; fixed++;
     }
 
     return json({ ok: true, fixed, merged, unchanged, invalid, total });
@@ -304,91 +276,24 @@ export function mountPastVisitors(router) {
     return json({ ok: true, visitors: rows.results || [] });
   }));
 
-  /* ---------- Send to selected ---------- */
-  router.add("POST", "/api/admin/past/send", guard(async (req, env) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const ids = Array.isArray(b?.visitor_ids) ? b.visitor_ids.slice(0, 50) : [];
-    const template_key = String(b?.template_key || "WA_TMP_SKOU_SALES");
-    const vars = Array.isArray(b?.vars) ? b.vars : [];
-    if (!ids.length) return bad("visitor_ids required");
-
-    const token = await getSetting(env, "WA_TOKEN") || await getSetting(env, "WHATSAPP_TOKEN");
-    const pnid  = await getSetting(env, "WA_PHONE_NUMBER_ID") || await getSetting(env, "PHONE_NUMBER_ID");
-    if (!token || !pnid) return bad("WhatsApp credentials missing in settings");
-
-    const selRow = await env.DB.prepare(`SELECT value FROM site_settings WHERE key=?1 LIMIT 1`).bind(template_key).first();
-    const { name: tplName, lang: tplLang } = parseTplSel(selRow?.value || "");
-    if (!tplName) return bad(`Template not configured for ${template_key}`);
-
-    const ts = nowTs();
-    const results = [];
-    const vs = vars.length
-      ? [{ type: "body", parameters: vars.map(v => ({ type: "text", text: String(v) })) }]
-      : [];
-
-    // recipients
-    const recs = await env.DB.prepare(
-      `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${"?,".repeat(ids.length).slice(0,-1)})`
-    ).bind(...ids).all();
-
-    for (const r of (recs.results || [])) {
-      if (!r.phone || r.opt_out) {
-        results.push({ id: r.id, skipped: true, reason: r.opt_out ? "opt_out" : "no_phone" });
-        continue;
-      }
-      const payload = {
-        messaging_product: "whatsapp",
-        to: r.phone,
-        type: "template",
-        template: { name: tplName, language: { code: tplLang }, components: vs }
-      };
-      let ok = false, msgId = null, errMsg = null;
-      try {
-        const res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pnid)}/messages`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const y = await res.json().catch(()=> ({}));
-        ok = res.ok;
-        msgId = y?.messages?.[0]?.id || null;
-        errMsg = y?.error?.message || (!res.ok ? `HTTP ${res.status}` : null);
-      } catch (e) {
-        errMsg = String(e?.message || e);
-      }
-
-      await env.DB.prepare(
-        `UPDATE past_visitors
-            SET last_contacted_at=?2,
-                last_send_status=?3
-          WHERE id=?1`
-      ).bind(r.id, ts, ok ? "sent" : ("failed:" + (errMsg || ""))).run();
-
-      results.push({ id: r.id, ok, message_id: msgId, error: errMsg || null });
-      await new Promise(r => setTimeout(r, 350));
-    }
-
-    return json({ ok: true, results });
-  }));
-
   /* ===========================================================
    *                CAMPAIGNS (create/run/status)
    * ===========================================================
    */
 
-  // Helper: resolve recipients from explicit ids OR a filter object
-  async function resolveRecipients(env, filter) {
-    if (Array.isArray(filter?.ids) && filter.ids.length) {
-      const ids = filter.ids.map(Number).filter(Boolean);
+  async function resolveRecipients(env, filterOrIds) {
+    if (Array.isArray(filterOrIds?.ids) && filterOrIds.ids.length) {
+      const ids = filterOrIds.ids.map(Number).filter(Boolean);
+      if (!ids.length) return [];
       const rs = await env.DB.prepare(
         `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${"?,".repeat(ids.length).slice(0,-1)})`
       ).bind(...ids).all();
       return (rs.results || []).map(r => ({ id: r.id, phone: r.phone, opt_out: r.opt_out ? 1 : 0 }));
     }
-    // filter by query/tag/optout
-    const q = (filter?.query || "").trim();
-    const tag = (filter?.tag || "").trim();
-    const opt = filter?.optout; // undefined | 0 | 1
+    // filter path
+    const q = (filterOrIds?.query || "").trim();
+    const tag = (filterOrIds?.tag || "").trim();
+    const opt = filterOrIds?.optout;
     const where = [];
     if (q) where.push("(phone LIKE ?1 OR name LIKE ?1)");
     if (tag) where.push("(tags LIKE ?2)");
@@ -399,7 +304,7 @@ export function mountPastVisitors(router) {
         FROM past_visitors
        ${where.length ? "WHERE "+where.join(" AND ") : ""}
        ORDER BY last_seen_at DESC
-       LIMIT ${Math.min(Number(filter?.limit || 5000), 10000)}
+       LIMIT ${Math.min(Number(filterOrIds?.limit || 10000), 10000)}
     `;
     const rs = await env.DB.prepare(sql)
       .bind(q ? `%${q}%` : undefined, tag ? `%${tag}%` : undefined)
@@ -407,14 +312,21 @@ export function mountPastVisitors(router) {
     return (rs.results || []).map(r => ({ id: r.id, phone: r.phone, opt_out: r.opt_out ? 1 : 0 }));
   }
 
-  // Create campaign from current selection/filter
+  // ---- Core create (singular path) ----
   router.add("POST", "/api/admin/past/campaign/create", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
     const name = (b?.name || "").trim() || `Campaign ${new Date().toLocaleString()}`;
     const template_key = String(b?.template_key || "WA_TMP_SKOU_SALES");
-    const template_vars = Array.isArray(b?.template_vars) ? b.template_vars.map(v => String(v)) : [];
-    const filter = b?.filter && typeof b.filter === "object" ? b.filter : {};
+    // accept either "vars" (UI) or "template_vars" (internal)
+    const template_vars = Array.isArray(b?.template_vars) ? b.template_vars.map(String)
+                        : Array.isArray(b?.vars) ? b.vars.map(String)
+                        : [];
+    // accept either visitor_ids or filter
+    const filter =
+      Array.isArray(b?.visitor_ids) && b.visitor_ids.length
+        ? { ids: b.visitor_ids.map(Number).filter(Boolean) }
+        : (b?.filter && typeof b.filter === "object" ? b.filter : {});
 
     // Validate template configured
     const sel = await getSetting(env, template_key);
@@ -448,7 +360,13 @@ export function mountPastVisitors(router) {
     return json({ ok: true, campaign_id: cid, total_targets: queued });
   }));
 
-  // Run/continue batch
+  // ---- Aliased create (plural path to match UI) ----
+  router.add("POST", "/api/admin/past/campaigns/create", guard(async (req, env) => {
+    // simply delegate to singular handler by reusing the logic above
+    return await router.match("POST", "/api/admin/past/campaign/create").handler(req, env);
+  }));
+
+  // Run/continue batch (singular)
   router.add("POST", "/api/admin/past/campaign/run", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const id = Number(b?.campaign_id || 0);
@@ -461,7 +379,6 @@ export function mountPastVisitors(router) {
     if (camp.status === "paused") return bad("campaign is paused");
     if (camp.status === "done")   return json({ ok:true, done:true });
 
-    // WhatsApp config & template
     const token = await getSetting(env, "WA_TOKEN") || await getSetting(env, "WHATSAPP_TOKEN");
     const pnid  = await getSetting(env, "WA_PHONE_NUMBER_ID") || await getSetting(env, "PHONE_NUMBER_ID");
     if (!token || !pnid) return bad("WhatsApp credentials missing in settings");
@@ -474,7 +391,6 @@ export function mountPastVisitors(router) {
       ? [{ type:"body", parameters: vars.map(v => ({ type:"text", text:String(v) })) }]
       : [];
 
-    // mark running/started
     if (!camp.started_at) {
       await env.DB.prepare(`UPDATE wa_campaigns SET status='running', started_at=?2 WHERE id=?1`)
         .bind(id, nowTs()).run();
@@ -482,7 +398,6 @@ export function mountPastVisitors(router) {
       await env.DB.prepare(`UPDATE wa_campaigns SET status='running' WHERE id=?1`).bind(id).run();
     }
 
-    // Fetch next queued items (skip hard-opted out visitors)
     const rows = await env.DB.prepare(
       `SELECT s.id, s.visitor_id, s.phone, v.opt_out
          FROM wa_campaign_sends s
@@ -530,7 +445,6 @@ export function mountPastVisitors(router) {
           WHERE id=?1`
       ).bind(r.id, ok ? "sent" : ("failed:"+(err||"")), msgId, err || null, nowTs()).run();
 
-      // mirror on past_visitors
       await env.DB.prepare(
         `UPDATE past_visitors
             SET last_contacted_at=?2, last_send_status=?3
@@ -541,7 +455,6 @@ export function mountPastVisitors(router) {
       if (delay) await new Promise(res => setTimeout(res, delay));
     }
 
-    // Update tallies
     await env.DB.prepare(
       `UPDATE wa_campaigns
           SET sent_count = COALESCE(sent_count,0)+?2,
@@ -549,7 +462,6 @@ export function mountPastVisitors(router) {
         WHERE id=?1`
     ).bind(id, sent, failed).run();
 
-    // Are there any queued left?
     const leftRow = await env.DB.prepare(
       `SELECT COUNT(*) AS c FROM wa_campaign_sends WHERE campaign_id=?1 AND (status IS NULL OR status='queued')`
     ).bind(id).first();
@@ -565,7 +477,12 @@ export function mountPastVisitors(router) {
       status: left ? "running" : "done" });
   }));
 
-  // Status
+  // ---- Aliased run (plural path to match UI) ----
+  router.add("POST", "/api/admin/past/campaigns/run", guard(async (req, env) => {
+    return await router.match("POST", "/api/admin/past/campaign/run").handler(req, env);
+  }));
+
+  // Status (singular, query param OR plural with :id)
   router.add("GET", "/api/admin/past/campaign/status", guard(async (req, env) => {
     const u = new URL(req.url);
     const id = Number(u.searchParams.get("id") || 0);
@@ -579,7 +496,7 @@ export function mountPastVisitors(router) {
          SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END)                                  AS sent,
          SUM(CASE WHEN status LIKE 'failed%' THEN 1 ELSE 0 END)                           AS failed,
          SUM(CASE WHEN status='queued' OR status IS NULL THEN 1 ELSE 0 END)               AS queued,
-        SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END)                           AS skipped
+         SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END)                          AS skipped
        FROM wa_campaign_sends
       WHERE campaign_id=?1`
     ).bind(id).first();
@@ -597,6 +514,13 @@ export function mountPastVisitors(router) {
       skipped: Number(q?.skipped||0),
       last_error: c.last_error || null
     }});
+  }));
+
+  // ---- Aliased status with path param: /campaigns/:id/status ----
+  router.add("GET", "/api/admin/past/campaigns/:id/status", guard(async (req, env, p) => {
+    const id = Number(p?.id || 0);
+    const fakeReq = new Request(new URL(`/api/admin/past/campaign/status?id=${id}`, req.url), req);
+    return await router.match("GET", "/api/admin/past/campaign/status").handler(fakeReq, env);
   }));
 
   // Pause / Resume
