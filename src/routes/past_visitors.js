@@ -3,21 +3,25 @@ import { json, bad } from "../utils/http.js";
 import { requireRole } from "../utils/auth.js";
 
 /* -------------------------- helpers -------------------------- */
-// Strict SA MSISDN normalizer for WhatsApp (27 + 9 = 11 digits)
-function normalizeMsisdn(raw) {
-  const d = String(raw || "").replace(/\D+/g, "");
-  if (!d) return "";
-  if (d.startsWith("27") && d.length === 11) return d;
-  if (d.startsWith("0") && d.length === 10) return "27" + d.slice(1);
-  if (d.length === 9) return "27" + d;
-  return "";
+// Normalize to SA MSISDN (11 digits): 27 + 9 digits
+function msisdn(raw) {
+  const digits = String(raw || "").replace(/\D+/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("27")) return digits.slice(0, 11);            // already intl
+  if (digits.startsWith("0") && digits.length === 10) return "27" + digits.slice(1); // 0XXXXXXXXX -> 27XXXXXXXXX
+  // If it looks like plain 9-digit subscriber (e.g. "71xxxxxxx"), prepend 27
+  if (digits.length === 9) return "27" + digits;
+  // If it looks like 10 digits without leading 0 (e.g. "71xxxxxxxxx" is actually 9; guard anyway)
+  if (digits.length === 10 && !digits.startsWith("0") && !digits.startsWith("27")) return "27" + digits.slice(-9);
+  return digits; // fallback; we’ll still validate length when sending
 }
-const msisdn = normalizeMsisdn;
+const isValidMsisdn = (s) => /^27\d{9}$/.test(String(s||""));
+
 const nowTs = () => Math.floor(Date.now() / 1000);
 
 async function upsertVisitor(env, { name, phone, source, source_ref, tag, overwriteName = false }) {
-  const ph = normalizeMsisdn(phone);
-  if (!ph) return { ok: false, reason: "bad_phone" };
+  const ph = msisdn(phone);
+  if (!isValidMsisdn(ph)) return { ok: false, reason: "bad_phone" };
 
   // fetch existing
   const ex = await env.DB.prepare(
@@ -79,96 +83,43 @@ function parseTplSel(sel) {
   return { name: (name || "").trim(), lang: (lang || "en_US").trim() };
 }
 
+/* --------------------- merge helper for normalize --------------------- */
+async function mergeVisitors(env, keepId, dropId) {
+  // Move campaign sends to survivor
+  await env.DB.prepare(
+    `UPDATE wa_campaign_sends SET visitor_id=?1 WHERE visitor_id=?2`
+  ).bind(keepId, dropId).run();
+
+  // Merge simple stats/tags/name
+  const src = await env.DB.prepare(`SELECT * FROM past_visitors WHERE id=?1`).bind(dropId).first();
+  const dst = await env.DB.prepare(`SELECT * FROM past_visitors WHERE id=?1`).bind(keepId).first();
+  if (!src || !dst) return;
+
+  const mergedName = dst.name || src.name || null;
+  const mergedTags = Array.from(new Set(
+    String(dst.tags||"").split(",").concat(String(src.tags||"").split(","))
+      .map(s => s.trim()).filter(Boolean)
+  )).join(",");
+  const mergedSeen = (Number(dst.seen_count||0) + Number(src.seen_count||0)) || 1;
+  const firstSeen = Math.min(Number(dst.first_seen_at||nowTs()), Number(src.first_seen_at||nowTs()));
+  const lastSeen  = Math.max(Number(dst.last_seen_at||nowTs()), Number(src.last_seen_at||nowTs()));
+  const lastContacted = Math.max(Number(dst.last_contacted_at||0), Number(src.last_contacted_at||0)) || null;
+  const lastStatus = dst.last_send_status || src.last_send_status || null;
+
+  await env.DB.prepare(
+    `UPDATE past_visitors SET
+       name=?2, tags=?3, seen_count=?4, first_seen_at=?5, last_seen_at=?6,
+       last_contacted_at=?7, last_send_status=?8
+     WHERE id=?1`
+  ).bind(keepId, mergedName, mergedTags || null, mergedSeen, firstSeen, lastSeen, lastContacted, lastStatus).run();
+
+  // Finally delete duplicate row
+  await env.DB.prepare(`DELETE FROM past_visitors WHERE id=?1`).bind(dropId).run();
+}
+
 /* ------------------------- main mount ------------------------ */
 export function mountPastVisitors(router) {
   const guard = (fn) => requireRole("admin", fn);
-
-  /* ---------- Normalize (fix + merge by phone) ---------- */
-  router.add("POST", "/api/admin/past/normalize", guard(async (_req, env) => {
-    const rs = await env.DB.prepare(
-      `SELECT id, name, phone, tags, seen_count, first_seen_at, last_seen_at, last_contacted_at, last_send_status
-         FROM past_visitors`
-    ).all();
-
-    const rows = rs.results || [];
-    let fixed = 0, unchanged = 0, invalid = 0, merged = 0, total = rows.length;
-
-    const splitTags = (s) => (String(s||"").split(",").map(x=>x.trim()).filter(Boolean));
-    const joinTags  = (a,b) => Array.from(new Set([...(a||[]), ...(b||[])])).join(",");
-
-    for (const r of rows) {
-      const cur = String(r.phone || "");
-      if (!cur) { invalid++; continue; }
-
-      const norm = normalizeMsisdn(cur);
-      if (!norm) {
-        invalid++;
-        await env.DB.prepare(
-          `UPDATE past_visitors
-             SET last_send_status = COALESCE(NULLIF(last_send_status,''),'invalid_phone')
-           WHERE id=?1`
-        ).bind(r.id).run();
-        continue;
-      }
-
-      if (norm === cur) { unchanged++; continue; }
-
-      // if another row already has the normalized number, merge
-      const other = await env.DB.prepare(
-        `SELECT id, name, tags, seen_count, first_seen_at, last_seen_at, last_contacted_at, last_send_status
-           FROM past_visitors
-          WHERE phone=?1 LIMIT 1`
-      ).bind(norm).first();
-
-      if (!other) {
-        await env.DB.prepare(`UPDATE past_visitors SET phone=?2 WHERE id=?1`).bind(r.id, norm).run();
-        fixed++;
-        continue;
-      }
-
-      if (other.id === r.id) { unchanged++; continue; }
-
-      // Merge r (dupe) -> other (survivor)
-      const survivor = other;
-      const dupe     = r;
-
-      const nameA = String(survivor.name || "").trim();
-      const nameB = String(dupe.name || "").trim();
-      const nameFinal = nameB && (!nameA || nameB.length > nameA.length) ? nameB : (nameA || null);
-
-      const tagsFinal = joinTags(splitTags(survivor.tags), splitTags(dupe.tags));
-      const seenFinal   = Number(survivor.seen_count||0) + Number(dupe.seen_count||0);
-      const firstFinal  = Math.min(Number(survivor.first_seen_at||nowTs()), Number(dupe.first_seen_at||nowTs()));
-      const lastFinal   = Math.max(Number(survivor.last_seen_at||firstFinal), Number(dupe.last_seen_at||firstFinal));
-      const lcA = Number(survivor.last_contacted_at || 0);
-      const lcB = Number(dupe.last_contacted_at || 0);
-      const lastContactFinal = Math.max(lcA, lcB) || null;
-      const lssFinal = lcB > lcA
-        ? (dupe.last_send_status || survivor.last_send_status || null)
-        : (survivor.last_send_status || dupe.last_send_status || null);
-
-      await env.DB.prepare(
-        `UPDATE past_visitors
-            SET name=?2, tags=?3, seen_count=?4, first_seen_at=?5, last_seen_at=?6,
-                last_contacted_at=?7, last_send_status=?8
-          WHERE id=?1`
-      ).bind(
-        survivor.id, nameFinal, tagsFinal || null, seenFinal,
-        firstFinal, lastFinal, lastContactFinal, lssFinal
-      ).run();
-
-      // re-link campaign_sends to survivor then delete dupe
-      await env.DB.prepare(
-        `UPDATE wa_campaign_sends SET visitor_id=?2 WHERE visitor_id=?1`
-      ).bind(dupe.id, survivor.id).run();
-
-      await env.DB.prepare(`DELETE FROM past_visitors WHERE id=?1`).bind(dupe.id).run();
-
-      merged++; fixed++;
-    }
-
-    return json({ ok: true, fixed, merged, unchanged, invalid, total });
-  }));
 
   /* ---------- Import CSV ---------- */
   router.add("POST", "/api/admin/past/import", guard(async (req, env) => {
@@ -182,9 +133,8 @@ export function mountPastVisitors(router) {
 
     for (const r of rows) {
       const name = (r?.name || "").trim();
-      const phone = r?.phone || "";
-      const ph = normalizeMsisdn(phone);
-      if (!ph) { skipped_invalid++; continue; }
+      const ph = msisdn(r?.phone || "");
+      if (!isValidMsisdn(ph)) { skipped_invalid++; continue; }
 
       const res = await upsertVisitor(env, {
         name, phone: ph, source: "import", source_ref: filename, tag: "2025", overwriteName: overwrite
@@ -231,8 +181,8 @@ export function mountPastVisitors(router) {
 
     let inserted = 0, updated = 0, skipped_invalid = 0, total = rows.length;
     for (const r of rows) {
-      const ph = normalizeMsisdn(r?.phone || "");
-      if (!ph) { skipped_invalid++; continue; }
+      const ph = msisdn(r?.phone || "");
+      if (!isValidMsisdn(ph)) { skipped_invalid++; continue; }
       const res = await upsertVisitor(env, {
         name: (r?.name || "").trim(),
         phone: ph,
@@ -258,8 +208,9 @@ export function mountPastVisitors(router) {
     const offset = Math.max(Number(u.searchParams.get("offset") || 0), 0);
 
     const where = [];
-    if (q) where.push("(phone LIKE ?1 OR name LIKE ?1)");
-    if (tag) where.push("(tags LIKE ?2)");
+    const binds = [];
+    if (q) { where.push("(phone LIKE ?"+(binds.length+1)+" OR name LIKE ?"+(binds.length+1)+")"); binds.push(`%${q}%`); }
+    if (tag){ where.push("(tags LIKE ?"+(binds.length+1)+")"); binds.push(`%${tag}%`); }
     if (optout === "0") where.push("opt_out=0");
     if (optout === "1") where.push("opt_out=1");
 
@@ -270,11 +221,125 @@ export function mountPastVisitors(router) {
         ORDER BY last_seen_at DESC
         LIMIT ${limit} OFFSET ${offset}`;
 
-    const rows = await env.DB.prepare(sql)
-      .bind(q ? `%${q}%` : undefined, tag ? `%${tag}%` : undefined)
-      .all();
+    const rows = await env.DB.prepare(sql).bind(...binds).all();
 
     return json({ ok: true, visitors: rows.results || [] });
+  }));
+
+  /* ---------- Quick send to selected (kept the 50 cap) ---------- */
+  router.add("POST", "/api/admin/past/send", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const ids = Array.isArray(b?.visitor_ids) ? b.visitor_ids.slice(0, 50) : [];
+    const template_key = String(b?.template_key || "WA_TMP_SKOU_SALES");
+    const vars = Array.isArray(b?.vars) ? b.vars : [];
+    if (!ids.length) return bad("visitor_ids required");
+
+    const token = await getSetting(env, "WA_TOKEN") || await getSetting(env, "WHATSAPP_TOKEN");
+    const pnid  = await getSetting(env, "WA_PHONE_NUMBER_ID") || await getSetting(env, "PHONE_NUMBER_ID");
+    if (!token || !pnid) return bad("WhatsApp credentials missing in settings");
+
+    const selRow = await env.DB.prepare(`SELECT value FROM site_settings WHERE key=?1 LIMIT 1`).bind(template_key).first();
+    const { name: tplName, lang: tplLang } = parseTplSel(selRow?.value || "");
+    if (!tplName) return bad(`Template not configured for ${template_key}`);
+
+    const ts = nowTs();
+    const results = [];
+    const vs = vars.length
+      ? [{ type: "body", parameters: vars.map(v => ({ type: "text", text: String(v) })) }]
+      : [];
+
+    // recipients
+    const placeholders = ids.map(() => "?").join(",");
+    const recs = await env.DB.prepare(
+      `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${placeholders})`
+    ).bind(...ids).all();
+
+    for (const r of (recs.results || [])) {
+      if (!isValidMsisdn(r.phone) || r.opt_out) {
+        results.push({ id: r.id, skipped: true, reason: r.opt_out ? "opt_out" : "bad_phone" });
+        continue;
+      }
+      const payload = {
+        messaging_product: "whatsapp",
+        to: r.phone,
+        type: "template",
+        template: { name: tplName, language: { code: tplLang }, components: vs }
+      };
+      let ok = false, msgId = null, errMsg = null;
+      try {
+        const res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pnid)}/messages`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const y = await res.json().catch(()=> ({}));
+        ok = res.ok;
+        msgId = y?.messages?.[0]?.id || null;
+        errMsg = y?.error?.message || (!res.ok ? `HTTP ${res.status}` : null);
+      } catch (e) {
+        errMsg = String(e?.message || e);
+      }
+
+      await env.DB.prepare(
+        `UPDATE past_visitors
+            SET last_contacted_at=?2,
+                last_send_status=?3
+          WHERE id=?1`
+      ).bind(r.id, ts, ok ? "sent" : ("failed:" + (errMsg || ""))).run();
+
+      results.push({ id: r.id, ok, message_id: msgId, error: errMsg || null });
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    return json({ ok: true, results });
+  }));
+
+  /* ===========================================================
+   *                NORMALIZE (phones + merge dups)
+   * ===========================================================
+   */
+  router.add("POST", "/api/admin/past/normalize", guard(async (_req, env) => {
+    const all = await env.DB.prepare(
+      `SELECT id, name, phone FROM past_visitors ORDER BY id ASC`
+    ).all();
+    const rows = all.results || [];
+
+    let changed = 0, merged = 0, invalid = 0;
+
+    // Map normalized phone -> keeper id
+    const keeperByPhone = new Map();
+
+    for (const r of rows) {
+      const norm = msisdn(r.phone);
+      if (!isValidMsisdn(norm)) { invalid++; continue; }
+
+      if (!keeperByPhone.has(norm)) {
+        keeperByPhone.set(norm, r.id);
+        // ensure row's phone is normalized
+        if (r.phone !== norm) {
+          try {
+            await env.DB.prepare(`UPDATE past_visitors SET phone=?2 WHERE id=?1`).bind(r.id, norm).run();
+            changed++;
+          } catch (e) {
+            // If unique constraint here, find the existing keeper and merge
+            const keepId = (await env.DB.prepare(`SELECT id FROM past_visitors WHERE phone=?1`).bind(norm).first())?.id;
+            if (keepId && keepId !== r.id) {
+              await mergeVisitors(env, keepId, r.id);
+              merged++;
+            }
+          }
+        }
+      } else {
+        // duplicate: merge into keeper
+        const keepId = keeperByPhone.get(norm);
+        if (keepId !== r.id) {
+          await mergeVisitors(env, keepId, r.id);
+          merged++;
+        }
+      }
+    }
+
+    return json({ ok: true, changed, merged, invalid, total: rows.length });
   }));
 
   /* ===========================================================
@@ -282,53 +347,46 @@ export function mountPastVisitors(router) {
    * ===========================================================
    */
 
-  // resolve recipients from list of ids or a filter object
-  async function resolveRecipients(env, filterOrIds) {
-    if (Array.isArray(filterOrIds?.ids) && filterOrIds.ids.length) {
-      const ids = filterOrIds.ids.map(Number).filter(Boolean);
-      if (!ids.length) return [];
+  // Helper: resolve recipients from explicit ids OR a filter object
+  async function resolveRecipients(env, { ids, query, tag, optout, limit } = {}) {
+    // Prefer explicit ids if provided
+    if (Array.isArray(ids) && ids.length) {
+      const placeholders = ids.map(() => "?").join(",");
       const rs = await env.DB.prepare(
-        `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${"?,".repeat(ids.length).slice(0,-1)})`
+        `SELECT id, phone, opt_out FROM past_visitors WHERE id IN (${placeholders})`
       ).bind(...ids).all();
       return (rs.results || []).map(r => ({ id: r.id, phone: r.phone, opt_out: r.opt_out ? 1 : 0 }));
     }
-    const q = (filterOrIds?.query || "").trim();
-    const tag = (filterOrIds?.tag || "").trim();
-    const opt = filterOrIds?.optout;
+
     const where = [];
-    if (q) where.push("(phone LIKE ?1 OR name LIKE ?1)");
-    if (tag) where.push("(tags LIKE ?2)");
-    if (opt === 0) where.push("opt_out=0");
-    if (opt === 1) where.push("opt_out=1");
+    const binds = [];
+    if (query) { where.push("(phone LIKE ?"+(binds.length+1)+" OR name LIKE ?"+(binds.length+1)+")"); binds.push(`%${query}%`); }
+    if (tag)   { where.push("(tags LIKE ?"+(binds.length+1)+")"); binds.push(`%${tag}%`); }
+    if (optout === 0) where.push("opt_out=0");
+    if (optout === 1) where.push("opt_out=1");
+
+    const lim = Math.min(Number(limit || 10000), 10000);
     const sql = `
       SELECT id, phone, opt_out
         FROM past_visitors
        ${where.length ? "WHERE "+where.join(" AND ") : ""}
        ORDER BY last_seen_at DESC
-       LIMIT ${Math.min(Number(filterOrIds?.limit || 10000), 10000)}
+       LIMIT ${lim}
     `;
-    const rs = await env.DB.prepare(sql)
-      .bind(q ? `%${q}%` : undefined, tag ? `%${tag}%` : undefined)
-      .all();
+    const rs = await env.DB.prepare(sql).bind(...binds).all();
     return (rs.results || []).map(r => ({ id: r.id, phone: r.phone, opt_out: r.opt_out ? 1 : 0 }));
   }
 
-  /* ------------ Handlers (so we can wire multiple routes) ------------ */
-
-  const campaignCreateHandler = async (req, env) => {
+  // Create campaign (plural path to match UI)
+  router.add("POST", "/api/admin/past/campaigns/create", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
     const name = (b?.name || "").trim() || `Campaign ${new Date().toLocaleString()}`;
     const template_key = String(b?.template_key || "WA_TMP_SKOU_SALES");
-    // accept either "vars" or "template_vars"
-    const template_vars = Array.isArray(b?.template_vars) ? b.template_vars.map(String)
-                        : Array.isArray(b?.vars) ? b.vars.map(String)
-                        : [];
-    // accept either visitor_ids or filter
-    const filter =
-      Array.isArray(b?.visitor_ids) && b.visitor_ids.length
-        ? { ids: b.visitor_ids.map(Number).filter(Boolean) }
-        : (b?.filter && typeof b.filter === "object" ? b.filter : {});
+    const template_vars = Array.isArray(b?.vars) ? b.vars.map(v => String(v)) :
+                          (Array.isArray(b?.template_vars) ? b.template_vars.map(v => String(v)) : []);
+    const visitor_ids = Array.isArray(b?.visitor_ids) ? b.visitor_ids.map(Number).filter(Boolean) : null;
+    const filter = (b?.filter && typeof b.filter === "object") ? b.filter : {};
 
     // Validate template configured
     const sel = await getSetting(env, template_key);
@@ -344,10 +402,12 @@ export function mountPastVisitors(router) {
     const cid = r.meta.last_row_id;
 
     // Resolve targets
-    const recips = await resolveRecipients(env, filter);
+    const recips = await resolveRecipients(env, visitor_ids?.length ? { ids: visitor_ids } : filter);
+    if (!recips.length) return bad("no recipients matched");
+
     let queued = 0;
     for (const vv of recips) {
-      if (!vv.phone) continue;
+      if (!isValidMsisdn(vv.phone)) continue;
       try {
         await env.DB.prepare(
           `INSERT OR IGNORE INTO wa_campaign_sends
@@ -360,9 +420,10 @@ export function mountPastVisitors(router) {
     await env.DB.prepare(`UPDATE wa_campaigns SET total_targets=?2 WHERE id=?1`).bind(cid, queued).run();
 
     return json({ ok: true, campaign_id: cid, total_targets: queued });
-  };
+  }));
 
-  const campaignRunHandler = async (req, env) => {
+  // Run/continue batch (plural path)
+  router.add("POST", "/api/admin/past/campaigns/run", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const id = Number(b?.campaign_id || 0);
     const batch = Math.min(Math.max(Number(b?.batch_size || 30), 1), 200);
@@ -395,7 +456,7 @@ export function mountPastVisitors(router) {
       await env.DB.prepare(`UPDATE wa_campaigns SET status='running' WHERE id=?1`).bind(id).run();
     }
 
-    // Fetch next queued items (skip hard-opted out visitors)
+    // Fetch next queued items (skip opted-out)
     const rows = await env.DB.prepare(
       `SELECT s.id, s.visitor_id, s.phone, v.opt_out
          FROM wa_campaign_sends s
@@ -409,11 +470,11 @@ export function mountPastVisitors(router) {
     let sent = 0, failed = 0, skipped = 0;
 
     for (const r of todos) {
-      if (!r.phone || r.opt_out) {
+      if (!isValidMsisdn(r.phone) || r.opt_out) {
         skipped++;
         await env.DB.prepare(
           `UPDATE wa_campaign_sends SET status=?2 WHERE id=?1`
-        ).bind(r.id, r.opt_out ? "skipped:optout" : "skipped:nophone").run();
+        ).bind(r.id, r.opt_out ? "skipped:optout" : "skipped:badphone").run();
         continue;
       }
       const payload = {
@@ -476,9 +537,10 @@ export function mountPastVisitors(router) {
 
     return json({ ok:true, processed: todos.length, sent, failed, skipped, left,
       status: left ? "running" : "done" });
-  };
+  }));
 
-  const campaignStatusQueryHandler = async (req, env) => {
+  // Status (plural path)
+  router.add("GET", "/api/admin/past/campaigns/status", guard(async (req, env) => {
     const u = new URL(req.url);
     const id = Number(u.searchParams.get("id") || 0);
     if (!id) return bad("id required");
@@ -509,62 +571,16 @@ export function mountPastVisitors(router) {
       skipped: Number(q?.skipped||0),
       last_error: c.last_error || null
     }});
-  };
+  }));
 
-  const campaignStatusParamHandler = async (_req, env, p) => {
-    const id = Number(p?.id || 0);
-    if (!id) return bad("id required");
-    // Build a tiny fake URL to reuse the query-based handler,
-    // or just duplicate the logic—here we duplicate to keep it simple.
-    const c = await env.DB.prepare(`SELECT * FROM wa_campaigns WHERE id=?1`).bind(id).first();
-    if (!c) return bad("campaign not found", 404);
-
-    const q = await env.DB.prepare(
-      `SELECT
-         SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END)                                  AS sent,
-         SUM(CASE WHEN status LIKE 'failed%' THEN 1 ELSE 0 END)                           AS failed,
-         SUM(CASE WHEN status='queued' OR status IS NULL THEN 1 ELSE 0 END)               AS queued,
-         SUM(CASE WHEN status LIKE 'skipped%' THEN 1 ELSE 0 END)                          AS skipped
-       FROM wa_campaign_sends
-      WHERE campaign_id=?1`
-    ).bind(id).first();
-
-    return json({ ok:true, campaign: {
-      id: c.id, name: c.name, status: c.status,
-      total_targets: Number(c.total_targets||0),
-      sent_count: Number(c.sent_count||0),
-      fail_count: Number(c.fail_count||0),
-      started_at: c.started_at || null,
-      finished_at: c.finished_at || null,
-      queued: Number(q?.queued||0),
-      sent: Number(q?.sent||0),
-      failed: Number(q?.failed||0),
-      skipped: Number(q?.skipped||0),
-      last_error: c.last_error || null
-    }});
-  };
-
-  /* ------------------------ Wire routes ------------------------ */
-  // Create
-  router.add("POST", "/api/admin/past/campaign/create",         guard(campaignCreateHandler));
-  router.add("POST", "/api/admin/past/campaigns/create",        guard(campaignCreateHandler)); // plural alias
-
-  // Run
-  router.add("POST", "/api/admin/past/campaign/run",            guard(campaignRunHandler));
-  router.add("POST", "/api/admin/past/campaigns/run",           guard(campaignRunHandler));    // plural alias
-
-  // Status
-  router.add("GET",  "/api/admin/past/campaign/status",         guard(campaignStatusQueryHandler));
-  router.add("GET",  "/api/admin/past/campaigns/:id/status",    guard(campaignStatusParamHandler)); // plural + path param
-
-  // Pause / Resume (unchanged, singular)
-  router.add("POST", "/api/admin/past/campaign/pause",  guard(async (req, env) => {
+  // Pause / Resume (plural paths)
+  router.add("POST", "/api/admin/past/campaigns/pause", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const id = Number(b?.id || 0); if (!id) return bad("id required");
     await env.DB.prepare(`UPDATE wa_campaigns SET status='paused' WHERE id=?1`).bind(id).run();
     return json({ ok:true });
   }));
-  router.add("POST", "/api/admin/past/campaign/resume", guard(async (req, env) => {
+  router.add("POST", "/api/admin/past/campaigns/resume", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const id = Number(b?.id || 0); if (!id) return bad("id required");
     await env.DB.prepare(`UPDATE wa_campaigns SET status='running' WHERE id=?1`).bind(id).run();
