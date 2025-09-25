@@ -31,14 +31,6 @@ export const adminSiteSettingsJS = `
       #panel-settings .muted{color:#667085}
       #wa-templates table{width:100%;border-collapse:collapse}
       #wa-templates th,#wa-templates td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
-      #pv-list table{width:100%;border-collapse:collapse}
-      #pv-list th,#pv-list td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
-      #pv-list tbody tr:hover{background:#fafafa}
-
-      /* inbox */
-      #wa-inbox .msg{padding:8px 10px;border:1px solid #eef1f3;border-radius:10px;margin:8px 0;background:#fafafa}
-      #wa-inbox .in{background:#fff}
-      #wa-inbox .out{background:#f6fffb}
     </style>
 
     <!-- GENERAL -->
@@ -56,7 +48,7 @@ export const adminSiteSettingsJS = `
       </div>
     </section>
 
-    <!-- WHATSAPP -->
+    <!-- WHATSApp -->
     <section id="tab-wa" style="display:none">
       <h2 style="margin:0 0 8px">WhatsApp</h2>
       <div class="grid">
@@ -226,49 +218,20 @@ export const adminSiteSettingsJS = `
         </div>
       </div>
 
+      <!-- Numbers -->
       <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
-        <h3 style="margin:0 0 8px">List / Send</h3>
-        <div class="grid">
-          <div><label>Search</label><input id="pv-q" placeholder="name or phone"/></div>
-          <div><label>Tag contains</label><input id="pv-tag" placeholder="2025"/></div>
-          <div>
-            <label>Opt-out</label>
-            <select id="pv-optout">
-              <option value="">All</option>
-              <option value="0">Only opted-in</option>
-              <option value="1">Only opted-out</option>
-            </select>
-          </div>
-          <div style="display:flex;align-items:flex-end"><button id="pv-refresh" class="btn">Refresh</button></div>
-        </div>
-
-        <div id="pv-list" style="margin-top:10px" class="muted">No results yet.</div>
-
-        <div class="grid" style="margin-top:10px">
-          <div>
-            <label>Template</label>
-            <select id="pv-tpl-key">
-              <option value="WA_TMP_SKOU_SALES">Skou reminders (recommended)</option>
-              <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
-              <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
-              <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
-            </select>
-          </div>
-          <div style="grid-column:1/-1">
-            <label>Body variables (comma separated, optional)</label>
-            <input id="pv-vars" placeholder="e.g. Villiersdorp Skou, 5–7 Sept"/>
-          </div>
-        </div>
+        <h3 style="margin:0 0 8px">Numbers</h3>
+        <p class="muted">Normalize all stored numbers to <b>27XXXXXXXXX</b> (11 digits) for WhatsApp.</p>
         <div class="row-actions">
-          <button id="pv-send" class="btn">Send to selected (max 50)</button>
-          <span id="pv-send-msg" class="muted"></span>
+          <button id="pv-normalize" class="btn">Normalize all numbers</button>
+          <span id="pv-normalize-msg" class="muted"></span>
         </div>
       </div>
 
-      <!-- NEW: Campaigns -->
+      <!-- Campaigns -->
       <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px;">
-        <h3 style="margin:0 0 8px">Campaigns (advanced)</h3>
-        <p class="muted" style="margin-top:0">Create a campaign from the <b>currently selected rows</b>, then run/continue it in batches.</p>
+        <h3 style="margin:0 0 8px">Campaigns</h3>
+        <p class="muted" style="margin-top:0">Create a campaign from <b>all eligible past visitors</b> (opted-in & valid numbers), then run/continue it in batches.</p>
 
         <div class="grid">
           <div style="grid-column:1/-1">
@@ -291,7 +254,7 @@ export const adminSiteSettingsJS = `
         </div>
 
         <div class="row-actions">
-          <button id="pv-camp-create" class="btn">Create campaign from selected</button>
+          <button id="pv-camp-create" class="btn">Create campaign from ALL</button>
           <span id="pv-camp-create-msg" class="muted"></span>
         </div>
 
@@ -299,8 +262,8 @@ export const adminSiteSettingsJS = `
 
         <div class="grid">
           <div><label>Campaign ID</label><input id="pv-camp-id" placeholder="e.g. 12"/></div>
-          <div><label>Batch size</label><input id="pv-camp-batch" value="30"/></div>
-          <div><label>Delay (ms) between messages</label><input id="pv-camp-delay" value="350"/></div>
+          <div><label>Batch size</label><input id="pv-camp-batch" value="1000"/></div>
+          <div><label>Delay (ms) between messages</label><input id="pv-camp-delay" value="200"/></div>
         </div>
 
         <div class="row-actions">
@@ -364,13 +327,6 @@ export const adminSiteSettingsJS = `
     $('#WA_TMP_PAYMENT_CONFIRM').dataset.value = s.WA_TMP_PAYMENT_CONFIRM || '';
     $('#WA_TMP_TICKET_DELIVERY').dataset.value = s.WA_TMP_TICKET_DELIVERY || '';
     $('#WA_TMP_SKOU_SALES').dataset.value      = s.WA_TMP_SKOU_SALES || '';
-
-    // Yoco
-    $('#YOCO_MODE').value = (s.YOCO_MODE||'test').toLowerCase();
-    $('#YOCO_TEST_PUBLIC_KEY').value = s.YOCO_TEST_PUBLIC_KEY || '';
-    $('#YOCO_TEST_SECRET_KEY').value = s.YOCO_TEST_SECRET_KEY || '';
-    $('#YOCO_LIVE_PUBLIC_KEY').value = s.YOCO_LIVE_PUBLIC_KEY || '';
-    $('#YOCO_LIVE_SECRET_KEY').value = s.YOCO_LIVE_SECRET_KEY || '';
   }
 
   // ---------- WA templates list + selectors ----------
@@ -444,7 +400,7 @@ export const adminSiteSettingsJS = `
     if (r.ok){ $('#wa_reply_text').value=''; loadInbox(); }
   };
 
-  // ---------- Past visitors: helpers ----------
+  // ---------- Past visitors: small helpers ----------
   function parseCSV(text) {
     const lines = String(text || "").split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
     const rows = [];
@@ -457,46 +413,7 @@ export const adminSiteSettingsJS = `
     }
     return rows;
   }
-
-  async function refreshList() {
-    const q = $('#pv-q').value.trim();
-    const tag = $('#pv-tag').value.trim();
-    thead = null;
-    const opt = $('#pv-optout').value;
-    const url = new URL('/api/admin/past/list', location.origin);
-    if (q) url.searchParams.set('query', q);
-    if (tag) url.searchParams.set('tag', tag);
-    if (opt) url.searchParams.set('optout', opt);
-    url.searchParams.set('limit', '50');
-    const j = await fetch(url, { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
-    const box = $('#pv-list');
-    if (!j.ok){ box.textContent='Failed to load.'; return; }
-    const rows = j.visitors || [];
-    if (!rows.length){ box.textContent='No results.'; return; }
-
-    box.innerHTML = \`
-      <table>
-        <thead><tr>
-          <th><input type="checkbox" id="pv-all"/></th>
-          <th>Name</th><th>Phone</th><th>Tags</th><th>Opt-out</th><th>Last send</th><th>Status</th>
-        </tr></thead>
-        <tbody>\${rows.map(r=>\`
-          <tr>
-            <td><input type="checkbox" class="pv-chk" data-id="\${r.id}"/></td>
-            <td>\${esc(r.name||'')}</td>
-            <td>\${esc(r.phone||'')}</td>
-            <td>\${esc(r.tags||'')}</td>
-            <td>\${r.opt_out? 'Yes':'No'}</td>
-            <td>\${r.last_contacted_at? new Date(r.last_contacted_at*1000).toLocaleString() : ''}</td>
-            <td>\${esc(r.last_send_status||'')}</td>
-          </tr>\`).join('')}</tbody>
-      </table>\`;
-
-    $('#pv-all').onclick = (e)=>{
-      const on = e.target.checked;
-      box.querySelectorAll('.pv-chk').forEach(c=>c.checked = on);
-    };
-  }
+  const parseVars = (raw)=>{ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; };
 
   // ---------- Past visitors: actions ----------
   $('#pv-import').onclick = async ()=>{
@@ -511,7 +428,6 @@ export const adminSiteSettingsJS = `
     $('#pv-import-msg').textContent = j.ok
       ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
       : ('Failed: '+(j.error||''));
-    refreshList();
   };
 
   $('#pv-sync').onclick = async ()=>{
@@ -526,29 +442,21 @@ export const adminSiteSettingsJS = `
     $('#pv-sync-msg').textContent = j.ok
       ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
       : ('Failed: '+(j.error||''));
-    refreshList();
   };
 
-  $('#pv-refresh').onclick = refreshList;
-
-  $('#pv-send').onclick = async ()=>{
-    const ids = Array.from(document.querySelectorAll('.pv-chk'))
-      .filter(c=>c.checked).map(c=>Number(c.dataset.id)).slice(0,50);
-    if (!ids.length){ $('#pv-send-msg').textContent='Select up to 50.'; return; }
-    const template_key = $('#pv-tpl-key').value;
-    const vars = ($('#pv-vars').value||'').split(',').map(s=>s.trim()).filter(Boolean);
-    $('#pv-send-msg').textContent = 'Sending…';
-    const j = await fetch('/api/admin/past/send', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ visitor_ids: ids, template_key, vars })
+  // Normalize all numbers
+  $('#pv-normalize').onclick = async ()=>{
+    const m = $('#pv-normalize-msg');
+    m.textContent = 'Normalizing…';
+    const j = await fetch('/api/admin/past/normalize', {
+      method:'POST', credentials:'include'
     }).then(r=>r.json()).catch(()=>({ok:false}));
-    $('#pv-send-msg').textContent = j.ok ? 'Done.' : ('Failed: '+(j.error||'')); 
-    refreshList();
+    m.textContent = j.ok
+      ? \`Done. fixed \${j.fixed}, unchanged \${j.unchanged}, invalid \${j.invalid} (total \${j.total})\`
+      : ('Failed: '+(j.error||''));
   };
 
-  // ---------- Campaign helpers ----------
-  function parseVars(raw){ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; }
-
+  // Campaign actions
   async function campaignStatus(cid){
     const box = $('#pv-camp-status-box');
     box.textContent = 'Loading status…';
@@ -567,12 +475,8 @@ export const adminSiteSettingsJS = `
       </div>\`;
   }
 
-  // ---------- Campaign actions ----------
   $('#pv-camp-create').onclick = async ()=>{
-    const ids = Array.from(document.querySelectorAll('.pv-chk'))
-      .filter(c=>c.checked).map(c=>Number(c.dataset.id));
     const msg = $('#pv-camp-create-msg');
-    if (!ids.length){ msg.textContent='Select some rows first.'; return; }
     const template_key = $('#pv-camp-tpl').value;
     const name = $('#pv-camp-name').value.trim() || ('Ad-hoc '+new Date().toLocaleString());
     const vars = parseVars($('#pv-camp-vars').value);
@@ -580,7 +484,7 @@ export const adminSiteSettingsJS = `
     msg.textContent = 'Creating…';
     const j = await fetch('/api/admin/past/campaigns/create', {
       method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ name, template_key, vars, visitor_ids: ids })
+      body: JSON.stringify({ name, template_key, vars })
     }).then(r=>r.json()).catch(()=>({ok:false}));
 
     if (j.ok){
@@ -596,8 +500,8 @@ export const adminSiteSettingsJS = `
     const cid = Number($('#pv-camp-id').value || 0);
     const msg = $('#pv-camp-run-msg');
     if (!cid){ msg.textContent='Enter campaign ID.'; return; }
-    const batch = Number($('#pv-camp-batch').value || 30);
-    const delay = Number($('#pv-camp-delay').value || 350);
+    const batch = Number($('#pv-camp-batch').value || 1000);
+    const delay = Number($('#pv-camp-delay').value || 200);
 
     msg.textContent = 'Processing…';
     const j = await fetch('/api/admin/past/campaigns/run', {
