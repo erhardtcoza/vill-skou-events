@@ -4,11 +4,14 @@ window.AdminPanels.tickets = async function renderTickets(){
   const el = $("panel-tickets");
   el.innerHTML = "<h2>Tickets</h2><div class='muted'>Kies 'n event om opsomming te sien.</div>";
 
-  const evs = await fetch("/api/admin/events").then(r=>r.json()).catch(()=>({ok:false,events:[]}));
+  const evs = await fetch("/api/admin/events", { credentials:'include' })
+    .then(r=>r.json()).catch(()=>({ok:false,events:[]}));
   if (!evs.ok || !evs.events?.length) return;
 
   const picker = document.createElement("div");
-  picker.style.display = "flex"; picker.style.gap = "8px"; picker.style.alignItems = "center";
+  picker.style.display = "flex";
+  picker.style.gap = "8px";
+  picker.style.alignItems = "center";
   picker.innerHTML = "<label>Event</label>";
   const sel = document.createElement("select");
   sel.innerHTML = evs.events.map(ev=>"<option value='"+ev.id+"'>"+esc(ev.name)+"</option>").join("");
@@ -19,12 +22,57 @@ window.AdminPanels.tickets = async function renderTickets(){
   box.style.marginTop = "10px";
   el.appendChild(box);
 
+  // --- Below summary: Lookup + List containers ---
+  const tools = document.createElement("div");
+  tools.style.marginTop = "14px";
+  el.appendChild(tools);
+
+  const lookupBox = document.createElement("div");
+  lookupBox.className = "cardish";
+  lookupBox.style.cssText = "border:1px solid #eef1f3;border-radius:12px;padding:12px;margin:12px 0;";
+  lookupBox.innerHTML = [
+    "<h3 style='margin:0 0 8px'>Order lookup</h3>",
+    "<div class='grid'>",
+      "<div><input id='tix-lookup-code' placeholder='Order code (bv. CAXHIEG)'/></div>",
+      "<div style='display:flex;align-items:center'><button id='tix-lookup-btn' class='btn'>Find</button></div>",
+    "</div>",
+    "<div id='tix-lookup-res' class='muted' style='margin-top:8px'></div>"
+  ].join("");
+  tools.appendChild(lookupBox);
+
+  const listBox = document.createElement("div");
+  listBox.className = "cardish";
+  listBox.style.cssText = "border:1px solid #eef1f3;border-radius:12px;padding:12px;margin:12px 0;";
+  listBox.innerHTML = [
+    "<h3 style='margin:0 0 8px'>All tickets</h3>",
+    "<div class='grid'>",
+      "<div><input id='tix-q' placeholder='Search: QR, name, phone, order code, buyer…'/></div>",
+      "<div>",
+        "<select id='tix-state'>",
+          "<option value=''>Any state</option>",
+          "<option value='unused'>Unused</option>",
+          "<option value='in'>In</option>",
+          "<option value='out'>Out</option>",
+          "<option value='void'>Void</option>",
+        "</select>",
+      "</div>",
+      "<div style='display:flex;align-items:center'><button id='tix-refresh' class='btn'>Refresh</button></div>",
+    "</div>",
+    "<div id='tix-list' class='muted' style='margin-top:8px'>No results yet.</div>",
+    "<div style='display:flex;gap:8px;margin-top:8px'>",
+      "<button id='tix-prev' class='btn outline'>Prev</button>",
+      "<button id='tix-next' class='btn outline'>Next</button>",
+      "<span id='tix-pageinfo' class='muted' style='align-self:center'></span>",
+    "</div>"
+  ].join("");
+  tools.appendChild(listBox);
+
   async function loadSum(){
     const id = Number(sel.value||0);
-    const j = await fetch("/api/admin/tickets/summary?event_id="+id).then(r=>r.json()).catch(()=>({ok:false}));
+    const j = await fetch("/api/admin/tickets/summary?event_id="+id, { credentials:'include' })
+      .then(r=>r.json()).catch(()=>({ok:false}));
     if (!j.ok){ box.innerHTML = "<div class='muted'>Kon nie laai nie</div>"; return; }
 
-    // j.summary is an array per ticket_type with totals; also show a quick grand summary
     const arr = j.summary || [];
     let sold=0, unused=0, inside=0, outside=0, voided=0;
     arr.forEach(r=>{
@@ -61,7 +109,106 @@ window.AdminPanels.tickets = async function renderTickets(){
       "</table>"
     ].join("");
   }
-  sel.onchange = loadSum;
+
+  // ------- Lookup logic -------
+  async function doLookup(){
+    const code = String(document.getElementById("tix-lookup-code").value||"").trim();
+    const res = document.getElementById("tix-lookup-res");
+    if (!code){ res.textContent = "Voer 'n bestel-kode in."; return; }
+    res.textContent = "Loading…";
+    const j = await fetch("/api/admin/orders/by-code/"+encodeURIComponent(code), { credentials:'include' })
+      .then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok){
+      res.textContent = "Nie gevind nie.";
+      return;
+    }
+    const o = j.order || {};
+    const t = j.tickets || [];
+    res.innerHTML = [
+      "<div><b>Order</b> ",
+      esc(o.short_code||""), " · ", esc(o.buyer_name||""), " · ", esc(o.buyer_phone||""), "</div>",
+      "<table style='width:100%;border-collapse:collapse;margin-top:6px'>",
+      "<thead><tr><th>ID</th><th>QR</th><th>Type</th><th>Name</th><th>Phone</th><th>State</th></tr></thead>",
+      "<tbody>",
+      t.map(r=>("<tr>"
+        +"<td>"+r.id+"</td>"
+        +"<td>"+esc(r.qr||"")+"</td>"
+        +"<td>"+esc(r.type_name||"")+"</td>"
+        +"<td>"+esc(((r.attendee_first||'')+' '+(r.attendee_last||'')).trim())+"</td>"
+        +"<td>"+esc(r.phone||"")+"</td>"
+        +"<td>"+esc(r.state||"")+"</td>"
+      +"</tr>")).join("") || "<tr><td colspan='6' class='muted'>Geen kaartjies</td></tr>",
+      "</tbody></table>"
+    ].join("");
+  }
+
+  document.getElementById("tix-lookup-btn").onclick = doLookup;
+
+  // ------- Tickets list logic -------
+  let listOffset = 0, listTotal = 0, listLimit = 50;
+
+  async function loadList(newOffset){
+    if (typeof newOffset === "number") listOffset = Math.max(0, newOffset);
+    const q = String(document.getElementById("tix-q").value||"").trim();
+    const st = String(document.getElementById("tix-state").value||"").trim();
+    const eid = Number(sel.value||0);
+    const url = new URL("/api/admin/tickets/list", location.origin);
+    url.searchParams.set("event_id", eid);
+    url.searchParams.set("limit", String(listLimit));
+    url.searchParams.set("offset", String(listOffset));
+    if (q)  url.searchParams.set("q", q);
+    if (st) url.searchParams.set("state", st);
+
+    const box = document.getElementById("tix-list");
+    box.textContent = "Loading…";
+    const j = await fetch(url, { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok){ box.textContent = "Kon nie laai nie."; return; }
+
+    listTotal = Number(j.total||0);
+    listLimit = Number(j.limit||50);
+    listOffset = Number(j.offset||0);
+
+    const rows = (j.tickets||[]).map(r=>(
+      "<tr>"
+        +"<td>"+r.id+"</td>"
+        +"<td>"+esc(r.qr||"")+"</td>"
+        +"<td>"+esc(r.type_name||"")+"</td>"
+        +"<td>"+esc(((r.attendee_first||'')+' '+(r.attendee_last||'')).trim())+"</td>"
+        +"<td>"+esc(r.phone||"")+"</td>"
+        +"<td>"+esc(r.state||"")+"</td>"
+        +"<td>"+esc(r.short_code||"")+"</td>"
+        +"<td>"+esc(r.buyer_name||"")+"</td>"
+      +"</tr>"
+    )).join("");
+
+    box.innerHTML = [
+      "<table style='width:100%;border-collapse:collapse'>",
+        "<thead><tr>",
+          "<th>ID</th><th>QR</th><th>Type</th><th>Name</th><th>Phone</th><th>State</th><th>Order</th><th>Buyer</th>",
+        "</tr></thead>",
+        "<tbody>", rows || "<tr><td colspan='8' class='muted'>No results</td></tr>", "</tbody>",
+      "</table>"
+    ].join("");
+
+    // Paging UI
+    const info = document.getElementById("tix-pageinfo");
+    const start = listTotal ? (listOffset+1) : 0;
+    const end = Math.min(listOffset + listLimit, listTotal);
+    info.textContent = listTotal ? (start+"–"+end+" van "+listTotal) : "0";
+
+    const prevBtn = document.getElementById("tix-prev");
+    const nextBtn = document.getElementById("tix-next");
+    prevBtn.disabled = listOffset <= 0;
+    nextBtn.disabled = (listOffset + listLimit) >= listTotal;
+  }
+
+  document.getElementById("tix-refresh").onclick = ()=>loadList(0);
+  document.getElementById("tix-prev").onclick    = ()=>loadList(Math.max(0, listOffset - listLimit));
+  document.getElementById("tix-next").onclick    = ()=>loadList(listOffset + listLimit);
+
+  sel.onchange = ()=>{ loadSum(); loadList(0); };
+  // initial load
   loadSum();
+  loadList(0);
 };
 `;
