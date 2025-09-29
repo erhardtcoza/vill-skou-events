@@ -41,6 +41,51 @@ export function mountAdmin(router) {
     return json({ ok: true, events: evQ.results || [], ticket_totals: sums });
   }));
 
+  /* ---------------- Site settings (site_settings table) ------------------- */
+  function normalizeInKey(k) {
+    // Accept UI keys and map them to canonical DB keys
+    const map = {
+      WHATSAPP_TOKEN:    "WA_TOKEN",
+      PHONE_NUMBER_ID:   "WA_PHONE_NUMBER_ID",
+      BUSINESS_ID:       "WA_BUSINESS_ID",
+      // Template selectors (UI -> DB)
+      WA_TMP_ORDER_CONFIRM:    "WA_TMP_ORDER_CONFIRM",
+      WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
+      WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
+      WA_TMP_SKOU_SALES:       "WA_TMP_SKOU_SALES",
+    };
+    return map[k] || k;
+  }
+
+  function normalizeOutKey(k) {
+    // Return UI-friendly keys for WhatsApp block
+    const map = {
+      WA_TOKEN:                "WHATSAPP_TOKEN",
+      WA_PHONE_NUMBER_ID:      "PHONE_NUMBER_ID",
+      WA_BUSINESS_ID:          "BUSINESS_ID",
+      // Template selectors (DB -> UI)
+      WA_TMP_ORDER_CONFIRM:    "WA_TMP_ORDER_CONFIRM",
+      WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
+      WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
+      WA_TMP_SKOU_SALES:       "WA_TMP_SKOU_SALES",
+    };
+    return map[k] || k;
+  }
+
+  async function getSetting(env, key) {
+    const row = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key = ?1 LIMIT 1`
+    ).bind(key).first();
+    return row ? row.value : null;
+  }
+
+  async function setSetting(env, key, value) {
+    await env.DB.prepare(
+      `INSERT INTO site_settings (key, value) VALUES (?1, ?2)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+    ).bind(key, value).run();
+  }
+
   router.add("GET", "/api/admin/settings", guard(async (_req, env) => {
     const wanted = [
       "PUBLIC_BASE_URL",
@@ -87,98 +132,8 @@ export function mountAdmin(router) {
     }
     return json({ ok: true, settings: out });
   }));
-  
-  /* ---------------- Site settings (site_settings table) ------------------- */
-  // Table schema assumed:
-  // CREATE TABLE site_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-
-  function normalizeInKey(k) {
-    // Accept UI keys and map them to canonical DB keys
-    const map = {
-      WHATSAPP_TOKEN:    "WA_TOKEN",
-      PHONE_NUMBER_ID:   "WA_PHONE_NUMBER_ID",
-      BUSINESS_ID:       "WA_BUSINESS_ID",
-      // Template selectors (UI -> DB)
-      WA_TMP_ORDER_CONFIRM:    "WA_TMP_ORDER_CONFIRM",
-      WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
-      WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
-      WA_TMP_SKOU_SALES:       "WA_TMP_SKOU_SALES",
-    };
-    return map[k] || k;
-  }
-
-  function normalizeOutKey(k) {
-    // Return UI-friendly keys for WhatsApp block
-    const map = {
-      WA_TOKEN:                "WHATSAPP_TOKEN",
-      WA_PHONE_NUMBER_ID:      "PHONE_NUMBER_ID",
-      WA_BUSINESS_ID:          "BUSINESS_ID",
-      // Template selectors (DB -> UI)
-      WA_TMP_ORDER_CONFIRM:    "WA_TMP_ORDER_CONFIRM",
-      WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
-      WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
-      WA_TMP_SKOU_SALES:       "WA_TMP_SKOU_SALES",
-    };
-    return map[k] || k;
-  }
-
-  async function getSetting(env, key) {
-    const row = await env.DB.prepare(
-      `SELECT value FROM site_settings WHERE key = ?1 LIMIT 1`
-    ).bind(key).first();
-    return row ? row.value : null;
-  }
-
-  async function setSetting(env, key, value) {
-    await env.DB.prepare(
-      `INSERT INTO site_settings (key, value) VALUES (?1, ?2)
-       ON CONFLICT(key) DO UPDATE SET value=excluded.value`
-    ).bind(key, value).run();
-  }
-
-  router.add("GET", "/api/admin/settings", guard(async (_req, env) => {
-    // Pull everything we care about and present UI keys
-    const wanted = [
-      "PUBLIC_BASE_URL",
-      "VERIFY_TOKEN",
-
-      // WhatsApp (stored with WA_* in DB)
-      "WA_TOKEN",
-      "WA_PHONE_NUMBER_ID",
-      "WA_BUSINESS_ID",
-      "WA_TMP_ORDER_CONFIRM",
-      "WA_TMP_PAYMENT_CONFIRM",
-      "WA_TMP_TICKET_DELIVERY",
-      "WA_TMP_SKOU_SALES",
-
-      // Yoco
-      "YOCO_MODE",
-      "YOCO_PUBLIC_KEY",
-      "YOCO_SECRET_KEY",
-      "YOCO_CLIENT_ID",
-      "YOCO_REDIRECT_URI",
-      "YOCO_REQUIRED_SCOPES",
-      "YOCO_STATE",
-      "YOCO_TEST_PUBLIC_KEY",
-      "YOCO_TEST_SECRET_KEY",
-      "YOCO_LIVE_PUBLIC_KEY",
-      "YOCO_LIVE_SECRET_KEY",
-
-      // Optional site block
-      "SITE_NAME",
-      "SITE_LOGO_URL",
-    ];
-
-    const out = {};
-    for (const dbKey of wanted) {
-      const v = await getSetting(env, dbKey);
-      if (v != null) out[normalizeOutKey(dbKey)] = v;
-    }
-    return json({ ok: true, settings: out });
-  }));
 
   router.add("POST", "/api/admin/settings/update", guard(async (req, env) => {
-    // Body: { updates: { KEY: value, ... } }
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const updates = b?.updates && typeof b.updates === "object" ? b.updates : null;
     if (!updates) return bad("updates required");
@@ -193,17 +148,6 @@ export function mountAdmin(router) {
   }));
 
   /* ---------------- WhatsApp: templates sync/list/diag -------------------- */
-  // wa_templates schema expected:
-  // CREATE TABLE IF NOT EXISTS wa_templates (
-  //   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  //   name TEXT NOT NULL,
-  //   language TEXT NOT NULL,
-  //   status TEXT,
-  //   category TEXT,
-  //   components_json TEXT,
-  //   updated_at INTEGER DEFAULT 0,
-  //   UNIQUE(name, language)
-  // );
   function q(v){ return encodeURIComponent(v); }
 
   router.add("GET", "/api/admin/whatsapp/templates", guard(async (_req, env) => {
@@ -274,85 +218,71 @@ export function mountAdmin(router) {
     return json({ ok:true, fetched, total });
   }));
 
-// --- WhatsApp: quick template test sender ---------------------------------
-router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
-  // Helpers to read settings (we already have similar ones above)
-  async function getSetting(key) {
-    const row = await env.DB.prepare(
+  // --- WhatsApp: quick template test sender ---------------------------------
+  router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
+    async function getSettingInner(key) {
+      const row = await env.DB.prepare(
+        `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+      ).bind(key).first();
+      return row ? row.value : null;
+    }
+
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const to = String(b?.to || "").replace(/\D+/g, "");
+    if (!to) return bad("to required (e.g. 2771… or 27… digits only)");
+
+    const key = String(b?.template_key || "WA_TMP_ORDER_CONFIRM");
+    const selRow = await env.DB.prepare(
       `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
     ).bind(key).first();
-    return row ? row.value : null;
-  }
 
-  let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-
-  // to: MSISDN like 27xxxxxxxxx (no spaces/punct)
-  const to = String(b?.to || "").replace(/\D+/g, "");
-  if (!to) return bad("to required (e.g. 2771… or 27… digits only)");
-
-  // Which selector to use from settings (default: order confirm)
-  // Options: WA_TMP_ORDER_CONFIRM | WA_TMP_PAYMENT_CONFIRM | WA_TMP_TICKET_DELIVERY | WA_TMP_SKOU_SALES
-  const key = String(b?.template_key || "WA_TMP_ORDER_CONFIRM");
-  const selRow = await env.DB.prepare(
-    `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
-  ).bind(key).first();
-
-  const sel = String(selRow?.value || "");
-  const [tplName, tplLang] = sel.split(":");
-  if (!tplName || !tplLang) {
-    return bad(`Template not configured in site_settings for ${key}. Save a value like "my_template:af" first.`);
-  }
-
-  // WhatsApp credentials (accept both WA_* and legacy keys)
-  const token  = await getSetting("WA_TOKEN") || await getSetting("WHATSAPP_TOKEN");
-  const pnid   = await getSetting("WA_PHONE_NUMBER_ID") || await getSetting("PHONE_NUMBER_ID");
-  if (!token || !pnid) return bad("WhatsApp token / phone number ID missing in Site Settings");
-
-  // Optional variables for body placeholders in the template
-  // Example: "vars": ["Piet", "CAXHIEG"]
-  const vars = Array.isArray(b?.vars) ? b.vars : [];
-  const components = vars.length
-    ? [{ type: "body", parameters: vars.map(v => ({ type: "text", text: String(v) })) }]
-    : [];
-
-  const payload = {
-    messaging_product: "whatsapp",
-    to,
-    type: "template",
-    template: {
-      name: tplName,
-      language: { code: tplLang },
-      components
+    const sel = String(selRow?.value || "");
+    const [tplName, tplLang] = sel.split(":");
+    if (!tplName || !tplLang) {
+      return bad(`Template not configured in site_settings for ${key}. Save a value like "my_template:af" first.`);
     }
-  };
 
-  let res, y;
-  try {
-    res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pnid)}/messages`, {
-      method: "POST",
-      headers: {
-        "authorization": "Bearer " + token,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(payload)
+    const token  = await getSettingInner("WA_TOKEN") || await getSettingInner("WHATSAPP_TOKEN");
+    const pnid   = await getSettingInner("WA_PHONE_NUMBER_ID") || await getSettingInner("PHONE_NUMBER_ID");
+    if (!token || !pnid) return bad("WhatsApp token / phone number ID missing in Site Settings");
+
+    const vars = Array.isArray(b?.vars) ? b.vars : [];
+    const components = vars.length
+      ? [{ type: "body", parameters: vars.map(v => ({ type: "text", text: String(v) })) }]
+      : [];
+
+    const payload = {
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: { name: tplName, language: { code: tplLang }, components }
+    };
+
+    let res, y;
+    try {
+      res = await fetch(`https://graph.facebook.com/v20.0/${encodeURIComponent(pnid)}/messages`, {
+        method: "POST",
+        headers: { "authorization": "Bearer " + token, "content-type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      y = await res.json().catch(()=>({}));
+    } catch (e) {
+      return bad("Meta API network error: " + (e?.message || e), 502);
+    }
+
+    if (!res.ok) {
+      const msg = y?.error?.message || (`Meta error ${res.status}`);
+      return bad(msg, res.status);
+    }
+
+    return json({
+      ok: true,
+      template: { key, name: tplName, lang: tplLang },
+      message_id: y?.messages?.[0]?.id || null,
     });
-    y = await res.json().catch(()=>({}));
-  } catch (e) {
-    return bad("Meta API network error: " + (e?.message || e), 502);
-  }
+  }));
 
-  if (!res.ok) {
-    const msg = y?.error?.message || (`Meta error ${res.status}`);
-    return bad(msg, res.status);
-  }
-
-  return json({
-    ok: true,
-    template: { key, name: tplName, lang: tplLang },
-    message_id: y?.messages?.[0]?.id || null,
-  });
-}));
-  
   router.add("GET", "/api/admin/whatsapp/diag", guard(async (_req, env) => {
     const token = await getSetting(env, "WA_TOKEN");
     const waba  = await getSetting(env, "WA_BUSINESS_ID");
@@ -511,6 +441,76 @@ router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
+  // 🔎 NEW: Tickets list (searchable & paginated)
+  router.add("GET", "/api/admin/tickets/list", guard(async (req, env) => {
+    const u = new URL(req.url);
+    const event_id = Number(u.searchParams.get("event_id") || 0);
+    const q = (u.searchParams.get("q") || "").trim();
+    const state = (u.searchParams.get("state") || "").trim(); // unused|in|out|void
+    const limit = Math.min(Math.max(Number(u.searchParams.get("limit") || 50), 1), 200);
+    const offset = Math.max(Number(u.searchParams.get("offset") || 0), 0);
+    if (!event_id) return bad("event_id required");
+
+    // Build WHERE with numbered placeholders
+    let idx = 1;
+    const params = [];
+    const where = [];
+
+    where.push(`t.event_id=?${idx}`); params.push(event_id); idx++;
+
+    if (q) {
+      where.push(
+        `(
+          t.qr LIKE ?${idx}
+          OR o.short_code LIKE ?${idx}
+          OR t.phone LIKE ?${idx}
+          OR o.buyer_phone LIKE ?${idx}
+          OR UPPER(COALESCE(t.attendee_first,'')) LIKE UPPER(?${idx})
+          OR UPPER(COALESCE(t.attendee_last,''))  LIKE UPPER(?${idx})
+          OR UPPER(COALESCE(o.buyer_name,''))     LIKE UPPER(?${idx})
+        )`
+      );
+      params.push(`%${q}%`); idx++;
+    }
+
+    if (state) {
+      where.push(`t.state=?${idx}`);
+      params.push(state);
+      idx++;
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const listSql =
+      `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
+              t.order_id, t.ticket_type_id, tt.name AS type_name,
+              o.short_code, o.buyer_name, o.buyer_phone
+         FROM tickets t
+    LEFT JOIN ticket_types tt ON tt.id = t.ticket_type_id
+    LEFT JOIN orders o       ON o.id = t.order_id
+        ${whereSql}
+        ORDER BY t.id DESC
+        LIMIT ${limit} OFFSET ${offset}`;
+
+    const countSql =
+      `SELECT COUNT(*) AS c
+         FROM tickets t
+    LEFT JOIN orders o ON o.id = t.order_id
+        ${whereSql}`;
+
+    const rows = await env.DB.prepare(listSql).bind(...params).all();
+    const cRow = await env.DB.prepare(countSql).bind(...params).first();
+    const total = Number(cRow?.c || 0);
+    const next_offset = offset + limit < total ? offset + limit : null;
+    const prev_offset = offset > 0 ? Math.max(0, offset - limit) : null;
+
+    return json({
+      ok: true,
+      tickets: rows.results || [],
+      total, limit, offset, next_offset, prev_offset
+    });
+  }));
+
   // Order lookup by short_code (used in Tickets > Lookup)
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim();
@@ -550,7 +550,6 @@ router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
 
     const sessions = sQ.results || [];
 
-    // Aggregate totals from pos_payments
     const tQ = await env.DB.prepare(
       `SELECT session_id,
               SUM(CASE WHEN method='pos_cash' THEN amount_cents ELSE 0 END) AS cash_cents,
@@ -700,8 +699,6 @@ router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
   }));
 
   /* ---------------- WhatsApp helpers (admin-triggered send) -------------- */
-  // Sends a template/message to a phone for a given order code.
-  // Expects ../services/whatsapp.js with sendWhatsAppTemplate(env, to, body, lang)
   router.add("POST", "/api/admin/orders/:code/send-whatsapp", guard(async (req, env, _ctx, { code }) => {
     let b; try { b = await req.json(); } catch { b = {}; }
     const msisdn = String(b?.phone || "").trim();
@@ -715,7 +712,6 @@ router.add("POST", "/api/admin/whatsapp/test", guard(async (req, env) => {
     ).bind(String(code || "")).first();
     if (!o) return bad("Order not found", 404);
 
-    // Dynamic import (keeps worker happy if file missing)
     let sendFn = null;
     try {
       const mod = await import("../services/whatsapp.js");
