@@ -1,7 +1,7 @@
 // src/router.js
 function createRouter() {
   const routes = [];
-  
+
   // Normalize paths so "/x//" -> "/x"
   const normalize = (p) => (p === "/" ? p : (p || "/").replace(/\/+$/, "")) || "/";
 
