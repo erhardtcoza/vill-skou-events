@@ -1,5 +1,5 @@
 // /src/ui/ticket_single.js
-// Renders a single-ticket view by token, with native "Add to Apple Wallet" and "Save to Google Wallet" CTAs.
+// Single-ticket page with Apple/Google Wallet CTAs that prefer hosted artwork.
 // Route expectation: your router serves /tt/:token and calls ticketSingleHTML(token).
 
 export function ticketSingleHTML(token) {
@@ -7,15 +7,13 @@ export function ticketSingleHTML(token) {
   const appleUrl  = `/api/wallet/apple/by-token/${encodeURIComponent(safeToken)}`;
   const googleUrl = `/api/wallet/google/by-token/${encodeURIComponent(safeToken)}`;
 
-  // Inline SVG badges (no external assets). Swap these for <img> tags if you host artwork in R2/KV.
-  const AppleBadgeSVG = `
+  // Inline SVG fallbacks (used only when hosted artwork isn't configured/available)
+  const FallbackAppleSVG = `
   <svg xmlns="http://www.w3.org/2000/svg" width="236" height="48" viewBox="0 0 236 48" aria-hidden="true" focusable="false">
     <rect x="0.5" y="0.5" width="235" height="47" rx="10" fill="#000"/>
     <rect x="0.5" y="0.5" width="235" height="47" rx="10" fill="none" stroke="#000"/>
-    <!-- Apple logo -->
     <path fill="#fff" transform="translate(16,10) scale(0.95)"
       d="M18.7 11.2c0-3 1.7-5.7 4.2-7.2-1.5-2.1-3.9-3.4-6.5-3.5-2.7-.3-5.3 1.6-6.6 1.6-1.4 0-3.6-1.6-5.9-1.5-3.1.1-5.9 1.8-7.5 4.5-3.2 5.4-.8 13.3 2.3 17.6 1.5 2.2 3.3 4.7 5.7 4.6 2.3-.1 3.2-1.5 6-1.5 2.7 0 3.6 1.5 5.9 1.4 2.4 0 3.9-2.2 5.4-4.4 1.7-2.5 2.4-4.9 2.4-5 0-.1-5.4-2.1-5.4-7.1z"/>
-    <!-- Wallet mark -->
     <g transform="translate(56,10)">
       <rect width="28" height="20" rx="3" fill="#1ABCFE"/>
       <rect y="4" width="28" height="20" rx="3" fill="#0ACF83" opacity="0.9"/>
@@ -27,11 +25,10 @@ export function ticketSingleHTML(token) {
     </g>
   </svg>`.trim();
 
-  const GoogleBadgeSVG = `
+  const FallbackGoogleSVG = `
   <svg xmlns="http://www.w3.org/2000/svg" width="260" height="48" viewBox="0 0 260 48" aria-hidden="true" focusable="false">
     <rect x="0.5" y="0.5" width="259" height="47" rx="10" fill="#1A73E8"/>
     <rect x="0.5" y="0.5" width="259" height="47" rx="10" fill="none" stroke="#1A73E8"/>
-    <!-- Google Wallet mark -->
     <g transform="translate(16,10)">
       <rect width="10" height="28" rx="5" fill="#34A853"/>
       <rect x="8" y="6" width="10" height="22" rx="5" fill="#FBBC04"/>
@@ -68,7 +65,7 @@ export function ticketSingleHTML(token) {
 
     .wallet-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
     .wallet-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;cursor:pointer;border-radius:12px;outline:none}
-    .wallet-btn svg{display:block}
+    .wallet-btn img, .wallet-btn svg{display:block}
     .wallet-btn:focus-visible{box-shadow:0 0 0 3px rgba(26,115,232,.35)}
     .wallet-btn[aria-disabled="true"]{opacity:.5;pointer-events:none}
 
@@ -91,8 +88,8 @@ export function ticketSingleHTML(token) {
     <div class="card" style="margin-top:12px">
       <h2 style="margin:0 0 10px;font-size:18px">Mobile Wallet</h2>
       <div class="wallet-row">
-        <button id="btn-apple" class="wallet-btn" title="Add to Apple Wallet" aria-disabled="true">${AppleBadgeSVG}</button>
-        <button id="btn-google" class="wallet-btn" title="Save to Google Wallet" aria-disabled="true">${GoogleBadgeSVG}</button>
+        <button id="btn-apple" class="wallet-btn" title="Add to Apple Wallet" aria-disabled="true">${FallbackAppleSVG}</button>
+        <button id="btn-google" class="wallet-btn" title="Save to Google Wallet" aria-disabled="true">${FallbackGoogleSVG}</button>
         <span id="wl-msg" class="muted"></span>
       </div>
     </div>
@@ -106,8 +103,33 @@ export function ticketSingleHTML(token) {
   const $ = (s, r=document)=>r.querySelector(s);
   const esc = (s='')=>String(s).replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 
+  // ---- Helper: public settings loader --------------------------------------
+  // Tries bulk read first: /api/public/settings?keys=K1,K2
+  // Falls back to single-key: /api/public/setting/K
+  async function getPublicSettings(keys){
+    const out = {};
+    try{
+      const r = await fetch('/api/public/settings?keys=' + encodeURIComponent(keys.join(',')));
+      if (r.ok){
+        const j = await r.json();
+        if (j && j.ok && j.settings) return j.settings;
+      }
+    }catch(_e){}
+    // fallback per-key
+    for (const k of keys){
+      try{
+        const r = await fetch('/api/public/setting/' + encodeURIComponent(k));
+        if (r.ok){
+          const j = await r.json();
+          if (j && j.ok && typeof j.value !== 'undefined') out[k] = j.value;
+        }
+      }catch(_e){}
+    }
+    return out;
+  }
+
+  // ---- Ticket loader --------------------------------------------------------
   async function loadTicket(){
-    // Try both common public endpoints; first one that returns ok wins.
     const endpoints = [
       \`/api/public/tickets/by-token/\${encodeURIComponent(token)}\`,
       \`/api/public/ticket/\${encodeURIComponent(token)}\`
@@ -127,9 +149,9 @@ export function ticketSingleHTML(token) {
       return;
     }
 
-    const t = data.ticket || {};
+    const t  = data.ticket || {};
     const ev = data.event || {};
-    const tt = data.type || {};
+    const tt = data.type  || {};
     const state = String(t.state || "").toUpperCase();
 
     const stateColor = state==="UNUSED" ? "#0a7d2b" :
@@ -161,28 +183,48 @@ export function ticketSingleHTML(token) {
       </div>\`;
   }
 
-  // Probe whether an endpoint exists (so we can enable the button).
+  // ---- Wallet endpoint probing + platform hints -----------------------------
   async function checkWalletEndpoint(url){
     try{
       const r = await fetch(url, { method: 'HEAD' });
-      // Consider 200/204/405 as "exists" (405 => method not allowed but route there).
-      if (r.status===200 || r.status===204 || r.status===405) return true;
-      // Treat 401/403 as "exists but protected" (still OK for our click-through).
-      if (r.status===401 || r.status===403) return true;
+      if ([200,204,405,401,403].includes(r.status)) return true;
       return false;
     }catch(_e){ return false; }
   }
-
   function isIOS(){ return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream; }
   function isAndroid(){ return /Android/.test(navigator.userAgent); }
 
   function enableBtn(el, onClick){
     el.setAttribute('aria-disabled','false');
     el.tabIndex = 0;
-    el.addEventListener('click', onClick, { once:false });
+    el.addEventListener('click', onClick);
     el.addEventListener('keydown', (e)=>{
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); }
     });
+  }
+
+  // ---- Hosted badge artwork -------------------------------------------------
+  async function applyBadgeArtwork(){
+    const appleBtn  = $("#btn-apple");
+    const googleBtn = $("#btn-google");
+
+    // Pull optional URLs from site_settings
+    const keys = ['WALLET_BADGE_APPLE_URL','WALLET_BADGE_GOOGLE_URL'];
+    const s = await getPublicSettings(keys);
+
+    // Helper to swap innerHTML to <img> if URL is valid
+    async function maybeSwap(btn, url, alt, w, h){
+      if (!url) return false;
+      try{
+        const head = await fetch(url, { method:'HEAD' });
+        if (!head.ok) return false;
+      }catch(_e){ return false; }
+      btn.innerHTML = \`<img src="\${url}" alt="\${alt}" width="\${w}" height="\${h}" loading="lazy">\`;
+      return true;
+    }
+
+    await maybeSwap(appleBtn,  s.WALLET_BADGE_APPLE_URL,  'Add to Apple Wallet', 236, 48);
+    await maybeSwap(googleBtn, s.WALLET_BADGE_GOOGLE_URL, 'Save to Google Wallet', 260, 48);
   }
 
   async function initWalletButtons(){
@@ -194,33 +236,28 @@ export function ticketSingleHTML(token) {
     if (isIOS()) wlMsg.textContent = "Tip: On iPhone, Apple Wallet is the best experience.";
     else if (isAndroid()) wlMsg.textContent = "Tip: On Android, Google Wallet is the best experience.";
 
+    // Swap in hosted images if configured
+    await applyBadgeArtwork();
+
+    // Probe endpoints and enable buttons
     const [appleOK, googleOK] = await Promise.all([
       checkWalletEndpoint(appleUrl),
       checkWalletEndpoint(googleUrl)
     ]);
 
     if (appleOK){
-      enableBtn(appleBtn, ()=>{
-        // Your Apple endpoint should return a .pkpass file (or redirect to one).
-        window.location.href = appleUrl;
-      });
+      enableBtn(appleBtn, ()=>{ window.location.href = appleUrl; });
     }
-
     if (googleOK){
-      enableBtn(googleBtn, ()=>{
-        // Your Google endpoint can redirect to a Save link or return a JWT/Save URL.
-        // Open in a new tab to preserve the ticket page.
-        window.open(googleUrl, '_blank', 'noopener,noreferrer');
-      });
+      enableBtn(googleBtn, ()=>{ window.open(googleUrl, '_blank', 'noopener,noreferrer'); });
     }
 
-    // If neither OK, explain nicely.
     if (!appleOK && !googleOK){
       wlMsg.textContent = "Wallet download is not available yet. Please try again later.";
     }
   }
 
-  // Boot:
+  // Boot
   loadTicket();
   initWalletButtons();
 </script>
