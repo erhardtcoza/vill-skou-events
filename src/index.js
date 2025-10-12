@@ -11,6 +11,7 @@ import { mountScan } from "./routes/scan.js";
 import { mountPastVisitors } from "./routes/past_visitors.js";
 import { mountVendor } from "./routes/vendor.js";
 import { mountWallet } from "./routes/wallet.js";
+import { mountPublicVendors } from "./routes/public_vendors.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -66,6 +67,7 @@ function initWithEnv(env) {
   mountPastVisitors(router);
   mountVendor(router);
   mountWallet(router);
+  mountPublicVendors(router);
 
   /* ------------------- UI ROUTES --------------------- */
   // Landing
