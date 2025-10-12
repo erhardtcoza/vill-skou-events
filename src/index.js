@@ -5,6 +5,8 @@ import { bindEnv } from "./env.js";
 
 // Routes (API)
 import { mountWATest } from "./routes/wa_test.js";
+import { mountDiag } from "./routes/diag.js";
+import { mountQR } from "./routes/qr.js";
 import { registerAddonRoutes } from "./addons/api.js";
 import { mountPayments } from "./routes/payments.js";
 import { mountPOS } from "./routes/pos.js";
@@ -54,20 +56,22 @@ function initWithEnv(env) {
   if (__initialized) return;
 
   /* -------------- API ROUTES (need env) -------------- */
-  mountAuth(router);          // /api/auth/*
-  mountPublic(router);        // /api/public/*
-  mountAdmin(router);         // /api/admin/*
-  mountSync(router);          // /api/sync/*
-  mountWhatsApp(router);      // /api/whatsapp/*
-  mountWATest(router);        // /api/wa-test/*
-  mountPayments(router);      // /api/payments/*
-  mountPOS(router, env);      // /api/pos/*
-  mountScan(router, env);     // /api/scan/*
-  mountPastVisitors(router);  // /api/past-visitors/*
-  mountVendor(router);        // /api/vendor/*
-  mountWallet(router);        // /api/wallet/*
-  mountPublicVendors(router); // /api/public/vendors/* etc.
-
+   mountAuth(router);          // /api/auth/*
+   mountPublic(router);        // /api/public/*
+   mountAdmin(router);         // /api/admin/*
+   mountSync(router);          // /api/sync/*
+   mountWhatsApp(router);      // /api/whatsapp/*
+   mountWATest(router);        // /api/wa-test/*
++  mountDiag(router);          // /api/diag*
++  mountQR(router);            // /api/qr/*
+   mountPayments(router);      // /api/payments/*
+   mountPOS(router, env);      // /api/pos/*
+   mountScan(router, env);     // /api/scan/*
+   mountPastVisitors(router);  // /api/past-visitors/*
+   mountVendor(router);        // /api/vendor/*
+   mountWallet(router);        // /api/wallet/*
+   mountPublicVendors(router); // /api/public/vendors/* etc.
+  
   /* ------------------- UI ROUTES --------------------- */
   // Landing
   router.add("GET", "/", async () => renderHTML(landingHTML));
