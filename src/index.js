@@ -9,6 +9,8 @@ import { mountPayments } from "./routes/payments.js";
 import { mountPOS } from "./routes/pos.js";
 import { mountScan } from "./routes/scan.js";
 import { mountPastVisitors } from "./routes/past_visitors.js";
+import { mountVendor } from "./routes/vendor.js";
+import { mountWallet } from "./routes/wallet.js";
 
 // API route mounts
 import { mountPublic } from "./routes/public.js";
@@ -62,6 +64,8 @@ function initWithEnv(env) {
   mountPOS(router, env);   // /api/pos/*
   mountScan(router, env);  // /api/scan/*
   mountPastVisitors(router);
+  mountVendor(router);
+  mountWallet(router);
 
   /* ------------------- UI ROUTES --------------------- */
   // Landing
