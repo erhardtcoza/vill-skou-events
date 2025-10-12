@@ -8,15 +8,18 @@ async function getSetting(env, key) {
   ).bind(key).first();
   return row ? row.value : null;
 }
-async function parseTpl(env, key) {
+
+async function parseTpl(env, key /* e.g. 'WA_TMP_ORDER_CONFIRM' */) {
   const sel = await getSetting(env, key);
   if (!sel) return { name: null, lang: "en_US" };
   const [n, l] = String(sel).split(":");
   return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
 }
+
 async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText, params = []) {
   if (!toMsisdn) return;
-  let svc = null; try { svc = await import("../services/whatsapp.js"); } catch { return; }
+  let svc = null;
+  try { svc = await import("../services/whatsapp.js"); } catch { return; }
   const sendTpl = svc.sendWhatsAppTemplate || null;
   const sendTxt = svc.sendWhatsAppTextIfSession || null;
   const { name, lang } = await parseTpl(env, tplKey);
@@ -36,6 +39,35 @@ function genToken(len = 18) {
   let out = "";
   for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   return out;
+}
+
+function normalizeMsisdnZAF(s) {
+  // keep digits only
+  const digits = String(s || "").replace(/\D/g, "");
+  if (!digits) return "";
+  // Convert SA local patterns to 27…; allow already-international
+  if (digits.startsWith("27")) return digits;
+  if (digits.startsWith("0") && digits.length === 10) return "27" + digits.slice(1);
+  return digits;
+}
+
+function asInt(n, def = 0) {
+  const x = Number(n);
+  return Number.isFinite(x) ? Math.trunc(x) : def;
+}
+
+/* ----------------- capacity / usage helper (optional) ---------------- */
+async function getTypeUsage(env, eventId) {
+  // returns Map(ticket_type_id -> issued count)
+  const q = await env.DB.prepare(
+    `SELECT ticket_type_id AS tid, COUNT(1) AS cnt
+       FROM tickets
+      WHERE event_id=?1
+      GROUP BY ticket_type_id`
+  ).bind(eventId).all();
+  const m = new Map();
+  for (const r of (q.results || [])) m.set(asInt(r.tid), asInt(r.cnt));
+  return m;
 }
 
 /* --------------------------- public routes --------------------------- */
@@ -71,164 +103,258 @@ export function mountPublic(router) {
     if (!ev) return bad("Not found", 404);
 
     const ttQ = await env.DB.prepare(
-      `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender
+      `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender, requires_name
          FROM ticket_types
         WHERE event_id=?1
         ORDER BY id ASC`
     ).bind(ev.id).all();
 
     const ticket_types = (ttQ.results || []).map(r => ({
-      id: Number(r.id),
+      id: asInt(r.id),
       name: r.name,
-      price_cents: Number(r.price_cents || 0),
-      capacity: Number(r.capacity || 0),
-      per_order_limit: Number(r.per_order_limit || 0),
-      requires_gender: Number(r.requires_gender || 0) ? 1 : 0
+      price_cents: asInt(r.price_cents),
+      capacity: asInt(r.capacity),
+      per_order_limit: asInt(r.per_order_limit),
+      requires_gender: asInt(r.requires_gender) ? 1 : 0,
+      requires_name: asInt(r.requires_name) ? 1 : 0
     }));
 
     return json({ ok: true, event: ev, ticket_types });
+  });
+
+  /* Event ticket availability snapshot (per type) */
+  router.add("GET", "/api/public/events/:slug/availability", async (_req, env, _ctx, { slug }) => {
+    const ev = await env.DB.prepare(
+      `SELECT id FROM events WHERE slug=?1 LIMIT 1`
+    ).bind(slug).first();
+    if (!ev) return bad("Not found", 404);
+
+    const ttQ = await env.DB.prepare(
+      `SELECT id, capacity FROM ticket_types WHERE event_id=?1 ORDER BY id ASC`
+    ).bind(ev.id).all();
+
+    const usage = await getTypeUsage(env, ev.id);
+    const list = (ttQ.results || []).map(r => {
+      const id = asInt(r.id);
+      const cap = asInt(r.capacity);
+      const used = usage.get(id) || 0;
+      const remaining = cap ? Math.max(0, cap - used) : null; // null = unlimited
+      return { ticket_type_id: id, capacity: cap || null, used, remaining };
+    });
+
+    return json({ ok: true, availability: list });
   });
 
   /* Create order (and send WA order confirmation) */
   router.add("POST", "/api/public/orders/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
-    const event_id   = Number(b?.event_id || 0);
-    const items      = Array.isArray(b?.items) ? b.items : [];
-    const attendees  = Array.isArray(b?.attendees) ? b.attendees : [];
-    const buyer_name = String(b?.buyer_name || "").trim();
-    const buyer_email= String(b?.email || "").trim();
-    const buyer_phone= String(b?.phone || "").trim();
-    const method     = b?.method === "pay_now" ? "online_yoco" : "pos_cash";
+    const event_id    = asInt(b?.event_id);
+    const itemsIn     = Array.isArray(b?.items) ? b.items : [];
+    const attendeesIn = Array.isArray(b?.attendees) ? b.attendees : [];
+    const buyer_name  = String(b?.buyer_name || "").trim();
+    const buyer_email = String(b?.email || "").trim();
+    const buyer_phone_raw = String(b?.phone || "").trim();
+    const buyer_phone = normalizeMsisdnZAF(buyer_phone_raw);
+    const method      = b?.method === "pay_now" ? "online_yoco" : "pos_cash";
 
     if (!event_id)     return bad("event_id required");
-    if (!items.length) return bad("items required");
+    if (!itemsIn.length) return bad("items required");
     if (!buyer_name)   return bad("buyer_name required");
 
-    // Validate ticket types
+    // Load ticket types for event
     const ttQ = await env.DB.prepare(
-      `SELECT id, name, price_cents, per_order_limit
+      `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender, requires_name
          FROM ticket_types WHERE event_id=?1`
     ).bind(event_id).all();
-    const ttMap = new Map((ttQ.results || []).map(r => [Number(r.id), r]));
+    const types = (ttQ.results || []);
+    const ttMap = new Map(types.map(r => [asInt(r.id), r]));
 
+    // Optional capacity check (against existing tickets)
+    const usage = await getTypeUsage(env, event_id);
+
+    // Validate + compute total
     let total_cents = 0;
     const order_items = [];
-    for (const row of items) {
-      const tid = Number(row?.ticket_type_id || 0);
-      const qty = Math.max(0, Number(row?.qty || 0));
+    for (const row of itemsIn) {
+      const tid = asInt(row?.ticket_type_id);
+      const qty = Math.max(0, asInt(row?.qty));
       if (!tid || !qty) continue;
 
       const tt = ttMap.get(tid);
       if (!tt) return bad("Unknown ticket_type_id " + tid);
 
-      const limit = Number(tt.per_order_limit || 0);
-      if (limit && qty > limit) return bad("Exceeded per-order limit for " + tt.name);
+      const limit = asInt(tt.per_order_limit);
+      if (limit && qty > limit) {
+        return bad(`Exceeded per-order limit for ${tt.name} (limit ${limit})`);
+      }
 
-      const unit = Number(tt.price_cents || 0);
+      const cap = asInt(tt.capacity);
+      if (cap) {
+        const already = usage.get(tid) || 0;
+        if (already + qty > cap) {
+          return bad(`Not enough availability for ${tt.name}`);
+        }
+      }
+
+      const unit = asInt(tt.price_cents);
       total_cents += qty * unit;
       order_items.push({ ticket_type_id: tid, qty, price_cents: unit });
     }
     if (!order_items.length) return bad("No valid items");
+    if (total_cents < 0) return bad("total_cents invalid");
 
-    const now = Math.floor(Date.now()/1000);
-    const short_code = ("C" + Math.random().toString(36).slice(2,8)).toUpperCase();
-
-    // Insert order
-    const contact_json = JSON.stringify({ name: buyer_name, email: buyer_email, phone: buyer_phone });
-    const items_json   = JSON.stringify(order_items);
-
-    const r = await env.DB.prepare(
-      `INSERT INTO orders
-         (short_code, event_id, status, payment_method, total_cents, contact_json,
-          created_at, buyer_name, buyer_email, buyer_phone, items_json)
-       VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`
-    ).bind(
-      short_code, event_id,
-      method === "online_yoco" ? "awaiting_payment" : "pending",
-      method, total_cents, contact_json, now,
-      buyer_name, buyer_email, buyer_phone, items_json
-    ).run();
-
-    const order_id = r.meta.last_row_id;
-
-    // Attach attendees (FIFO per ticket_type)
+    // Pre-index attendees by type (FIFO)
     const queues = new Map();
-    for (const a of attendees) {
-      const tid = Number(a?.ticket_type_id || 0);
+    for (const a of attendeesIn) {
+      const tid = asInt(a?.ticket_type_id);
       if (!tid) continue;
       const arr = queues.get(tid) || [];
       arr.push({
-        first: String(a.attendee_first||"").trim(),
-        last:  String(a.attendee_last||"").trim(),
-        gender:(a.gender||"")?.toLowerCase() || null,
-        phone: String(a.phone||"").trim() || null
+        first: String(a.attendee_first || "").trim() || null,
+        last:  String(a.attendee_last  || "").trim() || null,
+        gender:(a.gender || "") ? String(a.gender).toLowerCase() : null,
+        phone: normalizeMsisdnZAF(a.phone)
       });
       queues.set(tid, arr);
     }
-    for (const it of order_items) {
-      await env.DB.prepare(
-        `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
-         VALUES (?1,?2,?3,?4)`
-      ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
 
-      const q = queues.get(it.ticket_type_id) || [];
-      for (let i=0;i<it.qty;i++){
-        const qr = short_code + "-" + it.ticket_type_id + "-" + Math.random().toString(36).slice(2,8).toUpperCase();
-        const token = genToken(18);
-        const a = q.length ? q.shift() : {first:null,last:null,gender:null,phone:null};
-        await env.DB.prepare(
-          `INSERT INTO tickets
-             (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, issued_at, token)
-           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`
-        ).bind(order_id, event_id, it.ticket_type_id, a.first, a.last, a.gender, a.phone, qr, now, token).run();
+    // Enforce requires_name / requires_gender if configured
+    for (const it of order_items) {
+      const tt = ttMap.get(it.ticket_type_id);
+      const needName = asInt(tt?.requires_name) ? 1 : 0;
+      const needGender = asInt(tt?.requires_gender) ? 1 : 0;
+      if (needName || needGender) {
+        const q = queues.get(it.ticket_type_id) || [];
+        if (q.length < it.qty) {
+          return bad(`Attendee details required for ${tt.name} (${it.qty} needed)`);
+        }
+        if (needName && q.some(x => !x.first || !x.last)) {
+          return bad(`Name required for all ${tt.name} attendees`);
+        }
+        if (needGender && q.some(x => !x.gender)) {
+          return bad(`Gender required for all ${tt.name} attendees`);
+        }
       }
     }
 
-    // WhatsApp: Order confirmation (2 vars: name, order)
-    try {
-      const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
-      const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
-      const msg  = [
-        `Hallo ${buyer_name}`,
-        ``,
-        `Jou bestel nommer is ${short_code}.`,
-        `Indien jy nie nou aanlyn betaal het nie, kan jy die kode by die hek wys.`,
-        link ? `Volg vordering / betaal hier: ${link}` : ``,
-        `Ons stuur jou kaartjies sodra betaling klaar is.`
-      ].filter(Boolean).join("\n");
-      if (buyer_phone) {
-        const params = [buyer_name, short_code]; // EXACTLY 2 vars
-        await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", String(buyer_phone), msg, params);
-      }
-    } catch {}
+    // Persist in a transaction
+    const now = Math.floor(Date.now() / 1000);
+    const short_code = ("C" + Math.random().toString(36).slice(2, 8)).toUpperCase();
 
-    return json({
-      ok: true,
-      order: {
-        id: order_id, short_code, event_id,
-        status: (method === "online_yoco" ? "awaiting_payment" : "pending"),
-        payment_method: method, total_cents,
-        buyer_name, buyer_email, buyer_phone,
-        items: order_items
-      }
+    const contact_json = JSON.stringify({
+      name: buyer_name, email: buyer_email, phone: buyer_phone || buyer_phone_raw
     });
+    const items_json = JSON.stringify(order_items);
+
+    try {
+      await env.DB.exec("BEGIN");
+
+      const r = await env.DB.prepare(
+        `INSERT INTO orders
+           (short_code, event_id, status, payment_method, total_cents, contact_json,
+            created_at, buyer_name, buyer_email, buyer_phone, items_json)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)`
+      ).bind(
+        short_code, event_id,
+        (method === "online_yoco" ? "awaiting_payment" : "pending"),
+        method, total_cents, contact_json, now,
+        buyer_name, buyer_email, buyer_phone || buyer_phone_raw, items_json
+      ).run();
+
+      const order_id = r.meta.last_row_id;
+
+      // order_items rows
+      for (const it of order_items) {
+        await env.DB.prepare(
+          `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
+           VALUES (?1,?2,?3,?4)`
+        ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
+
+        const tt = ttMap.get(it.ticket_type_id);
+        const needName = asInt(tt?.requires_name) ? 1 : 0;
+        const needGender = asInt(tt?.requires_gender) ? 1 : 0;
+        const q = queues.get(it.ticket_type_id) || [];
+
+        for (let i = 0; i < it.qty; i++) {
+          const qr = `${short_code}-${it.ticket_type_id}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+          const token = genToken(18);
+          let a = q.length ? q.shift() : { first: null, last: null, gender: null, phone: null };
+
+          // If enforcement flagged above, values will exist; else keep nulls
+          if (!needName) {
+            a.first = a.first || null;
+            a.last  = a.last  || null;
+          }
+          if (!needGender) {
+            a.gender = a.gender || null;
+          }
+
+          await env.DB.prepare(
+            `INSERT INTO tickets
+               (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, issued_at, token)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`
+          ).bind(order_id, event_id, it.ticket_type_id, a.first, a.last, a.gender, a.phone, qr, now, token).run();
+        }
+      }
+
+      await env.DB.exec("COMMIT");
+
+      // WhatsApp: Order confirmation (2 vars: name, order)
+      try {
+        const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
+        const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
+        const msgLines = [
+          `Hallo ${buyer_name}`,
+          ``,
+          `Jou bestel nommer is ${short_code}.`,
+          (method === "online_yoco")
+            ? `Voltooi jou betaling om jou kaartjies te ontvang.`
+            : `Indien jy nie nou aanlyn betaal het nie, kan jy die kode by die hek wys.`,
+          link ? `Volg vordering / betaal hier: ${link}` : ``,
+          `Ons stuur jou kaartjies sodra betaling klaar is.`
+        ].filter(Boolean);
+        const msg = msgLines.join("\n");
+        if (buyer_phone) {
+          const params = [buyer_name, short_code]; // EXACTLY 2 vars for template
+          await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", buyer_phone, msg, params);
+        }
+      } catch {}
+
+      return json({
+        ok: true,
+        order: {
+          short_code,
+          event_id,
+          status: (method === "online_yoco" ? "awaiting_payment" : "pending"),
+          payment_method: method,
+          total_cents,
+          buyer_name,
+          buyer_email,
+          buyer_phone: buyer_phone || buyer_phone_raw,
+          items: order_items
+        }
+      });
+    } catch (e) {
+      try { await env.DB.exec("ROLLBACK"); } catch {}
+      return bad("Failed to create order");
+    }
   });
 
   /* Order status (thank-you polling) */
   router.add("GET", "/api/public/orders/status/:code", async (_req, env, _ctx, { code }) => {
-    const c = String(code||"").toUpperCase();
+    const c = String(code || "").toUpperCase();
     if (!c) return bad("code required");
     const row = await env.DB.prepare(
       `SELECT status FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
     ).bind(c).first();
-    if (!row) return json({ ok:false }, 404);
-    return json({ ok:true, status: row.status });
+    if (!row) return json({ ok: false }, 404);
+    return json({ ok: true, status: row.status });
   });
 
   /* Public ticket lookup by code (batch) */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
-    const c = String(code||"").trim().toUpperCase();
+    const c = String(code || "").trim().toUpperCase();
     if (!c) return bad("code required");
     const q = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
@@ -240,12 +366,12 @@ export function mountPublic(router) {
         WHERE UPPER(o.short_code)=?1
         ORDER BY t.id ASC`
     ).bind(c).all();
-    return json({ ok:true, tickets: q.results || [] });
+    return json({ ok: true, tickets: q.results || [] });
   });
 
   /* Public single-ticket lookup by token */
   router.add("GET", "/api/public/tickets/by-token/:token", async (_req, env, _ctx, { token }) => {
-    const tok = String(token||"").trim();
+    const tok = String(token || "").trim();
     if (!tok) return bad("token required");
 
     const row = await env.DB.prepare(
@@ -261,7 +387,7 @@ export function mountPublic(router) {
        LIMIT 1`
     ).bind(tok).first();
 
-    if (!row) return json({ ok:false, error:"not_found" }, 404);
+    if (!row) return json({ ok: false, error: "not_found" }, 404);
 
     return json({
       ok: true,
