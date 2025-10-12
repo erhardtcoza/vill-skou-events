@@ -77,8 +77,7 @@ export function ticketHTML(code) {
   const orderCode = ${JSON.stringify(String(code||""))};
 
   const money = (c)=> 'R' + (Number(c||0)/100).toFixed(2);
-  const qrURL = (data, size=220, fmt='png') =>
-    \`https://api.qrserver.com/v1/create-qr-code/?format=\${fmt}&size=\${size}x\${size}&data=\${encodeURIComponent(data)}\`;
+  const qrURL = (data, size=280) => \`/api/qr/svg/\${encodeURIComponent(data)}\`; // internal fast QR
 
   document.getElementById('printAll').addEventListener('click',()=>window.print());
 
@@ -89,33 +88,28 @@ export function ticketHTML(code) {
     return '<span class="pill ok">unused</span>';
   }
 
-  // Make response shape robust across backends
+  // Normalize to match our /api/public/tickets/by-code response
   function normalize(raw){
-    const order = raw.order || {};
-    const buyer = order.buyer_name || raw.buyer_name || raw.customer_name || '';
-    const short = order.short_code || raw.short_code || orderCode;
-
-    const tix = (raw.tickets || raw.items || []).map(t => ({
-      id: t.id || t.ticket_id,
-      status: t.status || t.state || 'unused',
-      type_name: t.type_name || t.name || t.category || 'Kaartjie',
-      price_cents: t.price_cents ?? t.priceCents ?? t.amount_cents ?? 0,
-      attendee_first: t.attendee_first || t.first || t.first_name || '',
-      attendee_last:  t.attendee_last  || t.last  || t.last_name  || '',
-      qr_string: t.qr || t.qr_string || t.verify || '',          // data string to encode
-      qr_png_url: t.qr_png_url || t.qr_url || ''                 // if server gives a ready PNG
+    const short = raw.short_code || orderCode;
+    const tix = (raw.tickets || []).map(t => ({
+      id: t.id,
+      status: t.state || 'unused',
+      type_name: t.type_name || 'Kaartjie',
+      price_cents: Number.isFinite(t.price_cents) ? t.price_cents : 0,
+      attendee_first: t.attendee_first || '',
+      attendee_last:  t.attendee_last  || '',
+      qr_string: t.qr || ''
     }));
-
-    return { order: { short_code: short, buyer_name: buyer }, tickets: tix };
+    return { order: { short_code: short, buyer_name: raw.buyer_name || '' }, tickets: tix };
   }
 
-  async function downloadPNG(data, name){
-    const url = qrURL(data, 600, 'png');
+  async function downloadSVG(data, name){
+    const url = qrURL(data, 600);
     const res = await fetch(url, { mode:'cors' });
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = name || 'ticket.png';
+    a.download = name || 'ticket.svg';
     document.body.appendChild(a);
     a.click();
     URL.revokeObjectURL(a.href);
@@ -126,7 +120,7 @@ export function ticketHTML(code) {
     listEl.innerHTML = data.tickets.map(t=>{
       const who = [t.attendee_first, t.attendee_last].filter(Boolean).join(' ');
       const price = typeof t.price_cents === 'number' ? money(t.price_cents) : '';
-      const qrImg = t.qr_png_url ? t.qr_png_url : qrURL(t.qr_string||String(t.id||''), 280, 'png');
+      const qrImg = t.qr_string ? qrURL(t.qr_string) : '';
 
       return \`
         <div class="card">
@@ -143,20 +137,20 @@ export function ticketHTML(code) {
           </div>
 
           <div class="qr">
-            <img alt="QR vir toegang" src="\${qrImg}"/>
+            \${qrImg ? '<img alt="QR vir toegang" src="'+qrImg+'" loading="eager"/>' : ''}
           </div>
 
           <div class="actions">
-            \${(t.qr_string||t.qr_png_url) ? '<button class="btn ghost" data-dl="'+String(t.qr_string||'')+'" data-id="'+String(t.id||'')+'">Download PNG</button>' : ''}
+            \${t.qr_string ? '<button class="btn ghost" data-dl="'+String(t.qr_string||'')+'" data-id="'+String(t.id||'')+'">Download QR (SVG)</button>' : ''}
           </div>
 
-          <div class="foot">Bestel \${data.order.short_code || ''} · paid by \${data.order.buyer_name || '—'}</div>
+          <div class="foot">Bestel \${data.order.short_code || ''} · betaal deur \${data.order.buyer_name || '—'}</div>
         </div>\`;
     }).join('');
 
     // wire downloads
     listEl.querySelectorAll('[data-dl]').forEach(btn=>{
-      btn.addEventListener('click',()=>downloadPNG(btn.getAttribute('data-dl')||'', \`ticket-\${btn.getAttribute('data-id')||''}.png\`));
+      btn.addEventListener('click',()=>downloadSVG(btn.getAttribute('data-dl')||'', \`ticket-\${btn.getAttribute('data-id')||''}.svg\`));
     });
   }
 
@@ -165,7 +159,6 @@ export function ticketHTML(code) {
     const empty = document.getElementById('empty');
 
     try{
-      // Your existing endpoint
       const r = await fetch('/api/public/tickets/by-code/' + encodeURIComponent(orderCode), { credentials:'include' });
       const j = await r.json().catch(()=>({ ok:false }));
       if (!j || j.ok === false){
