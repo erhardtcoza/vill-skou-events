@@ -2,8 +2,9 @@
 import { Router } from "./router.js";
 import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
+
+// Routes (API)
 import { mountWATest } from "./routes/wa_test.js";
-import { badgeHTML } from "./ui/badge.js";
 import { registerAddonRoutes } from "./addons/api.js";
 import { mountPayments } from "./routes/payments.js";
 import { mountPOS } from "./routes/pos.js";
@@ -12,8 +13,6 @@ import { mountPastVisitors } from "./routes/past_visitors.js";
 import { mountVendor } from "./routes/vendor.js";
 import { mountWallet } from "./routes/wallet.js";
 import { mountPublicVendors } from "./routes/public_vendors.js";
-
-// API route mounts
 import { mountPublic } from "./routes/public.js";
 import { mountAdmin } from "./routes/admin.js";
 import { mountSync } from "./routes/sync.js";
@@ -21,6 +20,7 @@ import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
 
 // UI
+import { badgeHTML } from "./ui/badge.js";
 import { landingHTML } from "./ui/landing.js";
 import { adminHTML } from "./ui/admin.js";
 import { shopHTML } from "./ui/shop.js";
@@ -30,20 +30,19 @@ import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
 import { loginHTML } from "./ui/login.js";
 import { thankYouHTML } from "./ui/thankyou.js";
-// NEW: single-ticket UI
 import { ticketSingleHTML } from "./ui/ticket_single.js";
 
 // Auth guard for UI pages
 import { requireRole } from "./utils/auth.js";
 
 const router = Router();
-registerAddonRoutes(router);   // keep addons
+registerAddonRoutes(router); // keep addons
 
 // Helper: accept either a function (returning HTML) or a string export
 function renderHTML(mod, ...args) {
   try {
     const html = (typeof mod === "function") ? mod(...args) : mod;
-    return new Response(html, { headers: { "content-type": "text/html" } });
+    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
   } catch (_e) {
     return new Response("Internal error rendering page", { status: 500 });
   }
@@ -55,19 +54,19 @@ function initWithEnv(env) {
   if (__initialized) return;
 
   /* -------------- API ROUTES (need env) -------------- */
-  mountAuth(router);       // /api/auth/*
-  mountPublic(router);     // /api/public/*
-  mountAdmin(router);      // /api/admin/*
-  mountSync(router);       // /api/sync/*
-  mountWhatsApp(router);   // /api/whatsapp/*
-  mountWATest(router);
-  mountPayments(router);
-  mountPOS(router, env);   // /api/pos/*
-  mountScan(router, env);  // /api/scan/*
-  mountPastVisitors(router);
-  mountVendor(router);
-  mountWallet(router);
-  mountPublicVendors(router);
+  mountAuth(router);          // /api/auth/*
+  mountPublic(router);        // /api/public/*
+  mountAdmin(router);         // /api/admin/*
+  mountSync(router);          // /api/sync/*
+  mountWhatsApp(router);      // /api/whatsapp/*
+  mountWATest(router);        // /api/wa-test/*
+  mountPayments(router);      // /api/payments/*
+  mountPOS(router, env);      // /api/pos/*
+  mountScan(router, env);     // /api/scan/*
+  mountPastVisitors(router);  // /api/past-visitors/*
+  mountVendor(router);        // /api/vendor/*
+  mountWallet(router);        // /api/wallet/*
+  mountPublicVendors(router); // /api/public/vendors/* etc.
 
   /* ------------------- UI ROUTES --------------------- */
   // Landing
@@ -88,7 +87,7 @@ function initWithEnv(env) {
     return renderHTML(posSellHTML, session_id);
   }));
 
-  // Printable badge by QR (public)
+  // Printable vendor badge by QR (public)
   router.add("GET", "/badge/:qr", async (_req, env2, _ctx, { qr }) => {
     const p = await env2.DB.prepare(
       `SELECT vp.id, vp.type, vp.label, vp.vehicle_reg, vp.qr,
@@ -121,7 +120,7 @@ function initWithEnv(env) {
       }
     });
 
-    return new Response(html, { headers: { "content-type": "text/html" } });
+    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
   });
 
   // Scanner UI (guarded)
@@ -136,12 +135,12 @@ function initWithEnv(env) {
     renderHTML(() => checkoutHTML(slug))
   );
 
-  // Ticket display (batch)
+  // Ticket display (batch by order short code)
   router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) =>
     renderHTML(() => ticketHTML(code))
   );
 
-  // NEW: Single-ticket display by token
+  // Single-ticket display by token
   router.add("GET", "/tt/:token", async (_req, _env2, _ctx, { token }) =>
     renderHTML(() => ticketSingleHTML(token))
   );
