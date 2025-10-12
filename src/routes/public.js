@@ -335,7 +335,7 @@ export function mountPublic(router) {
           items: order_items
         }
       });
-    } catch (e) {
+    } catch (_e) {
       try { await env.DB.exec("ROLLBACK"); } catch {}
       return bad("Failed to create order");
     }
