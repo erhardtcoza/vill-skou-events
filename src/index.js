@@ -56,22 +56,22 @@ function initWithEnv(env) {
   if (__initialized) return;
 
   /* -------------- API ROUTES (need env) -------------- */
-   mountAuth(router);          // /api/auth/*
-   mountPublic(router);        // /api/public/*
-   mountAdmin(router);         // /api/admin/*
-   mountSync(router);          // /api/sync/*
-   mountWhatsApp(router);      // /api/whatsapp/*
-   mountWATest(router);        // /api/wa-test/*
-+  mountDiag(router);          // /api/diag*
-+  mountQR(router);            // /api/qr/*
-   mountPayments(router);      // /api/payments/*
-   mountPOS(router, env);      // /api/pos/*
-   mountScan(router, env);     // /api/scan/*
-   mountPastVisitors(router);  // /api/past-visitors/*
-   mountVendor(router);        // /api/vendor/*
-   mountWallet(router);        // /api/wallet/*
-   mountPublicVendors(router); // /api/public/vendors/* etc.
-  
+  mountAuth(router);          // /api/auth/*
+  mountPublic(router);        // /api/public/*
+  mountAdmin(router);         // /api/admin/*
+  mountSync(router);          // /api/sync/*
+  mountWhatsApp(router);      // /api/whatsapp/*
+  mountWATest(router);        // /api/wa-test/*
+  mountDiag(router);          // /api/diag*
+  mountQR(router);            // /api/qr/*
+  mountPayments(router);      // /api/payments/*
+  mountPOS(router, env);      // /api/pos/*
+  mountScan(router, env);     // /api/scan/*
+  mountPastVisitors(router);  // /api/past-visitors/*
+  mountVendor(router);        // /api/vendor/*
+  mountWallet(router);        // /api/wallet/*
+  mountPublicVendors(router); // /api/public/vendors/* etc.
+
   /* ------------------- UI ROUTES --------------------- */
   // Landing
   router.add("GET", "/", async () => renderHTML(landingHTML));
@@ -162,7 +162,7 @@ export default {
   async fetch(req, env, ctx) {
     const bound = bindEnv(env);
     initWithEnv(bound); // ensure routes that need env are mounted once
-    const handler = withCORS((rq, e, c, p) => router.handle(rq, e, c, p));
+    const handler = withCORS((rq, e, c) => router.handle(rq, e, c));
     return handler(req, bound, ctx);
   },
 };
