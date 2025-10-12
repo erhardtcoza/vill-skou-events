@@ -1,6 +1,6 @@
 // /src/ui/ticket_single.js
-// Single-ticket page with Skou logo, event name, attendee + type, and BIG QR.
-// Also includes Apple/Google Wallet CTAs that use hosted badge images if configured.
+// Single-ticket page with Skou logo (if configured), attendee + type, and BIG QR.
+// Also includes Apple/Google Wallet CTAs using your wallet endpoints.
 
 export function ticketSingleHTML(token) {
   const safeToken = String(token || "").replace(/[^a-zA-Z0-9._-]/g, "");
@@ -12,16 +12,14 @@ export function ticketSingleHTML(token) {
   <svg xmlns="http://www.w3.org/2000/svg" width="236" height="48" viewBox="0 0 236 48" aria-hidden="true" focusable="false">
     <rect x="0.5" y="0.5" width="235" height="47" rx="10" fill="#000"/>
     <rect x="0.5" y="0.5" width="235" height="47" rx="10" fill="none" stroke="#000"/>
-    <path fill="#fff" transform="translate(16,10) scale(0.95)"
-      d="M18.7 11.2c0-3 1.7-5.7 4.2-7.2-1.5-2.1-3.9-3.4-6.5-3.5-2.7-.3-5.3 1.6-6.6 1.6-1.4 0-3.6-1.6-5.9-1.5-3.1.1-5.9 1.8-7.5 4.5-3.2 5.4-.8 13.3 2.3 17.6 1.5 2.2 3.3 4.7 5.7 4.6 2.3-.1 3.2-1.5 6-1.5 2.7 0 3.6 1.5 5.9 1.4 2.4 0 3.9-2.2 5.4-4.4 1.7-2.5 2.4-4.9 2.4-5 0-.1-5.4-2.1-5.4-7.1z"/>
-    <g transform="translate(56,10)">
-      <rect width="28" height="20" rx="3" fill="#1ABCFE"/>
-      <rect y="4" width="28" height="20" rx="3" fill="#0ACF83" opacity="0.9"/>
-      <rect y="8" width="28" height="20" rx="3" fill="#A259FF" opacity="0.85"/>
-      <rect y="12" width="28" height="20" rx="3" fill="#F24E1E" opacity="0.8"/>
+    <g transform="translate(16,9)">
+      <circle cx="12" cy="12" r="12" fill="#fff"/>
+      <rect x="30" y="6" width="24" height="12" rx="3" fill="#1ABCFE"/>
+      <rect x="30" y="12" width="24" height="12" rx="3" fill="#0ACF83" opacity="0.85"/>
+      <rect x="30" y="18" width="24" height="12" rx="3" fill="#A259FF" opacity="0.8"/>
     </g>
     <g fill="#fff" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-weight="600">
-      <text x="92" y="28" font-size="14">Add to Apple Wallet</text>
+      <text x="92" y="30" font-size="14">Add to Apple Wallet</text>
     </g>
   </svg>`.trim();
 
@@ -36,7 +34,7 @@ export function ticketSingleHTML(token) {
       <rect x="24" y="18" width="10" height="10" rx="5" fill="#4285F4"/>
     </g>
     <g fill="#fff" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-weight="600">
-      <text x="60" y="28" font-size="14">Save to Google Wallet</text>
+      <text x="60" y="30" font-size="14">Save to Google Wallet</text>
     </g>
   </svg>`.trim();
 
@@ -54,7 +52,7 @@ export function ticketSingleHTML(token) {
       --muted:#6b7280;
       --bg:#ffffff;
       --card:#ffffff;
-      --accent:#E10600; /* Vinet red if you want to accent pills etc. */
+      --accent:#E10600;
     }
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--text)}
     .wrap{max-width:720px;margin:0 auto;padding:16px}
@@ -64,22 +62,18 @@ export function ticketSingleHTML(token) {
     .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     @media (max-width:720px){ .grid{grid-template-columns:1fr} }
 
-    /* Header with logo + event name */
     .header{display:flex;gap:12px;align-items:center;margin-bottom:8px}
     .logo{width:54px;height:54px;border-radius:10px;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden}
     .logo img{max-width:100%;max-height:100%;display:block}
 
-    /* Ticket meta */
     .pill{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px}
     .pill.accent{border-color:var(--accent); color:var(--accent);}
 
-    /* QR area: BIG for security scanning */
     .qrbox{display:flex;gap:16px;align-items:center;justify-content:flex-end}
     .qrbox .code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-weight:700;word-break:break-all}
-    .qr{width:300px;height:300px}      /* big QR */
+    .qr{width:300px;height:300px}
     @media (max-width:720px){ .qr{width:260px;height:260px} }
 
-    /* Wallet CTAs */
     .wallet-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
     .wallet-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;cursor:pointer;border-radius:12px;outline:none}
     .wallet-btn img, .wallet-btn svg{display:block}
@@ -113,7 +107,7 @@ export function ticketSingleHTML(token) {
   const $ = (s, r=document)=>r.querySelector(s);
   const esc = (s='')=>String(s).replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 
-  // --- Public settings fetchers (for default logo + hosted wallet badge urls) ---
+  // Optional public settings (logo, hosted wallet badges). If endpoints don't exist, we silently ignore.
   async function getPublicSettings(keys){
     const out = {};
     try{
@@ -135,19 +129,27 @@ export function ticketSingleHTML(token) {
     return out;
   }
 
-  // --- Ticket loader (renders logo, event name, attendee, type, BIG QR) ---
+  function stateColor(s) {
+    const u = String(s||'').toUpperCase();
+    return u==="UNUSED" ? "#0a7d2b" :
+           u==="IN"     ? "#1f6feb" :
+           u==="OUT"    ? "#936000" :
+           u==="VOID"   ? "#b91c1c" : "#6b7280";
+  }
+
+  function qrImgTag(data){
+    if (!data) return "";
+    return '<img class="qr" src="/api/qr/svg/'+encodeURIComponent(data)+'" alt="QR" width="300" height="300" loading="eager"/>';
+  }
+
   async function loadTicket(){
-    const endpoints = [
-      \`/api/public/tickets/by-token/\${encodeURIComponent(token)}\`,
-      \`/api/public/ticket/\${encodeURIComponent(token)}\`
-    ];
-    let data=null;
-    for (const url of endpoints){
-      try{
-        const r = await fetch(url, { credentials: 'include' });
-        if (r.ok){ data = await r.json(); break; }
-      }catch(_e){}
-    }
+    // Primary endpoint (matches your current server)
+    const url = \`/api/public/tickets/by-token/\${encodeURIComponent(token)}\`;
+    let data = null;
+    try{
+      const r = await fetch(url, { credentials:'include' });
+      if (r.ok) data = await r.json();
+    }catch(_e){}
 
     const card = $("#ticket-card");
     if (!data || !data.ok){
@@ -155,39 +157,28 @@ export function ticketSingleHTML(token) {
       return;
     }
 
-    const t  = data.ticket || {};
-    const ev = data.event || {};
-    const tt = data.type  || {};
-    const state = String(t.state || "").toUpperCase();
+    const t = data.ticket || {};
+    const holder = [t.attendee_first||'', t.attendee_last||''].filter(Boolean).join(' ');
+    const typeName = t.type_name || "Ticket";
+    const shortCode = data.short_code || t.short_code || data.order?.short_code || '';
+    const buyerName = data.buyer_name || t.buyer_name || data.order?.buyer_name || '';
 
-    // Resolve logo: event.logo_url first, else site default
-    let logoUrl = ev.logo_url || null;
-    if (!logoUrl){
+    // Logo: prefer DEFAULT_EVENT_LOGO_URL if present
+    let logoUrl = null;
+    try{
       const s = await getPublicSettings(['DEFAULT_EVENT_LOGO_URL']);
       logoUrl = s.DEFAULT_EVENT_LOGO_URL || null;
-    }
+    }catch(_e){}
     const logoHTML = logoUrl ? \`<div class="logo"><img src="\${esc(logoUrl)}" alt="Event logo" loading="eager"></div>\`
                              : \`<div class="logo" aria-hidden="true"></div>\`;
-
-    const stateColor = state==="UNUSED" ? "#0a7d2b" :
-                       state==="IN"     ? "#1f6feb" :
-                       state==="OUT"    ? "#936000" :
-                       state==="VOID"   ? "#b91c1c" : "#6b7280";
-
-    const qrHTML = t.qr
-      ? \`<img class="qr" src="/api/public/qr/\${encodeURIComponent(t.qr)}?s=600" alt="QR" width="300" height="300" loading="eager"/>\`
-      : "";
-
-    const holder = (t.attendee_first||'') + ' ' + (t.attendee_last||'');
-    const typeName = tt.name || "Ticket";
 
     card.innerHTML = \`
       <div class="header">
         \${logoHTML}
         <div>
           <div class="muted" style="font-size:12px">Villiersdorp Landbou Skou</div>
-          <h1 style="margin:2px 0 4px">\${esc(ev.name||"")}</h1>
-          <div class="muted">\${ev.starts_at?new Date(ev.starts_at*1000).toLocaleString():''} • \${esc(ev.venue||'')}</div>
+          <h1 style="margin:2px 0 4px">Jou kaartjie</h1>
+          <div class="muted">\${esc(buyerName || '—')} • Order \${esc(shortCode || '—')}</div>
         </div>
       </div>
 
@@ -197,20 +188,18 @@ export function ticketSingleHTML(token) {
             <div style="font-size:16px"><b>Attendee:</b> \${esc(holder.trim() || '—')}</div>
             <div style="margin-top:8px">
               <span class="pill accent">\${esc(typeName)}</span>
-              <span class="pill" style="border-color:\${stateColor};color:\${stateColor}">\${state||"—"}</span>
-              <span class="pill">Order: \${esc(data.order?.short_code || '—')}</span>
+              <span class="pill" style="border-color:\${stateColor(t.state)};color:\${stateColor(t.state)}">\${esc(t.state||"—")}</span>
             </div>
           </div>
         </div>
 
         <div class="qrbox">
-          \${qrHTML}
+          \${qrImgTag(t.qr)}
           <div class="code">\${esc(t.qr||'')}</div>
         </div>
       </div>\`;
   }
 
-  // --- Wallet endpoint probing + artwork + hints ---
   async function checkWalletEndpoint(url){
     try{
       const r = await fetch(url, { method: 'HEAD' });
