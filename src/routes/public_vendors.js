@@ -9,7 +9,6 @@ function formatDateRangeUnix(starts_at, ends_at) {
   if (!starts_at || !ends_at) return "";
   const a = new Date(Number(starts_at) * 1000);
   const b = new Date(Number(ends_at) * 1000);
-  // Keep it locale-friendly without forcing a specific locale on the Worker
   const aStr = a.toLocaleDateString();
   const bStr = b.toLocaleDateString();
   return (aStr === bStr) ? aStr : `${aStr} – ${bStr}`;
@@ -31,7 +30,6 @@ export function mountPublicVendors(router) {
 
   /* -------------------------- Event headers -------------------------- */
 
-  // Optional: event header for directory
   router.get("/api/public/event/header/:event_id", async (c) => {
     const { event_id } = c.req.param();
     const row = await c.env.DB.prepare(
@@ -53,7 +51,6 @@ export function mountPublicVendors(router) {
     });
   });
 
-  // If you have a "current" event concept (latest by starts_at)
   router.get("/api/public/event/current", async (c) => {
     const row = await c.env.DB.prepare(
       `SELECT id, name, venue, logo_url, starts_at, ends_at
@@ -78,7 +75,6 @@ export function mountPublicVendors(router) {
 
   /* -------------------- Distinct stall types & counts -------------------- */
 
-  // Distinct stall types (categories)
   router.get("/api/public/vendors/types", async (c) => {
     const eventId = Number(c.req.query("event_id") || 0) || null;
 
@@ -96,7 +92,6 @@ export function mountPublicVendors(router) {
     }, { headers: { "Cache-Control": "max-age=120, stale-while-revalidate=600" }});
   });
 
-  // Counts per type (handy for filter pills)
   router.get("/api/public/vendors/type-counts", async (c) => {
     const eventId = Number(c.req.query("event_id") || 0) || null;
 
@@ -134,7 +129,6 @@ export function mountPublicVendors(router) {
     if (eventId) { wh.push(`event_id=?${args.length + 1}`); args.push(eventId); }
 
     if (qStr) {
-      // Search name, description, site, tel, email
       wh.push(`(name LIKE ?${args.length + 1} ESCAPE '\\'
             OR description LIKE ?${args.length + 2} ESCAPE '\\'
             OR site_no LIKE ?${args.length + 3} ESCAPE '\\'
@@ -172,7 +166,6 @@ export function mountPublicVendors(router) {
     const pageSafe = clamp(page, 1, totalPages);
     const offset = (pageSafe - 1) * pageSizeReq;
 
-    // Using identifiers directly for ORDER BY (whitelisted via safeSort/safeOrder)
     const rows = await c.env.DB.prepare(
       `SELECT id, slug, name, stall_type, site_no, tel, email,
               description, website, facebook, logo_url
@@ -182,7 +175,6 @@ export function mountPublicVendors(router) {
         LIMIT ${pageSizeReq} OFFSET ${offset}`
     ).bind(...args).all();
 
-    // Defaults for fallback logos
     const defaultEventLogo = await c.env.DB.prepare(
       `SELECT value FROM site_settings WHERE key='DEFAULT_EVENT_LOGO_URL' LIMIT 1`
     ).first();
@@ -203,7 +195,6 @@ export function mountPublicVendors(router) {
 
   /* -------------------------- Single vendor fetch --------------------------- */
 
-  // Fetch by numeric id or slug in one endpoint
   router.get("/api/public/vendor/:key", async (c) => {
     const { key } = c.req.param();
     const isId = /^\d+$/.test(key);
@@ -233,7 +224,6 @@ export function mountPublicVendors(router) {
 
   /* --------------------------- Random sampler ------------------------------ */
 
-  // Small random selection for homepage carousels/grids
   router.get("/api/public/vendors/random", async (c) => {
     const eventId   = Number(c.req.query("event_id") || 0) || null;
     const limitReq  = clamp(parseInt(c.req.query("limit") || "6", 10) || 6, 1, 24);
@@ -243,7 +233,6 @@ export function mountPublicVendors(router) {
     if (eventId) { wh.push(`event_id=?${args.length + 1}`); args.push(eventId); }
     const where = "WHERE " + wh.join(" AND ");
 
-    // SQLite doesn't have ORDER BY RANDOM() perf issues at this small scale
     const rows = await c.env.DB.prepare(
       `SELECT id, slug, name, stall_type, site_no, logo_url
          FROM vendors
