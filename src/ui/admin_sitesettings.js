@@ -11,6 +11,7 @@ export const adminSiteSettingsJS = `
       <button class="tab-btn active" data-tab="gen">General</button>
       <button class="tab-btn" data-tab="wa">WhatsApp</button>
       <button class="tab-btn" data-tab="yoco">Yoco</button>
+      <button class="tab-btn" data-tab="wallet">Wallet</button>
       <button class="tab-btn" data-tab="past">Past Visitors</button>
     </div>
 
@@ -31,6 +32,14 @@ export const adminSiteSettingsJS = `
       #panel-settings .muted{color:#667085}
       #wa-templates table{width:100%;border-collapse:collapse}
       #wa-templates th,#wa-templates td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
+      #pv-list table{width:100%;border-collapse:collapse}
+      #pv-list th,#pv-list td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
+      #pv-list tbody tr:hover{background:#fafafa}
+
+      /* inbox */
+      #wa-inbox .msg{padding:8px 10px;border:1px solid #eef1f3;border-radius:10px;margin:8px 0;background:#fafafa}
+      #wa-inbox .in{background:#fff}
+      #wa-inbox .out{background:#f6fffb}
     </style>
 
     <!-- GENERAL -->
@@ -48,7 +57,7 @@ export const adminSiteSettingsJS = `
       </div>
     </section>
 
-    <!-- WHATSApp -->
+    <!-- WHATSAPP -->
     <section id="tab-wa" style="display:none">
       <h2 style="margin:0 0 8px">WhatsApp</h2>
       <div class="grid">
@@ -178,6 +187,25 @@ export const adminSiteSettingsJS = `
       </div>
     </section>
 
+    <!-- WALLET -->
+    <section id="tab-wallet" style="display:none">
+      <h2 style="margin:0 0 8px">Wallet</h2>
+      <p class="muted" style="margin:6px 0 14px">
+        Configure the Apple Wallet signer service. Once saved, a button will appear on the ticket page
+        to download a <code>.pkpass</code> for mobile.
+      </p>
+      <div class="grid">
+        <div><label>Signer URL</label><input id="APPLE_PASS_SIGN_URL" placeholder="https://wallet-signer.example.com/sign"/></div>
+        <div><label>Bearer token (optional)</label><input id="APPLE_SIGNER_BEARER" placeholder="secret-bearer"/></div>
+        <div><label>Pass Type Identifier</label><input id="APPLE_PASS_TYPE_ID" placeholder="pass.com.example.events"/></div>
+        <div><label>Apple Team ID</label><input id="APPLE_TEAM_ID" placeholder="ABCDE12345"/></div>
+      </div>
+      <div class="row-actions">
+        <button id="saveWallet" class="btn">Save Wallet</button>
+        <span id="msgWallet" class="muted"></span>
+      </div>
+    </section>
+
     <!-- PAST VISITORS -->
     <section id="tab-past" style="display:none">
       <h2 style="margin:0 0 8px">Past Visitors</h2>
@@ -218,20 +246,49 @@ export const adminSiteSettingsJS = `
         </div>
       </div>
 
-      <!-- Numbers -->
       <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
-        <h3 style="margin:0 0 8px">Numbers</h3>
-        <p class="muted">Normalize all stored numbers to <b>27XXXXXXXXX</b> (11 digits) for WhatsApp.</p>
+        <h3 style="margin:0 0 8px">List / Send</h3>
+        <div class="grid">
+          <div><label>Search</label><input id="pv-q" placeholder="name or phone"/></div>
+          <div><label>Tag contains</label><input id="pv-tag" placeholder="2025"/></div>
+          <div>
+            <label>Opt-out</label>
+            <select id="pv-optout">
+              <option value="">All</option>
+              <option value="0">Only opted-in</option>
+              <option value="1">Only opted-out</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:flex-end"><button id="pv-refresh" class="btn">Refresh</button></div>
+        </div>
+
+        <div id="pv-list" style="margin-top:10px" class="muted">No results yet.</div>
+
+        <div class="grid" style="margin-top:10px">
+          <div>
+            <label>Template</label>
+            <select id="pv-tpl-key">
+              <option value="WA_TMP_SKOU_SALES">Skou reminders (recommended)</option>
+              <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
+              <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
+              <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
+            </select>
+          </div>
+          <div style="grid-column:1/-1">
+            <label>Body variables (comma separated, optional)</label>
+            <input id="pv-vars" placeholder="e.g. Villiersdorp Skou, 5–7 Sept"/>
+          </div>
+        </div>
         <div class="row-actions">
-          <button id="pv-normalize" class="btn">Normalize all numbers</button>
-          <span id="pv-normalize-msg" class="muted"></span>
+          <button id="pv-send" class="btn">Send to selected (max 50)</button>
+          <span id="pv-send-msg" class="muted"></span>
         </div>
       </div>
 
-      <!-- Campaigns -->
+      <!-- NEW: Campaigns -->
       <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px;">
-        <h3 style="margin:0 0 8px">Campaigns</h3>
-        <p class="muted" style="margin-top:0">Create a campaign from <b>all eligible past visitors</b> (opted-in & valid numbers), then run/continue it in batches.</p>
+        <h3 style="margin:0 0 8px">Campaigns (advanced)</h3>
+        <p class="muted" style="margin-top:0">Create a campaign from the <b>currently selected rows</b>, then run/continue it in batches.</p>
 
         <div class="grid">
           <div style="grid-column:1/-1">
@@ -254,7 +311,7 @@ export const adminSiteSettingsJS = `
         </div>
 
         <div class="row-actions">
-          <button id="pv-camp-create" class="btn">Create campaign from ALL</button>
+          <button id="pv-camp-create" class="btn">Create campaign from selected</button>
           <span id="pv-camp-create-msg" class="muted"></span>
         </div>
 
@@ -262,8 +319,8 @@ export const adminSiteSettingsJS = `
 
         <div class="grid">
           <div><label>Campaign ID</label><input id="pv-camp-id" placeholder="e.g. 12"/></div>
-          <div><label>Batch size</label><input id="pv-camp-batch" value="1000"/></div>
-          <div><label>Delay (ms) between messages</label><input id="pv-camp-delay" value="200"/></div>
+          <div><label>Batch size</label><input id="pv-camp-batch" value="30"/></div>
+          <div><label>Delay (ms) between messages</label><input id="pv-camp-delay" value="350"/></div>
         </div>
 
         <div class="row-actions">
@@ -279,14 +336,14 @@ export const adminSiteSettingsJS = `
 
   function showTab(name){
     root.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-    ['gen','wa','yoco','past'].forEach(x => {
+    ['gen','wa','yoco','wallet','past'].forEach(x => {
       const sec = document.getElementById('tab-'+x);
       if (sec) sec.style.display = (x===name ? 'block' : 'none');
     });
   }
   root.querySelectorAll('.tab-btn').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
   window.AdminPanels.settingsSwitch = (sub)=>{
-    const map = { general:'gen', whatsapp:'wa', yoco:'yoco', past:'past' };
+    const map = { general:'gen', whatsapp:'wa', yoco:'yoco', wallet:'wallet', past:'past' };
     showTab(map[sub] || 'gen');
   };
 
@@ -309,11 +366,11 @@ export const adminSiteSettingsJS = `
       const el = document.getElementById(k); if (el && s[k]!=null) el.value = s[k];
     });
 
+    // WhatsApp creds + options
     $('#WHATSAPP_TOKEN').value = s.WHATSAPP_TOKEN || '';
     $('#PHONE_NUMBER_ID').value = s.PHONE_NUMBER_ID || '';
     $('#BUSINESS_ID').value = s.BUSINESS_ID || '';
 
-    // ✅ checkbox + textarea
     $('#WA_AUTOREPLY_ENABLED').checked = String(s.WA_AUTOREPLY_ENABLED||'0') === '1';
     $('#WA_AUTOREPLY_TEXT').value = s.WA_AUTOREPLY_TEXT || '';
 
@@ -327,6 +384,19 @@ export const adminSiteSettingsJS = `
     $('#WA_TMP_PAYMENT_CONFIRM').dataset.value = s.WA_TMP_PAYMENT_CONFIRM || '';
     $('#WA_TMP_TICKET_DELIVERY').dataset.value = s.WA_TMP_TICKET_DELIVERY || '';
     $('#WA_TMP_SKOU_SALES').dataset.value      = s.WA_TMP_SKOU_SALES || '';
+
+    // Yoco
+    $('#YOCO_MODE').value = (s.YOCO_MODE||'test').toLowerCase();
+    $('#YOCO_TEST_PUBLIC_KEY').value = s.YOCO_TEST_PUBLIC_KEY || '';
+    $('#YOCO_TEST_SECRET_KEY').value = s.YOCO_TEST_SECRET_KEY || '';
+    $('#YOCO_LIVE_PUBLIC_KEY').value = s.YOCO_LIVE_PUBLIC_KEY || '';
+    $('#YOCO_LIVE_SECRET_KEY').value = s.YOCO_LIVE_SECRET_KEY || '';
+
+    // Apple Wallet
+    $('#APPLE_PASS_SIGN_URL').value = s.APPLE_PASS_SIGN_URL || '';
+    $('#APPLE_SIGNER_BEARER').value = s.APPLE_SIGNER_BEARER || '';
+    $('#APPLE_PASS_TYPE_ID').value  = s.APPLE_PASS_TYPE_ID  || '';
+    $('#APPLE_TEAM_ID').value       = s.APPLE_TEAM_ID       || '';
   }
 
   // ---------- WA templates list + selectors ----------
@@ -367,6 +437,7 @@ export const adminSiteSettingsJS = `
   // ---------- WhatsApp Inbox + quick reply ----------
   async function loadInbox(){
     const box = $('#wa-inbox');
+    if (!box) return;
     box.textContent = 'Loading…';
     const r = await fetch('/api/whatsapp/inbox', { credentials:'include' })
       .then(x=>x.json()).catch(()=>({ok:false}));
@@ -386,7 +457,7 @@ export const adminSiteSettingsJS = `
     }).join('');
   }
 
-  $('#wa_reply_btn').onclick = async ()=>{
+  $('#wa_reply_btn')?.addEventListener('click', async ()=>{
     const to = msisdn($('#wa_reply_to').value);
     const text = $('#wa_reply_text').value.trim();
     const m = $('#wa_reply_msg');
@@ -398,9 +469,9 @@ export const adminSiteSettingsJS = `
     }).then(x=>x.json()).catch(()=>({ok:false}));
     m.textContent = r.ok ? 'Sent.' : 'Failed (no recent session?)';
     if (r.ok){ $('#wa_reply_text').value=''; loadInbox(); }
-  };
+  });
 
-  // ---------- Past visitors: small helpers ----------
+  // ---------- Past visitors: helpers ----------
   function parseCSV(text) {
     const lines = String(text || "").split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
     const rows = [];
@@ -413,10 +484,48 @@ export const adminSiteSettingsJS = `
     }
     return rows;
   }
-  const parseVars = (raw)=>{ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; };
+
+  async function refreshList() {
+    const q = $('#pv-q').value.trim();
+    const tag = $('#pv-tag').value.trim();
+    const opt = $('#pv-optout').value;
+    const url = new URL('/api/admin/past/list', location.origin);
+    if (q) url.searchParams.set('query', q);
+    if (tag) url.searchParams.set('tag', tag);
+    if (opt) url.searchParams.set('optout', opt);
+    url.searchParams.set('limit', '50');
+    const j = await fetch(url, { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
+    const box = $('#pv-list');
+    if (!j.ok){ box.textContent='Failed to load.'; return; }
+    const rows = j.visitors || [];
+    if (!rows.length){ box.textContent='No results.'; return; }
+
+    box.innerHTML = \`
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="pv-all"/></th>
+          <th>Name</th><th>Phone</th><th>Tags</th><th>Opt-out</th><th>Last send</th><th>Status</th>
+        </tr></thead>
+        <tbody>\${rows.map(r=>\`
+          <tr>
+            <td><input type="checkbox" class="pv-chk" data-id="\${r.id}"/></td>
+            <td>\${esc(r.name||'')}</td>
+            <td>\${esc(r.phone||'')}</td>
+            <td>\${esc(r.tags||'')}</td>
+            <td>\${r.opt_out? 'Yes':'No'}</td>
+            <td>\${r.last_contacted_at? new Date(r.last_contacted_at*1000).toLocaleString() : ''}</td>
+            <td>\${esc(r.last_send_status||'')}</td>
+          </tr>\`).join('')}</tbody>
+      </table>\`;
+
+    $('#pv-all').onclick = (e)=>{
+      const on = e.target.checked;
+      box.querySelectorAll('.pv-chk').forEach(c=>c.checked = on);
+    };
+  }
 
   // ---------- Past visitors: actions ----------
-  $('#pv-import').onclick = async ()=>{
+  $('#pv-import')?.addEventListener('click', async ()=>{
     const rows = parseCSV($('#pv-csv').value);
     const overwrite = $('#pv-overwrite').value === '1';
     const filename = $('#pv-filename').value.trim() || null;
@@ -428,9 +537,10 @@ export const adminSiteSettingsJS = `
     $('#pv-import-msg').textContent = j.ok
       ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
       : ('Failed: '+(j.error||''));
-  };
+    refreshList();
+  });
 
-  $('#pv-sync').onclick = async ()=>{
+  $('#pv-sync')?.addEventListener('click', async ()=>{
     const from = $('#pv-sync-from').value;
     const event_id = Number($('#pv-sync-event').value || 0) || null;
     const tag = $('#pv-sync-tag').value || '2025';
@@ -442,21 +552,29 @@ export const adminSiteSettingsJS = `
     $('#pv-sync-msg').textContent = j.ok
       ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
       : ('Failed: '+(j.error||''));
-  };
+    refreshList();
+  });
 
-  // Normalize all numbers
-  $('#pv-normalize').onclick = async ()=>{
-    const m = $('#pv-normalize-msg');
-    m.textContent = 'Normalizing…';
-    const j = await fetch('/api/admin/past/normalize', {
-      method:'POST', credentials:'include'
+  $('#pv-refresh')?.addEventListener('click', refreshList);
+
+  $('#pv-send')?.addEventListener('click', async ()=>{
+    const ids = Array.from(document.querySelectorAll('.pv-chk'))
+      .filter(c=>c.checked).map(c=>Number(c.dataset.id)).slice(0,50);
+    if (!ids.length){ $('#pv-send-msg').textContent='Select up to 50.'; return; }
+    const template_key = $('#pv-tpl-key').value;
+    const vars = ($('#pv-vars').value||'').split(',').map(s=>s.trim()).filter(Boolean);
+    $('#pv-send-msg').textContent = 'Sending…';
+    const j = await fetch('/api/admin/past/send', {
+      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
+      body: JSON.stringify({ visitor_ids: ids, template_key, vars })
     }).then(r=>r.json()).catch(()=>({ok:false}));
-    m.textContent = j.ok
-      ? \`Done. fixed \${j.fixed}, unchanged \${j.unchanged}, invalid \${j.invalid} (total \${j.total})\`
-      : ('Failed: '+(j.error||''));
-  };
+    $('#pv-send-msg').textContent = j.ok ? 'Done.' : ('Failed: '+(j.error||'')); 
+    refreshList();
+  });
 
-  // Campaign actions
+  // ---------- Campaign helpers ----------
+  function parseVars(raw){ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; }
+
   async function campaignStatus(cid){
     const box = $('#pv-camp-status-box');
     box.textContent = 'Loading status…';
@@ -475,8 +593,12 @@ export const adminSiteSettingsJS = `
       </div>\`;
   }
 
-  $('#pv-camp-create').onclick = async ()=>{
+  // ---------- Campaign actions ----------
+  $('#pv-camp-create')?.addEventListener('click', async ()=>{
+    const ids = Array.from(document.querySelectorAll('.pv-chk'))
+      .filter(c=>c.checked).map(c=>Number(c.dataset.id));
     const msg = $('#pv-camp-create-msg');
+    if (!ids.length){ msg.textContent='Select some rows first.'; return; }
     const template_key = $('#pv-camp-tpl').value;
     const name = $('#pv-camp-name').value.trim() || ('Ad-hoc '+new Date().toLocaleString());
     const vars = parseVars($('#pv-camp-vars').value);
@@ -484,7 +606,7 @@ export const adminSiteSettingsJS = `
     msg.textContent = 'Creating…';
     const j = await fetch('/api/admin/past/campaigns/create', {
       method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ name, template_key, vars })
+      body: JSON.stringify({ name, template_key, vars, visitor_ids: ids })
     }).then(r=>r.json()).catch(()=>({ok:false}));
 
     if (j.ok){
@@ -494,14 +616,14 @@ export const adminSiteSettingsJS = `
     } else {
       msg.textContent = 'Failed: ' + (j.error||'');
     }
-  };
+  });
 
-  $('#pv-camp-run').onclick = async ()=>{
+  $('#pv-camp-run')?.addEventListener('click', async ()=>{
     const cid = Number($('#pv-camp-id').value || 0);
     const msg = $('#pv-camp-run-msg');
     if (!cid){ msg.textContent='Enter campaign ID.'; return; }
-    const batch = Number($('#pv-camp-batch').value || 1000);
-    const delay = Number($('#pv-camp-delay').value || 200);
+    const batch = Number($('#pv-camp-batch').value || 30);
+    const delay = Number($('#pv-camp-delay').value || 350);
 
     msg.textContent = 'Processing…';
     const j = await fetch('/api/admin/past/campaigns/run', {
@@ -511,33 +633,80 @@ export const adminSiteSettingsJS = `
 
     msg.textContent = j.ok ? ('Processed '+(j.processed||0)+(j.done?' (done)':'') ) : ('Failed: '+(j.error||''));
     campaignStatus(cid);
-  };
+  });
 
-  $('#pv-camp-status').onclick = ()=>{
+  $('#pv-camp-status')?.addEventListener('click', ()=>{
     const cid = Number($('#pv-camp-id').value || 0);
     if (!cid){ $('#pv-camp-run-msg').textContent='Enter campaign ID.'; return; }
     campaignStatus(cid);
-  };
+  });
 
-  // WA test send
-  $('#sendWATest').onclick = async ()=>{
-    const to = msisdn($('#TEST_PHONE').value);
-    const template_key = $('#TEST_TEMPLATE_KEY').value;
-    const vars = parseVars($('#TEST_VARS').value);
-    const msg = $('#msgWATest');
-    if (!to){ msg.textContent='Enter phone like 27XXXXXXXXX'; return; }
-    msg.textContent='Sending…';
-    const res = await fetch('/api/admin/whatsapp/test', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ to, template_key, vars })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    msg.textContent = res.ok ? ('Sent ✔ ' + (res.message_id?('id: '+res.message_id):'')) : ('Failed: ' + (res.error||'unknown'));
-  };
+  // Wallet: save
+  $('#saveWallet')?.addEventListener('click', ()=>{
+    const updates = {
+      APPLE_PASS_SIGN_URL: $('#APPLE_PASS_SIGN_URL').value.trim(),
+      APPLE_SIGNER_BEARER: $('#APPLE_SIGNER_BEARER').value.trim(),
+      APPLE_PASS_TYPE_ID:  $('#APPLE_PASS_TYPE_ID').value.trim(),
+      APPLE_TEAM_ID:       $('#APPLE_TEAM_ID').value.trim(),
+    };
+    save(updates, $('#msgWallet'));
+  });
+
+  // General / WhatsApp / Yoco save buttons
+  $('#saveGen')?.addEventListener('click', ()=>{
+    const updates = {
+      SITE_NAME: $('#SITE_NAME').value,
+      SITE_LOGO_URL: $('#SITE_LOGO_URL').value,
+      PUBLIC_BASE_URL: $('#PUBLIC_BASE_URL').value,
+      VERIFY_TOKEN: $('#VERIFY_TOKEN').value
+    };
+    save(updates, $('#msgGen'));
+  });
+
+  $('#saveWA')?.addEventListener('click', ()=>{
+    const updates = {
+      WHATSAPP_TOKEN: $('#WHATSAPP_TOKEN').value,
+      PHONE_NUMBER_ID: $('#PHONE_NUMBER_ID').value,
+      BUSINESS_ID: $('#BUSINESS_ID').value,
+      WA_AUTOREPLY_ENABLED: ($('#WA_AUTOREPLY_ENABLED').checked? '1':'0'),
+      WA_AUTOREPLY_TEXT: $('#WA_AUTOREPLY_TEXT').value,
+      WA_MAP_VAR1: $('#WA_MAP_VAR1').value,
+      WA_MAP_VAR2: $('#WA_MAP_VAR2').value,
+      WA_MAP_VAR3: $('#WA_MAP_VAR3').value,
+      WA_TMP_ORDER_CONFIRM: $('#WA_TMP_ORDER_CONFIRM').value,
+      WA_TMP_PAYMENT_CONFIRM: $('#WA_TMP_PAYMENT_CONFIRM').value,
+      WA_TMP_TICKET_DELIVERY: $('#WA_TMP_TICKET_DELIVERY').value,
+      WA_TMP_SKOU_SALES: $('#WA_TMP_SKOU_SALES').value,
+    };
+    save(updates, $('#msgWA'));
+  });
+
+  $('#syncWA')?.addEventListener('click', async ()=>{
+    const msg = $('#msgWA');
+    msg.textContent = 'Syncing…';
+    const r = await fetch('/api/admin/whatsapp/sync', { method:'POST', credentials:'include' })
+      .then(x=>x.json()).catch(()=>({ok:false}));
+    msg.textContent = r.ok ? ('Fetched '+(r.fetched||0)+' templates (total '+(r.total||0)+')') : ('Failed: '+(r.error||''));
+    loadTemplates();
+  });
+
+  $('#saveYoco')?.addEventListener('click', ()=>{
+    const updates = {
+      YOCO_MODE: $('#YOCO_MODE').value,
+      YOCO_TEST_PUBLIC_KEY: $('#YOCO_TEST_PUBLIC_KEY').value,
+      YOCO_TEST_SECRET_KEY: $('#YOCO_TEST_SECRET_KEY').value,
+      YOCO_LIVE_PUBLIC_KEY: $('#YOCO_LIVE_PUBLIC_KEY').value,
+      YOCO_LIVE_SECRET_KEY: $('#YOCO_LIVE_SECRET_KEY').value
+    };
+    save(updates, $('#msgYoco'));
+  });
 
   // init
   loadSettings().then(()=>{ loadTemplates(); loadInbox(); });
   const hash = (location.hash||"").replace(/^#settings:/,"");
   if (hash === "past") showTab("past");
+  else if (hash === "wallet") showTab("wallet");
+  else showTab("gen");
   window.AdminPanels.settings = ()=>showTab('gen');
 })();
 `;
