@@ -159,7 +159,7 @@ export function mountPublic(router) {
     return json({ ok: true, availability: list });
   });
 
-  /* Create order (and send WA order confirmation) — schema-safe + logs */
+  /* Create order (NO manual BEGIN/COMMIT; uses batch + cleanup) */
   router.add("POST", "/api/public/orders/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
@@ -176,7 +176,7 @@ export function mountPublic(router) {
     if (!itemsIn.length)  return bad("items required");
     if (!buyer_name)      return bad("buyer_name required");
 
-    // Load ticket types for event (no requires_name in SQL)
+    // ticket types (keep SQL simple — no requires_name column here)
     const ttQ = await env.DB.prepare(
       `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender
          FROM ticket_types WHERE event_id=?1`
@@ -186,7 +186,7 @@ export function mountPublic(router) {
 
     const usage = await getTypeUsage(env, event_id);
 
-    // Validate + compute total
+    // validate + total
     let total_cents = 0;
     const order_items = [];
     for (const row of itemsIn) {
@@ -212,7 +212,7 @@ export function mountPublic(router) {
     }
     if (!order_items.length) return bad("No valid items");
 
-    // Pre-index attendees by type (FIFO)
+    // attendees queues
     const queues = new Map();
     for (const a of attendeesIn) {
       const tid = asInt(a?.ticket_type_id);
@@ -227,7 +227,7 @@ export function mountPublic(router) {
       queues.set(tid, arr);
     }
 
-    // Only enforce gender if the type requires it (we don't enforce name here)
+    // enforce gender only (we're not using requires_name server side)
     for (const it of order_items) {
       const tt = ttMap.get(it.ticket_type_id);
       const needGender = asInt(tt?.requires_gender) ? 1 : 0;
@@ -238,11 +238,10 @@ export function mountPublic(router) {
       }
     }
 
-    // Detect tickets table columns so we insert correctly
+    // detect optional ticket columns
     const hasGender = await tableHasColumn(env, "tickets", "gender");
     const hasToken  = await tableHasColumn(env, "tickets", "token");
 
-    // Persist in a transaction
     const now = Math.floor(Date.now() / 1000);
     const short_code = ("C" + Math.random().toString(36).slice(2, 8)).toUpperCase();
 
@@ -251,9 +250,10 @@ export function mountPublic(router) {
     });
     const items_json = JSON.stringify(order_items);
 
-    try {
-      await env.DB.exec("BEGIN");
+    let order_id = 0;
 
+    try {
+      // 1) insert order (single statement to get last_row_id)
       const r = await env.DB.prepare(
         `INSERT INTO orders
            (short_code, event_id, status, payment_method, total_cents, contact_json,
@@ -266,14 +266,19 @@ export function mountPublic(router) {
         buyer_name, buyer_email, buyer_phone || buyer_phone_raw, items_json
       ).run();
 
-      const order_id = r.meta.last_row_id;
+      order_id = r.meta.last_row_id;
 
-      // order_items rows
+      // 2) build all dependent inserts and run atomically via batch()
+      const stmts = [];
+
+      // order_items
       for (const it of order_items) {
-        await env.DB.prepare(
-          `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
-           VALUES (?1,?2,?3,?4)`
-        ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
+        stmts.push(
+          env.DB.prepare(
+            `INSERT INTO order_items (order_id, ticket_type_id, qty, price_cents)
+             VALUES (?1,?2,?3,?4)`
+          ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents)
+        );
 
         const q = queues.get(it.ticket_type_id) || [];
         for (let i = 0; i < it.qty; i++) {
@@ -281,21 +286,19 @@ export function mountPublic(router) {
           const token = hasToken ? genToken(18) : null;
           let a = q.length ? q.shift() : { first: null, last: null, gender: null, phone: null };
 
-          // Build INSERT dynamically based on available columns
-          const cols = ["order_id", "event_id", "ticket_type_id", "attendee_first", "attendee_last", "phone", "qr", "issued_at"];
+          const cols = ["order_id","event_id","ticket_type_id","attendee_first","attendee_last","phone","qr","issued_at"];
           const vals = [order_id, event_id, it.ticket_type_id, a.first || null, a.last || null, a.phone || null, qr, now];
-          if (hasGender) { cols.splice(5, 0, "gender"); vals.splice(5, 0, a.gender || null); } // before phone
+          if (hasGender) { cols.splice(5, 0, "gender"); vals.splice(5, 0, a.gender || null); }
           if (hasToken)  { cols.push("token"); vals.push(token); }
-
           const placeholders = cols.map((_, idx) => `?${idx+1}`).join(",");
           const sql = `INSERT INTO tickets (${cols.join(",")}) VALUES (${placeholders})`;
-          await env.DB.prepare(sql).bind(...vals).run();
+          stmts.push(env.DB.prepare(sql).bind(...vals));
         }
       }
 
-      await env.DB.exec("COMMIT");
+      await env.DB.batch(stmts); // all-or-nothing for the dependent rows
 
-      // WhatsApp: Order confirmation (2 vars: name, order)
+      // 3) notify on WhatsApp (best effort)
       try {
         const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
         const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
@@ -331,7 +334,16 @@ export function mountPublic(router) {
         }
       });
     } catch (e) {
-      try { await env.DB.exec("ROLLBACK"); } catch {}
+      // Best-effort cleanup to avoid half-baked orders
+      try {
+        if (order_id) {
+          await env.DB.batch([
+            env.DB.prepare(`DELETE FROM tickets WHERE order_id=?1`).bind(order_id),
+            env.DB.prepare(`DELETE FROM order_items WHERE order_id=?1`).bind(order_id),
+            env.DB.prepare(`DELETE FROM orders WHERE id=?1`).bind(order_id),
+          ]);
+        }
+      } catch {}
       console.error("orders/create failed:", e && (e.stack || e.message || e));
       return bad("Failed to create order: " + (e?.message || "internal"));
     }
