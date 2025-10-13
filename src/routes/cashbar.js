@@ -97,6 +97,10 @@ export function mountCashbar(router, env) {
     const { amount_cents, source='yoco', ref='', cashier_id='' } = await req.json();
     const wallet_id = params.id;
 
+    if (!(Number.isFinite(amount_cents) || /^\d+$/.test(String(amount_cents)))) {
+      return bad(400, 'invalid_amount');
+    }
+
     const w = await getWallet(env, wallet_id);
     if (!w) return bad(404, 'wallet_not_found');
 
@@ -104,7 +108,7 @@ export function mountCashbar(router, env) {
     const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
     const r = await stub.fetch('https://do/topup', {
       method: 'POST',
-      body: JSON.stringify({ amount_cents })
+      body: JSON.stringify({ amount_cents: Number(amount_cents) })
     });
     if (!r.ok) return r;
     const { balance_cents, version } = await r.json();
@@ -113,7 +117,7 @@ export function mountCashbar(router, env) {
     await env.DB.prepare(`
       INSERT INTO topups(id,wallet_id,amount_cents,source,ref,cashier_id,created_at)
       VALUES(?1,?2,?3,?4,?5,?6,?7)
-    `).bind(nanoid(), wallet_id, amount_cents, source, ref, cashier_id, Date.now()).run();
+    `).bind(nanoid(), wallet_id, Number(amount_cents), source, ref, cashier_id, Date.now()).run();
 
     await env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`)
       .bind(balance_cents, version, wallet_id).run();
@@ -150,14 +154,14 @@ export function mountCashbar(router, env) {
     const sFrom = env.WALLET_DO.get(env.WALLET_DO.idFromName(from));
     let r = await sFrom.fetch('https://do/deduct', {
       method:'POST',
-      body: JSON.stringify({ amount_cents, expected_version: donor.version })
+      body: JSON.stringify({ amount_cents: Number(amount_cents), expected_version: donor.version })
     });
     if (!r.ok) return r;
     const { balance_cents: donor_new, version: donor_ver } = await r.json();
 
     // recipient topup
     const sTo = env.WALLET_DO.get(env.WALLET_DO.idFromName(to));
-    r = await sTo.fetch('https://do/topup', { method:'POST', body: JSON.stringify({ amount_cents }) });
+    r = await sTo.fetch('https://do/topup', { method:'POST', body: JSON.stringify({ amount_cents: Number(amount_cents) }) });
     const { balance_cents: rec_new, version: rec_ver } = await r.json();
 
     // persist
@@ -167,7 +171,7 @@ export function mountCashbar(router, env) {
       env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(rec_new,   rec_ver,   to),
       env.DB.prepare(`INSERT INTO transfers(id,donor_wallet_id,recipient_wallet_id,amount_cents,created_at)
                       VALUES(?1,?2,?3,?4,?5)`)
-        .bind(nanoid(), from, to, amount_cents, now)
+        .bind(nanoid(), from, to, Number(amount_cents), now)
     ]);
 
     // Notify both
@@ -197,7 +201,7 @@ export function mountCashbar(router, env) {
     const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
     const r = await stub.fetch('https://do/deduct', {
       method:'POST',
-      body: JSON.stringify({ amount_cents: total_cents, expected_version })
+      body: JSON.stringify({ amount_cents: Number(total_cents), expected_version })
     });
     if (!r.ok) return r;
     const { balance_cents, version } = await r.json();
@@ -207,7 +211,7 @@ export function mountCashbar(router, env) {
         .bind(balance_cents, version, wallet_id),
       env.DB.prepare(`INSERT INTO sales(id,wallet_id,items_json,total_cents,bartender_id,device_id,created_at)
                       VALUES(?1,?2,?3,?4,?5,?6,?7)`)
-        .bind(nanoid(), wallet_id, JSON.stringify(items), total_cents, bartender_id, device_id, Date.now())
+        .bind(nanoid(), wallet_id, JSON.stringify(items), Number(total_cents), bartender_id, device_id, Date.now())
     ]);
 
     // WhatsApp purchase + low-balance nudge
@@ -222,6 +226,12 @@ export function mountCashbar(router, env) {
 
     return json({ new_balance_cents: balance_cents, version });
   });
+
+  // ITEMS (keep here so Bar UI works even without a separate items route)
+  router.get('/api/items', async () => {
+    const rows = await env.DB.prepare(`SELECT * FROM items WHERE active=1`).all();
+    return json({ items: rows.results || [] });
+  });
 }
 
 /* helpers */
@@ -235,16 +245,45 @@ function shortId() {
   return s;
 }
 function first(n){ return (n||'').split(' ')[0]; }
-function cents(n){ return (n/100).toFixed(2); }
+function cents(n){ return (Number(n)/100).toFixed(2); }
 
 /**
- * Attendee lookup via INTERNAL route (recommended quick start).
- * Ensure you mounted /api/attendees/:code. If not, replace with a direct D1 query.
+ * DIRECT D1 attendee lookup using your schemas.
+ * Accepts either tickets.qr OR orders.short_code and returns {id,name,mobile}.
  */
-async function lookupAttendee(env, ticket_code){
-  try {
-    const res = await fetch(`${env.PUBLIC_BASE_URL}/api/attendees/${encodeURIComponent(ticket_code)}`);
-    if (!res.ok) return null;
-    return await res.json(); // {id,name,mobile?}
-  } catch { return null; }
+async function lookupAttendee(env, codeOrQr) {
+  // Try tickets.qr first
+  let row = await env.DB.prepare(
+    `SELECT
+       t.id AS attendee_id,
+       TRIM(COALESCE(NULLIF(TRIM(t.attendee_first || ' ' || t.attendee_last), ''), o.buyer_name)) AS name,
+       COALESCE(NULLIF(t.phone,''), o.buyer_phone) AS mobile
+     FROM tickets t
+     LEFT JOIN orders o ON o.id = t.order_id
+     WHERE t.qr = ?1
+     LIMIT 1`
+  ).bind(codeOrQr).first();
+
+  if (!row) {
+    // Try orders.short_code (use first ticket on that order, else just buyer info)
+    row = await env.DB.prepare(
+      `SELECT
+         t.id AS attendee_id,
+         TRIM(COALESCE(NULLIF(TRIM(t.attendee_first || ' ' || t.attendee_last), ''), o.buyer_name)) AS name,
+         COALESCE(NULLIF(t.phone,''), o.buyer_phone) AS mobile
+       FROM orders o
+       LEFT JOIN tickets t ON t.order_id = o.id
+       WHERE o.short_code = ?1
+       ORDER BY t.id ASC
+       LIMIT 1`
+    ).bind(codeOrQr).first();
+  }
+
+  if (!row) return null;
+
+  return {
+    id: row.attendee_id ?? null,
+    name: row.name || '',
+    mobile: normMSISDN(row.mobile || '')
+  };
 }
