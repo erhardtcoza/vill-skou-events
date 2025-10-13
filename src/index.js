@@ -21,7 +21,7 @@ import { mountSync } from "./routes/sync.js";
 import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
 import { mountCashbar } from './routes/cashbar.js';
-
+import { mountItems } from './routes/items.js';
 
 // UI
 import { badgeHTML } from "./ui/badge.js";
@@ -74,6 +74,8 @@ function initWithEnv(env) {
   mountWallet(router);        // /api/wallet/*
   mountPublicVendors(router); // /api/public/vendors/* etc.
   mountCashbar(router, env);
+  mountItems(router, env);
+
 
 
   /* ------------------- UI ROUTES --------------------- */
