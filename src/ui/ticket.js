@@ -14,7 +14,7 @@ export function ticketHTML(code) {
   <style>
     :root{
       --bg:#f7f7f8; --card:#fff; --ink:#0b1320; --muted:#6b7280;
-      --green:#0a7d2b; --chip:#e5e7eb; --ok:#136c2e; --warn:#92400e; --void:#991b1b;
+      --green:#0a7d2b; --chip:#e5e7eb; --ok:#136c2e; --warn:#92400e; --void:#991b1b; --blue:#1f6feb;
     }
     *{ box-sizing:border-box }
     html,body{ margin:0; background:var(--bg); color:var(--ink);
@@ -36,6 +36,7 @@ export function ticketHTML(code) {
     .pill.ok{ background:#e7f7ec; border-color:#b9ebc6; color:var(--ok) }
     .pill.warn{ background:#fff8e6; border-color:#fde68a; color:var(--warn) }
     .pill.void{ background:#fee2e2; border-color:#fecaca; color:var(--void) }
+    .pill.in{ background:#e8f0ff; border-color:#c7dbff; color:var(--blue) }
 
     .who{ font-weight:800; font-size:18px; margin:2px 0 4px }
     .typePrice{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin-bottom:8px }
@@ -50,7 +51,6 @@ export function ticketHTML(code) {
 
     .empty{ color:var(--muted); margin-top:10px }
 
-    /* Print */
     @media print{
       .topbar{ display:none !important }
       body{ background:#fff }
@@ -75,20 +75,19 @@ export function ticketHTML(code) {
 
 <script type="module">
   const orderCode = ${JSON.stringify(String(code||""))};
-
   const money = (c)=> 'R' + (Number(c||0)/100).toFixed(2);
-  const qrURL = (data, size=280) => \`/api/qr/svg/\${encodeURIComponent(data)}\`; // internal fast QR
+  const qrURL = (data) => \`/api/qr/svg/\${encodeURIComponent(data)}\`;
 
   document.getElementById('printAll').addEventListener('click',()=>window.print());
 
   function pill(status){
     const s = String(status||'').toLowerCase();
-    if (s==='used' || s==='out') return '<span class="pill warn">used</span>';
     if (s==='void') return '<span class="pill void">void</span>';
-    return '<span class="pill ok">unused</span>';
+    if (s==='out')  return '<span class="pill warn">uit</span>';
+    if (s==='in')   return '<span class="pill in">in</span>';
+    return '<span class="pill ok">ongebruik</span>'; // unused/default
   }
 
-  // Normalize to match our /api/public/tickets/by-code response
   function normalize(raw){
     const short = raw.short_code || orderCode;
     const tix = (raw.tickets || []).map(t => ({
@@ -104,8 +103,7 @@ export function ticketHTML(code) {
   }
 
   async function downloadSVG(data, name){
-    const url = qrURL(data, 600);
-    const res = await fetch(url, { mode:'cors' });
+    const res = await fetch(qrURL(data), { mode:'cors' });
     const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -141,7 +139,7 @@ export function ticketHTML(code) {
           </div>
 
           <div class="actions">
-            \${t.qr_string ? '<button class="btn ghost" data-dl="'+String(t.qr_string||'')+'" data-id="'+String(t.id||'')+'">Download QR (SVG)</button>' : ''}
+            \${t.qr_string ? '<button class="btn ghost" data-dl="'+String(t.qr_string||'')+'" data-id="'+String(t.id||'')+'">Laai QR (SVG)</button>' : ''}
           </div>
 
           <div class="foot">Bestel \${data.order.short_code || ''} · betaal deur \${data.order.buyer_name || '—'}</div>
