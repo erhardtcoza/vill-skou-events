@@ -18,7 +18,7 @@ export const posSellHTML = `<!doctype html><html><head>
   .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
   input{ padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff }
   .catalog{ display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px }
-  .tt{ border:1px solid #e5e7eb; border-radius:12px; padding:12px; cursor:pointer; background:#fff }
+  .tt{ border:1px solid #e5e7eb; border-radius:12px; padding:12px; cursor:pointer; background:#fff; user-select:none; -webkit-tap-highlight-color:transparent }
   .tt:hover{ border-color:#cbd5e1 }
   .tt .name{ font-weight:700; margin:0 0 4px }
   .tt .price{ color:#444 }
@@ -77,18 +77,25 @@ export const posSellHTML = `<!doctype html><html><head>
     </div>
   </div>
 
-  <div style="margin-top:14px"><a class="link" href="/pos">&larr; Back to start</a></div>
+  <div style="margin-top:14px"><a class="link" href="/gate">&larr; Back to start</a></div>
 </div>
 
 <script>
 const $ = (id)=>document.getElementById(id);
 const q = new URLSearchParams(location.search);
 const session_id = Number(q.get('session_id')||0);
+let event_slug = q.get('event_slug') || '';   // may be empty (we'll fall back)
 const event_id = Number(q.get('event_id')||0);
-const event_slug = q.get('event_slug') || '';
 
-const state = { ttypes: new Map(), cart: new Map() };
+const state = { ttypes: new Map(), cart: new Map(), eventName:'' };
+
 function rands(c){ return 'R' + ((c||0)/100).toFixed(2); }
+function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+function phoneNorm(raw){
+  const s = String(raw||'').replace(/\\D+/g,'');
+  if (s.length===10 && s.startsWith('0')) return '27' + s.slice(1);
+  return s;
+}
 
 function renderCatalog(){
   const div = $('catalog');
@@ -102,7 +109,7 @@ function renderCatalog(){
     </div>\`
   ).join('');
   div.querySelectorAll('[data-add]').forEach(el=>{
-    el.onclick = ()=> changeQty(Number(el.dataset.add), +1);
+    el.onclick = ()=> { changeQty(Number(el.dataset.add), +1); try{navigator.vibrate?.(15)}catch{} };
   });
 }
 
@@ -126,8 +133,8 @@ function renderCart(){
       </div>\`;
   }).join('');
   $('total').textContent = rands(total);
-  list.querySelectorAll('[data-inc]').forEach(b=> b.onclick = ()=> changeQty(Number(b.dataset.inc), +1));
-  list.querySelectorAll('[data-dec]').forEach(b=> b.onclick = ()=> changeQty(Number(b.dataset.dec), -1));
+  list.querySelectorAll('[data-inc]').forEach(b=> b.onclick = ()=> { changeQty(Number(b.dataset.inc), +1); try{navigator.vibrate?.(10)}catch{} });
+  list.querySelectorAll('[data-dec]').forEach(b=> b.onclick = ()=> { changeQty(Number(b.dataset.dec), -1); try{navigator.vibrate?.(10)}catch{} });
 }
 
 function changeQty(id, d){
@@ -137,24 +144,33 @@ function changeQty(id, d){
   renderCart();
 }
 
-function escapeHtml(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-
 async function loadEventAndTickets(){
   $('sessionPill').textContent = 'Session #' + (session_id||'?');
-  $('eventPill').textContent = event_slug ? ('Event ' + event_slug) : ('Event #' + (event_id||'?'));
 
   try{
+    // If we didn't get a slug, fall back to the first event
     if (!event_slug){
-      $('catalogMsg').textContent = 'Missing event reference (slug).';
-      return;
+      const evs = await fetch('/api/public/events').then(r=>r.json()).catch(()=>({ok:false}));
+      if (!evs.ok || !(evs.events||[]).length){
+        $('eventPill').textContent = 'No event';
+        $('catalogMsg').textContent = 'No event available.';
+        return;
+      }
+      event_slug = evs.events[0].slug;
     }
+
     const j = await fetch('/api/public/events/'+encodeURIComponent(event_slug)).then(r=>r.json());
     if (!j.ok) throw new Error(j.error || 'Failed to load event');
+
     const list = j.ticket_types || [];
     state.ttypes = new Map(list.map(t=>[t.id, t]));
+    state.eventName = (j.event && j.event.name) || j.name || event_slug;
+    $('eventPill').textContent = 'Event ' + state.eventName;
+
     renderCatalog();
     renderCart();
   }catch(e){
+    $('eventPill').textContent = 'Event ?';
     $('catalogMsg').textContent = 'Error loading catalog: ' + (e.message||'');
   }
 }
@@ -188,7 +204,7 @@ async function tender(method){
     session_id,
     event_id: event_id || undefined,
     customer_name: ($('custName').value||'').trim(),
-    customer_msisdn: String(($('custPhone').value||'').trim()).replace(/\\D+/g,''),
+    customer_msisdn: phoneNorm($('custPhone').value||''),
     method, // 'pos_cash' | 'pos_card'
     items
   };
@@ -205,6 +221,7 @@ async function tender(method){
     renderCart();
     $('ok').style.display='inline-block';
     $('ok').textContent = 'Saved sale #' + (j.order_id||'');
+    try{ navigator.vibrate?.([15,25,15]); }catch{}
   }catch(e){
     $('err').textContent = 'Error: ' + (e.message||'unknown');
   }
@@ -221,7 +238,7 @@ async function closeSession(){
     });
     const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'close failed');
-    location.href = '/pos';
+    location.href = '/gate';
   }catch(e){
     alert('Close failed: ' + (e.message||''));
   }
