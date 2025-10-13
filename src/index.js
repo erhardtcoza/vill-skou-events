@@ -131,7 +131,7 @@ function initWithEnv(env) {
   router.add("GET", "/scan", requireRole("scan", async () => renderHTML(scannerHTML)));
   router.add("GET", "/scan/login", async () => renderHTML(() => loginHTML("scan")));
 
-  // Event shop + checkout
+  // Event shop + checkout (public)
   router.add("GET", "/shop/:slug", async (_req, _env2, _ctx, { slug }) =>
     renderHTML(() => shopHTML(slug))
   );
