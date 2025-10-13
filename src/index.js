@@ -3,6 +3,9 @@ import { Router } from "./router.js";
 import { withCORS } from "./utils/http.js";
 import { bindEnv } from "./env.js";
 
+// Durable Object (must be exported from entrypoint)
+import { WalletDO } from "./do/wallet.js";
+
 // Routes (API)
 import { mountWATest } from "./routes/wa_test.js";
 import { mountDiag } from "./routes/diag.js";
@@ -20,8 +23,8 @@ import { mountAdmin } from "./routes/admin.js";
 import { mountSync } from "./routes/sync.js";
 import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
-import { mountCashbar } from './routes/cashbar.js';
-import { mountItems } from './routes/items.js';
+import { mountCashbar } from "./routes/cashbar.js";
+import { mountItems } from "./routes/items.js";
 
 // UI
 import { badgeHTML } from "./ui/badge.js";
@@ -44,10 +47,13 @@ import { walletHTML as cashbarWalletHTML } from "./ui/cashbar_wallet.js";
 // Auth guard
 import { requireRole } from "./utils/auth.js";
 
+// Required: export Durable Object class from the entrypoint
+export { WalletDO };
+
 const router = Router();
 registerAddonRoutes(router);
 
-// helper: render function/string to HTML response
+// Helper: accept function (returning HTML) or string export
 function renderHTML(mod, ...args) {
   try {
     const html = (typeof mod === "function") ? mod(...args) : mod;
@@ -63,23 +69,23 @@ function initWithEnv(env) {
   if (__initialized) return;
 
   /* -------------- API ROUTES (need env) -------------- */
-  mountAuth(router);
-  mountPublic(router);
-  mountAdmin(router);
-  mountSync(router);
-  mountWhatsApp(router);
-  mountWATest(router);
-  mountDiag(router);
-  mountQR(router);
-  mountPayments(router);
-  mountPOS(router, env);
-  mountScan(router, env);
-  mountPastVisitors(router);
-  mountVendor(router);
-  mountWallet(router);
-  mountPublicVendors(router);
-  mountCashbar(router, env);
-  mountItems(router, env);
+  mountAuth(router);                // /api/auth/*
+  mountPublic(router);              // /api/public/*
+  mountAdmin(router);               // /api/admin/*
+  mountSync(router);                // /api/sync/*
+  mountWhatsApp(router);            // /api/whatsapp/*
+  mountWATest(router);              // /api/wa-test/*
+  mountDiag(router);                // /api/diag*
+  mountQR(router);                  // /api/qr/*
+  mountPayments(router);            // /api/payments/*
+  mountPOS(router, env);            // /api/pos/*
+  mountScan(router, env);           // /api/scan/*
+  mountPastVisitors(router);        // /api/past-visitors/*
+  mountVendor(router);              // /api/vendor/*
+  mountWallet(router);              // /api/wallet/*
+  mountPublicVendors(router);       // /api/public/vendors/*
+  mountCashbar(router, env);        // /api/wallets/* (cashbar)
+  mountItems(router, env);          // /api/items
 
   /* ------------------- UI ROUTES --------------------- */
   router.add("GET", "/", async () => renderHTML(landingHTML));
@@ -97,20 +103,36 @@ function initWithEnv(env) {
     return renderHTML(posSellHTML, session_id);
   }));
 
-  // Public/Shop
-  router.add("GET", "/shop/:slug", async (_req, _env2, _ctx, { slug }) => renderHTML(() => shopHTML(slug)));
-  router.add("GET", "/shop/:slug/checkout", async (_req, _env2, _ctx, { slug }) => renderHTML(() => checkoutHTML(slug)));
-  router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) => renderHTML(() => ticketHTML(code)));
-  router.add("GET", "/tt/:token", async (_req, _env2, _ctx, { token }) => renderHTML(() => ticketSingleHTML(token)));
-  router.add("GET", "/thanks/:code", async (_req, _env2, _ctx, { code }) => renderHTML(() => thankYouHTML(code)));
+  // Public shop + checkout
+  router.add("GET", "/shop/:slug", async (_req, _env2, _ctx, { slug }) =>
+    renderHTML(() => shopHTML(slug))
+  );
+  router.add("GET", "/shop/:slug/checkout", async (_req, _env2, _ctx, { slug }) =>
+    renderHTML(() => checkoutHTML(slug))
+  );
 
-  // Cashbar UI (public — lock down later if needed)
-  router.add("GET", "/cashbar/bar",        async () => renderHTML(cashbarBarHTML));
-  router.add("GET", "/cashbar/cashier",    async () => renderHTML(cashbarCashierHTML));
-  router.add("GET", "/w/:id",              async (_req, env2, _ctx, { id }) => {
+  // Ticket display (batch by order short code)
+  router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) =>
+    renderHTML(() => ticketHTML(code))
+  );
+
+  // Single-ticket display by token
+  router.add("GET", "/tt/:token", async (_req, _env2, _ctx, { token }) =>
+    renderHTML(() => ticketSingleHTML(token))
+  );
+
+  // Thank-you page after checkout
+  router.add("GET", "/thanks/:code", async (_req, _env2, _ctx, { code }) =>
+    renderHTML(() => thankYouHTML(code))
+  );
+
+  // Cashbar UI (public for now — lock down later if needed)
+  router.add("GET", "/cashbar/bar",     async () => renderHTML(cashbarBarHTML));
+  router.add("GET", "/cashbar/cashier", async () => renderHTML(cashbarCashierHTML));
+  router.add("GET", "/w/:id",           async (_req, env2, _ctx, { id }) => {
     const w = await env2.DB.prepare(`SELECT * FROM wallets WHERE id=?1`).bind(id).first();
     if (!w) return new Response("Not found", { status: 404 });
-    return renderHTML(() => cashbarWalletHTML({ id:w.id, name:w.name, balance_cents:w.balance_cents }));
+    return renderHTML(() => cashbarWalletHTML({ id: w.id, name: w.name, balance_cents: w.balance_cents }));
   });
 
   __initialized = true;
@@ -120,7 +142,7 @@ function initWithEnv(env) {
 export default {
   async fetch(req, env, ctx) {
     const bound = bindEnv(env);
-    initWithEnv(bound);
+    initWithEnv(bound); // ensure routes that need env are mounted once
     const handler = withCORS((rq, e, c) => router.handle(rq, e, c));
     return handler(req, bound, ctx);
   },
