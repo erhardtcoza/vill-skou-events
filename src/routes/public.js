@@ -34,7 +34,6 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText, params = 
 
 /* --------------------------- small utils --------------------------- */
 function genToken(len = 18) {
-  // url-safe base62-ish
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   let out = "";
   for (let i = 0; i < len; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
@@ -42,10 +41,8 @@ function genToken(len = 18) {
 }
 
 function normalizeMsisdnZAF(s) {
-  // keep digits only
   const digits = String(s || "").replace(/\D/g, "");
   if (!digits) return "";
-  // Convert SA local patterns to 27…; allow already-international
   if (digits.startsWith("27")) return digits;
   if (digits.startsWith("0") && digits.length === 10) return "27" + digits.slice(1);
   return digits;
@@ -56,9 +53,19 @@ function asInt(n, def = 0) {
   return Number.isFinite(x) ? Math.trunc(x) : def;
 }
 
+/* -------- schema helpers: detect columns to stay compatible ---------- */
+const __colCache = new Map();
+async function tableHasColumn(env, table, col) {
+  const key = `${table}::${col}`;
+  if (__colCache.has(key)) return __colCache.get(key);
+  const rows = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+  const ok = (rows.results || []).some(r => String(r.name).toLowerCase() === String(col).toLowerCase());
+  __colCache.set(key, ok);
+  return ok;
+}
+
 /* ----------------- capacity / usage helper (optional) ---------------- */
 async function getTypeUsage(env, eventId) {
-  // returns Map(ticket_type_id -> issued count)
   const q = await env.DB.prepare(
     `SELECT ticket_type_id AS tid, COUNT(1) AS cnt
        FROM tickets
@@ -72,6 +79,7 @@ async function getTypeUsage(env, eventId) {
 
 /* --------------------------- public routes --------------------------- */
 export function mountPublic(router) {
+
   /* Events list (active) */
   router.add("GET", "/api/public/events", async (_req, env) => {
     const q = await env.DB.prepare(
@@ -92,7 +100,7 @@ export function mountPublic(router) {
     });
   });
 
-  /* Event detail (+ ticket types) */
+  /* Event detail (+ ticket types) — tolerant of requires_name missing */
   router.add("GET", "/api/public/events/:slug", async (_req, env, _ctx, { slug }) => {
     const ev = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -102,8 +110,14 @@ export function mountPublic(router) {
     ).bind(slug).first();
     if (!ev) return bad("Not found", 404);
 
+    const hasReqName = await tableHasColumn(env, "ticket_types", "requires_name");
+    const selectCols = `
+      id, name, price_cents, capacity, per_order_limit,
+      requires_gender${hasReqName ? ", requires_name" : ""}
+    `;
+
     const ttQ = await env.DB.prepare(
-      `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender, requires_name
+      `SELECT ${selectCols}
          FROM ticket_types
         WHERE event_id=?1
         ORDER BY id ASC`
@@ -116,7 +130,7 @@ export function mountPublic(router) {
       capacity: asInt(r.capacity),
       per_order_limit: asInt(r.per_order_limit),
       requires_gender: asInt(r.requires_gender) ? 1 : 0,
-      requires_name: asInt(r.requires_name) ? 1 : 0
+      requires_name: hasReqName ? (asInt(r.requires_name) ? 1 : 0) : 0
     }));
 
     return json({ ok: true, event: ev, ticket_types });
@@ -145,7 +159,7 @@ export function mountPublic(router) {
     return json({ ok: true, availability: list });
   });
 
-  /* Create order (and send WA order confirmation) */
+  /* Create order (and send WA order confirmation) — schema-safe + logs */
   router.add("POST", "/api/public/orders/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
@@ -158,19 +172,18 @@ export function mountPublic(router) {
     const buyer_phone = normalizeMsisdnZAF(buyer_phone_raw);
     const method      = b?.method === "pay_now" ? "online_yoco" : "pos_cash";
 
-    if (!event_id)     return bad("event_id required");
-    if (!itemsIn.length) return bad("items required");
-    if (!buyer_name)   return bad("buyer_name required");
+    if (!event_id)        return bad("event_id required");
+    if (!itemsIn.length)  return bad("items required");
+    if (!buyer_name)      return bad("buyer_name required");
 
-    // Load ticket types for event
+    // Load ticket types for event (no requires_name in SQL)
     const ttQ = await env.DB.prepare(
-      `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender, requires_name
+      `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender
          FROM ticket_types WHERE event_id=?1`
     ).bind(event_id).all();
     const types = (ttQ.results || []);
     const ttMap = new Map(types.map(r => [asInt(r.id), r]));
 
-    // Optional capacity check (against existing tickets)
     const usage = await getTypeUsage(env, event_id);
 
     // Validate + compute total
@@ -185,16 +198,12 @@ export function mountPublic(router) {
       if (!tt) return bad("Unknown ticket_type_id " + tid);
 
       const limit = asInt(tt.per_order_limit);
-      if (limit && qty > limit) {
-        return bad(`Exceeded per-order limit for ${tt.name} (limit ${limit})`);
-      }
+      if (limit && qty > limit) return bad(`Exceeded per-order limit for ${tt.name} (limit ${limit})`);
 
       const cap = asInt(tt.capacity);
       if (cap) {
         const already = usage.get(tid) || 0;
-        if (already + qty > cap) {
-          return bad(`Not enough availability for ${tt.name}`);
-        }
+        if (already + qty > cap) return bad(`Not enough availability for ${tt.name}`);
       }
 
       const unit = asInt(tt.price_cents);
@@ -202,7 +211,6 @@ export function mountPublic(router) {
       order_items.push({ ticket_type_id: tid, qty, price_cents: unit });
     }
     if (!order_items.length) return bad("No valid items");
-    if (total_cents < 0) return bad("total_cents invalid");
 
     // Pre-index attendees by type (FIFO)
     const queues = new Map();
@@ -219,24 +227,20 @@ export function mountPublic(router) {
       queues.set(tid, arr);
     }
 
-    // Enforce requires_name / requires_gender if configured
+    // Only enforce gender if the type requires it (we don't enforce name here)
     for (const it of order_items) {
       const tt = ttMap.get(it.ticket_type_id);
-      const needName = asInt(tt?.requires_name) ? 1 : 0;
       const needGender = asInt(tt?.requires_gender) ? 1 : 0;
-      if (needName || needGender) {
+      if (needGender) {
         const q = queues.get(it.ticket_type_id) || [];
-        if (q.length < it.qty) {
-          return bad(`Attendee details required for ${tt.name} (${it.qty} needed)`);
-        }
-        if (needName && q.some(x => !x.first || !x.last)) {
-          return bad(`Name required for all ${tt.name} attendees`);
-        }
-        if (needGender && q.some(x => !x.gender)) {
-          return bad(`Gender required for all ${tt.name} attendees`);
-        }
+        if (q.length < it.qty) return bad(`Attendee details required for ${tt.name} (${it.qty} needed)`);
+        if (q.some(x => !x.gender)) return bad(`Gender required for all ${tt.name} attendees`);
       }
     }
+
+    // Detect tickets table columns so we insert correctly
+    const hasGender = await tableHasColumn(env, "tickets", "gender");
+    const hasToken  = await tableHasColumn(env, "tickets", "token");
 
     // Persist in a transaction
     const now = Math.floor(Date.now() / 1000);
@@ -271,30 +275,21 @@ export function mountPublic(router) {
            VALUES (?1,?2,?3,?4)`
         ).bind(order_id, it.ticket_type_id, it.qty, it.price_cents).run();
 
-        const tt = ttMap.get(it.ticket_type_id);
-        const needName = asInt(tt?.requires_name) ? 1 : 0;
-        const needGender = asInt(tt?.requires_gender) ? 1 : 0;
         const q = queues.get(it.ticket_type_id) || [];
-
         for (let i = 0; i < it.qty; i++) {
           const qr = `${short_code}-${it.ticket_type_id}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-          const token = genToken(18);
+          const token = hasToken ? genToken(18) : null;
           let a = q.length ? q.shift() : { first: null, last: null, gender: null, phone: null };
 
-          // If enforcement flagged above, values will exist; else keep nulls
-          if (!needName) {
-            a.first = a.first || null;
-            a.last  = a.last  || null;
-          }
-          if (!needGender) {
-            a.gender = a.gender || null;
-          }
+          // Build INSERT dynamically based on available columns
+          const cols = ["order_id", "event_id", "ticket_type_id", "attendee_first", "attendee_last", "phone", "qr", "issued_at"];
+          const vals = [order_id, event_id, it.ticket_type_id, a.first || null, a.last || null, a.phone || null, qr, now];
+          if (hasGender) { cols.splice(5, 0, "gender"); vals.splice(5, 0, a.gender || null); } // before phone
+          if (hasToken)  { cols.push("token"); vals.push(token); }
 
-          await env.DB.prepare(
-            `INSERT INTO tickets
-               (order_id, event_id, ticket_type_id, attendee_first, attendee_last, gender, phone, qr, issued_at, token)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)`
-          ).bind(order_id, event_id, it.ticket_type_id, a.first, a.last, a.gender, a.phone, qr, now, token).run();
+          const placeholders = cols.map((_, idx) => `?${idx+1}`).join(",");
+          const sql = `INSERT INTO tickets (${cols.join(",")}) VALUES (${placeholders})`;
+          await env.DB.prepare(sql).bind(...vals).run();
         }
       }
 
@@ -316,7 +311,7 @@ export function mountPublic(router) {
         ].filter(Boolean);
         const msg = msgLines.join("\n");
         if (buyer_phone) {
-          const params = [buyer_name, short_code]; // EXACTLY 2 vars for template
+          const params = [buyer_name, short_code];
           await sendViaTemplateKey(env, "WA_TMP_ORDER_CONFIRM", buyer_phone, msg, params);
         }
       } catch {}
@@ -335,9 +330,10 @@ export function mountPublic(router) {
           items: order_items
         }
       });
-    } catch (_e) {
+    } catch (e) {
       try { await env.DB.exec("ROLLBACK"); } catch {}
-      return bad("Failed to create order");
+      console.error("orders/create failed:", e && (e.stack || e.message || e));
+      return bad("Failed to create order: " + (e?.message || "internal"));
     }
   });
 
