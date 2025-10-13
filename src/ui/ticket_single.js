@@ -1,25 +1,15 @@
 // /src/ui/ticket_single.js
-// Single-ticket page with Skou logo (if configured), attendee + type, and BIG QR.
-// Also includes Apple/Google Wallet CTAs using your wallet endpoints.
-
 export function ticketSingleHTML(token) {
   const safeToken = String(token || "").replace(/[^a-zA-Z0-9._-]/g, "");
   const appleUrl  = `/api/wallet/apple/by-token/${encodeURIComponent(safeToken)}`;
   const googleUrl = `/api/wallet/google/by-token/${encodeURIComponent(safeToken)}`;
 
-  // Inline SVG fallbacks for wallet badges (used if hosted images not configured).
   const FallbackAppleSVG = `
   <svg xmlns="http://www.w3.org/2000/svg" width="236" height="48" viewBox="0 0 236 48" aria-hidden="true" focusable="false">
     <rect x="0.5" y="0.5" width="235" height="47" rx="10" fill="#000"/>
     <rect x="0.5" y="0.5" width="235" height="47" rx="10" fill="none" stroke="#000"/>
-    <g transform="translate(16,9)">
-      <circle cx="12" cy="12" r="12" fill="#fff"/>
-      <rect x="30" y="6" width="24" height="12" rx="3" fill="#1ABCFE"/>
-      <rect x="30" y="12" width="24" height="12" rx="3" fill="#0ACF83" opacity="0.85"/>
-      <rect x="30" y="18" width="24" height="12" rx="3" fill="#A259FF" opacity="0.8"/>
-    </g>
     <g fill="#fff" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-weight="600">
-      <text x="92" y="30" font-size="14">Add to Apple Wallet</text>
+      <text x="60" y="30" font-size="14">Add to Apple Wallet</text>
     </g>
   </svg>`.trim();
 
@@ -27,32 +17,21 @@ export function ticketSingleHTML(token) {
   <svg xmlns="http://www.w3.org/2000/svg" width="260" height="48" viewBox="0 0 260 48" aria-hidden="true" focusable="false">
     <rect x="0.5" y="0.5" width="259" height="47" rx="10" fill="#1A73E8"/>
     <rect x="0.5" y="0.5" width="259" height="47" rx="10" fill="none" stroke="#1A73E8"/>
-    <g transform="translate(16,10)">
-      <rect width="10" height="28" rx="5" fill="#34A853"/>
-      <rect x="8" y="6" width="10" height="22" rx="5" fill="#FBBC04"/>
-      <rect x="16" y="12" width="10" height="16" rx="5" fill="#EA4335"/>
-      <rect x="24" y="18" width="10" height="10" rx="5" fill="#4285F4"/>
-    </g>
     <g fill="#fff" font-family="system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" font-weight="600">
       <text x="60" y="30" font-size="14">Save to Google Wallet</text>
     </g>
   </svg>`.trim();
 
   return `<!doctype html>
-<html>
+<html lang="af">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Ticket</title>
+  <title>Kaartjie</title>
   <style>
     :root{
-      --green:#0a7d2b;
-      --border:#e5e7eb;
-      --text:#111827;
-      --muted:#6b7280;
-      --bg:#ffffff;
-      --card:#ffffff;
-      --accent:#E10600;
+      --green:#0a7d2b; --border:#e5e7eb; --text:#111827; --muted:#6b7280; --bg:#ffffff; --card:#ffffff; --accent:#E10600;
+      --blue:#1f6feb; --warn:#936000; --void:#b91c1c;
     }
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--text)}
     .wrap{max-width:720px;margin:0 auto;padding:16px}
@@ -67,30 +46,28 @@ export function ticketSingleHTML(token) {
     .logo img{max-width:100%;max-height:100%;display:block}
 
     .pill{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:12px}
-    .pill.accent{border-color:var(--accent); color:var(--accent);}
+    .pill.ok{border-color:#b9ebc6;color:#136c2e;background:#e7f7ec}
+    .pill.in{border-color:#c7dbff;color:#1f6feb;background:#e8f0ff}
+    .pill.out{border-color:#fde68a;color:#936000;background:#fff8e6}
+    .pill.void{border-color:#fecaca;color:#b91c1c;background:#fee2e2}
 
     .qrbox{display:flex;gap:16px;align-items:center;justify-content:flex-end}
-    .qrbox .code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-weight:700;word-break:break-all}
+    .qrbox .code{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:700;word-break:break-all}
     .qr{width:300px;height:300px}
     @media (max-width:720px){ .qr{width:260px;height:260px} }
 
     .wallet-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
     .wallet-btn{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;cursor:pointer;border-radius:12px;outline:none}
-    .wallet-btn img, .wallet-btn svg{display:block}
-    .wallet-btn:focus-visible{box-shadow:0 0 0 3px rgba(26,115,232,.35)}
     .wallet-btn[aria-disabled="true"]{opacity:.5;pointer-events:none}
-
     #wl-msg{font-size:13px;color:var(--muted)}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="card" id="ticket-card">
-      <div class="muted">Loading…</div>
-    </div>
+    <div class="card" id="ticket-card"><div class="muted">Laai tans…</div></div>
 
     <div class="card" style="margin-top:12px">
-      <h2 style="margin:0 0 10px;font-size:18px">Mobile Wallet</h2>
+      <h2 style="margin:0 0 10px;font-size:18px">Mobiele Wallet</h2>
       <div class="wallet-row">
         <button id="btn-apple" class="wallet-btn" title="Add to Apple Wallet" aria-disabled="true">${FallbackAppleSVG}</button>
         <button id="btn-google" class="wallet-btn" title="Save to Google Wallet" aria-disabled="true">${FallbackGoogleSVG}</button>
@@ -103,11 +80,17 @@ export function ticketSingleHTML(token) {
   const token = ${JSON.stringify(safeToken)};
   const appleUrl = ${JSON.stringify(appleUrl)};
   const googleUrl = ${JSON.stringify(googleUrl)};
-
   const $ = (s, r=document)=>r.querySelector(s);
   const esc = (s='')=>String(s).replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 
-  // Optional public settings (logo, hosted wallet badges). If endpoints don't exist, we silently ignore.
+  function pillClass(s){
+    const u = String(s||'').toLowerCase();
+    if (u==='void') return 'void';
+    if (u==='out')  return 'out';
+    if (u==='in')   return 'in';
+    return 'ok';
+  }
+
   async function getPublicSettings(keys){
     const out = {};
     try{
@@ -129,21 +112,12 @@ export function ticketSingleHTML(token) {
     return out;
   }
 
-  function stateColor(s) {
-    const u = String(s||'').toUpperCase();
-    return u==="UNUSED" ? "#0a7d2b" :
-           u==="IN"     ? "#1f6feb" :
-           u==="OUT"    ? "#936000" :
-           u==="VOID"   ? "#b91c1c" : "#6b7280";
-  }
-
   function qrImgTag(data){
     if (!data) return "";
     return '<img class="qr" src="/api/qr/svg/'+encodeURIComponent(data)+'" alt="QR" width="300" height="300" loading="eager"/>';
   }
 
   async function loadTicket(){
-    // Primary endpoint (matches your current server)
     const url = \`/api/public/tickets/by-token/\${encodeURIComponent(token)}\`;
     let data = null;
     try{
@@ -153,23 +127,22 @@ export function ticketSingleHTML(token) {
 
     const card = $("#ticket-card");
     if (!data || !data.ok){
-      card.innerHTML = "<h1>Ticket</h1><div class='muted'>Kon nie kaartjie laai nie.</div>";
+      card.innerHTML = "<h1>Kaartjie</h1><div class='muted'>Kon nie kaartjie laai nie.</div>";
       return;
     }
 
     const t = data.ticket || {};
     const holder = [t.attendee_first||'', t.attendee_last||''].filter(Boolean).join(' ');
-    const typeName = t.type_name || "Ticket";
+    const typeName = t.type_name || "Kaartjie";
     const shortCode = data.short_code || t.short_code || data.order?.short_code || '';
     const buyerName = data.buyer_name || t.buyer_name || data.order?.buyer_name || '';
 
-    // Logo: prefer DEFAULT_EVENT_LOGO_URL if present
     let logoUrl = null;
     try{
       const s = await getPublicSettings(['DEFAULT_EVENT_LOGO_URL']);
       logoUrl = s.DEFAULT_EVENT_LOGO_URL || null;
     }catch(_e){}
-    const logoHTML = logoUrl ? \`<div class="logo"><img src="\${esc(logoUrl)}" alt="Event logo" loading="eager"></div>\`
+    const logoHTML = logoUrl ? \`<div class="logo"><img src="\${esc(logoUrl)}" alt="Logo" loading="eager"></div>\`
                              : \`<div class="logo" aria-hidden="true"></div>\`;
 
     card.innerHTML = \`
@@ -178,17 +151,17 @@ export function ticketSingleHTML(token) {
         <div>
           <div class="muted" style="font-size:12px">Villiersdorp Landbou Skou</div>
           <h1 style="margin:2px 0 4px">Jou kaartjie</h1>
-          <div class="muted">\${esc(buyerName || '—')} • Order \${esc(shortCode || '—')}</div>
+          <div class="muted">\${esc(buyerName || '—')} • Bestel \${esc(shortCode || '—')}</div>
         </div>
       </div>
 
       <div class="grid">
         <div>
           <div style="margin-top:8px">
-            <div style="font-size:16px"><b>Attendee:</b> \${esc(holder.trim() || '—')}</div>
+            <div style="font-size:16px"><b>Naam:</b> \${esc(holder.trim() || '—')}</div>
             <div style="margin-top:8px">
-              <span class="pill accent">\${esc(typeName)}</span>
-              <span class="pill" style="border-color:\${stateColor(t.state)};color:\${stateColor(t.state)}">\${esc(t.state||"—")}</span>
+              <span class="pill">\${esc(typeName)}</span>
+              <span class="pill \${pillClass(t.state)}">\${esc(t.state||"—")}</span>
             </div>
           </div>
         </div>
@@ -211,25 +184,8 @@ export function ticketSingleHTML(token) {
   function enableBtn(el, onClick){
     el.setAttribute('aria-disabled','false');
     el.tabIndex = 0;
-    el.addEventListener('click', onClick);
+    el.addEventListener('click', onClick, { passive:true });
     el.addEventListener('keydown', (e)=>{ if (e.key==='Enter'||e.key===' ') { e.preventDefault(); onClick(); }});
-  }
-
-  async function applyBadgeArtwork(){
-    const appleBtn  = $("#btn-apple");
-    const googleBtn = $("#btn-google");
-    const s = await getPublicSettings(['WALLET_BADGE_APPLE_URL','WALLET_BADGE_GOOGLE_URL']);
-
-    async function swap(btn, url, alt, w, h){
-      if (!url) return;
-      try{
-        const head = await fetch(url, { method:'HEAD' });
-        if (!head.ok) return;
-        btn.innerHTML = \`<img src="\${url}" alt="\${alt}" width="\${w}" height="\${h}" loading="lazy">\`;
-      }catch(_e){}
-    }
-    await swap(appleBtn,  s.WALLET_BADGE_APPLE_URL,  'Add to Apple Wallet', 236, 48);
-    await swap(googleBtn, s.WALLET_BADGE_GOOGLE_URL, 'Save to Google Wallet', 260, 48);
   }
 
   async function initWalletButtons(){
@@ -237,25 +193,19 @@ export function ticketSingleHTML(token) {
     const googleBtn = $("#btn-google");
     const wlMsg     = $("#wl-msg");
 
-    if (isIOS()) wlMsg.textContent = "Tip: On iPhone, Apple Wallet is the best experience.";
-    else if (isAndroid()) wlMsg.textContent = "Tip: On Android, Google Wallet is the best experience.";
+    if (isIOS()) wlMsg.textContent = "Let wel: Apple Wallet op iPhone werk die beste.";
+    else if (isAndroid()) wlMsg.textContent = "Let wel: Google Wallet op Android werk die beste.";
 
-    await applyBadgeArtwork();
-
-    const [appleOK, googleOK] = await Promise.all([
-      checkWalletEndpoint(appleUrl),
-      checkWalletEndpoint(googleUrl)
-    ]);
-
+    // Auto-disable unless endpoints exist (keeps you safe while Apple dev isn't active)
+    const [appleOK, googleOK] = await Promise.all([checkWalletEndpoint(appleUrl), checkWalletEndpoint(googleUrl)]);
     if (appleOK)  enableBtn(appleBtn,  ()=>{ window.location.href = appleUrl; });
     if (googleOK) enableBtn(googleBtn, ()=>{ window.open(googleUrl, '_blank', 'noopener,noreferrer'); });
 
     if (!appleOK && !googleOK){
-      wlMsg.textContent = "Wallet download is not available yet. Please try again later.";
+      wlMsg.textContent = "Wallet aflaai is tans nie beskikbaar nie.";
     }
   }
 
-  // Boot
   loadTicket();
   initWalletButtons();
 </script>
