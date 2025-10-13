@@ -8,9 +8,15 @@ binding = "DB"
 database_name = "villiersdorp-events-db"
 database_id = "823c5c97-9e4d-4305-93d1-1dfb2a6c3ac1"
 
-[[durable_objects.bindings]]
-name = "WALLET_DO"
-class_name = "WalletDO"
+[durable_objects]
+bindings = [
+  { name = "WALLET_DO", class_name = "WalletDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["WalletDO"]
+
 
 [[kv_namespaces]]
 binding = "EVENTS_KV"
