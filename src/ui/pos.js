@@ -81,7 +81,9 @@ $('start').onclick = async ()=>{
   const cashier = ($('cashier').value||'').trim();
   const gate    = ($('gate').value||'').trim();
   const floatR  = $('float').value;
-  const eventSlug = $('event').value;
+  const opt     = $('event').selectedOptions[0];
+  const eventSlug = opt ? opt.value : '';
+  const eventId   = opt ? Number(opt.dataset.id||0) : 0;
 
   if (!cashier || !gate || !eventSlug){
     $('msg').textContent = 'Please fill cashier, gate and event.';
@@ -95,7 +97,8 @@ $('start').onclick = async ()=>{
       body: JSON.stringify({
         cashier_name: cashier,
         gate_name: gate,
-        opening_float_cents: centsFromRand(floatR) || 0
+        opening_float_cents: centsFromRand(floatR) || 0,
+        event_id: eventId || null
       })
     });
     const j = await r.json().catch(()=>({ok:false}));
