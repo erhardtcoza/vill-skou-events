@@ -1,9 +1,11 @@
-// src/services/qr.js
+// /src/services/qr.js
 // Minimal, dependency-free QR generator (Byte mode) returning SVG.
-// Based on QR Code specification (ISO/IEC 18004) with compact RS/GF(256) impl.
 // Public API: renderSVG(data, size=256, margin=2, ecc='M')
+//
+// NOTE: This returns a fully self-contained SVG string (no external <image href>).
+// Your /api/qr/svg/:data route should call renderSVG() and respond with
+// content-type: image/svg+xml.
 
-/* --------------------------- GF(256) + RS --------------------------- */
 const GF256 = (() => {
   const EXP = new Uint8Array(512);
   const LOG = new Uint8Array(256);
@@ -21,7 +23,6 @@ const GF256 = (() => {
 })();
 
 function rsGeneratorPoly(ecLen) {
-  // (x - a^0)(x - a^1)...(x - a^(ecLen-1))
   let poly = new Uint8Array([1]);
   for (let i = 0; i < ecLen; i++) {
     const p = new Uint8Array(poly.length + 1);
@@ -48,65 +49,20 @@ function rsEncode(data, ecLen) {
   return res;
 }
 
-/* ------------------------- Version Tables -------------------------- */
-// Format: per version: size, total data codewords per ECC level, block structure.
-// Data from QR spec condensed. Each entry: { size, ec: {L,M,Q,H}, blocks: {L,M,Q,H} }
-// blocks: [ [numBlocks, dataCodewordsPerBlock], ... ] (1 or 2 groups per spec)
+// Versions v1..v10 (sufficient for ticket payloads)
 const VERSIONS = [
-  /* v1 */  {size:21, ec:{
-    L:19, M:16, Q:13, H:9
-  }, blocks:{
-    L:[[1,19]], M:[[1,16]], Q:[[1,13]], H:[[1,9]]
-  }},
-  /* v2 */  {size:25, ec:{
-    L:34, M:28, Q:22, H:16
-  }, blocks:{
-    L:[[1,34]], M:[[1,28]], Q:[[1,22]], H:[[1,16]]
-  }},
-  /* v3 */  {size:29, ec:{
-    L:55, M:44, Q:34, H:26
-  }, blocks:{
-    L:[[1,55]], M:[[1,44]], Q:[[1,34]], H:[[1,26]]
-  }},
-  /* v4 */  {size:33, ec:{
-    L:80, M:64, Q:48, H:36
-  }, blocks:{
-    L:[[1,80]], M:[[2,32]], Q:[[2,24]], H:[[4,9]]  // matches block groups
-  }},
-  /* v5 */  {size:37, ec:{
-    L:108, M:86, Q:62, H:46
-  }, blocks:{
-    L:[[1,108]], M:[[2,43]], Q:[[2,15],[2,16]], H:[[2,11],[2,12]]
-  }},
-  /* v6 */  {size:41, ec:{
-    L:136, M:108, Q:76, H:60
-  }, blocks:{
-    L:[[2,68]], M:[[4,27]], Q:[[4,19]], H:[[4,15]]
-  }},
-  /* v7 */  {size:45, ec:{
-    L:156, M:124, Q:88, H:66
-  }, blocks:{
-    L:[[2,78]], M:[[4,31]], Q:[[2,14],[4,15]], H:[[4,13],[1,14]]
-  }},
-  /* v8 */  {size:49, ec:{
-    L:194, M:154, Q:110, H:86
-  }, blocks:{
-    L:[[2,97]], M:[[2,38],[2,39]], Q:[[4,18],[2,19]], H:[[4,14],[2,15]]
-  }},
-  /* v9 */  {size:53, ec:{
-    L:232, M:182, Q:132, H:100
-  }, blocks:{
-    L:[[2,116]], M:[[3,36],[2,37]], Q:[[4,16],[4,17]], H:[[4,12],[4,13]]
-  }},
-  /* v10 */ {size:57, ec:{
-    L:274, M:216, Q:154, H:122
-  }, blocks:{
-    L:[[2,68],[2,69]], M:[[4,43],[1,44]], Q:[[6,19],[2,20]], H:[[6,15],[2,16]]
-  }},
+  {size:21, ec:{L:19, M:16, Q:13, H:9},  blocks:{L:[[1,19]], M:[[1,16]], Q:[[1,13]], H:[[1,9]]}},
+  {size:25, ec:{L:34, M:28, Q:22, H:16}, blocks:{L:[[1,34]], M:[[1,28]], Q:[[1,22]], H:[[1,16]]}},
+  {size:29, ec:{L:55, M:44, Q:34, H:26}, blocks:{L:[[1,55]], M:[[1,44]], Q:[[1,34]], H:[[1,26]]}},
+  {size:33, ec:{L:80, M:64, Q:48, H:36}, blocks:{L:[[1,80]], M:[[2,32]], Q:[[2,24]], H:[[4,9]]}},
+  {size:37, ec:{L:108, M:86, Q:62, H:46},blocks:{L:[[1,108]],M:[[2,43]], Q:[[2,15],[2,16]], H:[[2,11],[2,12]]}},
+  {size:41, ec:{L:136, M:108,Q:76, H:60},blocks:{L:[[2,68]], M:[[4,27]], Q:[[4,19]], H:[[4,15]]}},
+  {size:45, ec:{L:156, M:124,Q:88, H:66},blocks:{L:[[2,78]], M:[[4,31]], Q:[[2,14],[4,15]], H:[[4,13],[1,14]]}},
+  {size:49, ec:{L:194, M:154,Q:110,H:86},blocks:{L:[[2,97]], M:[[2,38],[2,39]], Q:[[4,18],[2,19]], H:[[4,14],[2,15]]}},
+  {size:53, ec:{L:232, M:182,Q:132,H:100},blocks:{L:[[2,116]],M:[[3,36],[2,37]], Q:[[4,16],[4,17]], H:[[4,12],[4,13]]}},
+  {size:57, ec:{L:274, M:216,Q:154,H:122},blocks:{L:[[2,68],[2,69]], M:[[4,43],[1,44]], Q:[[6,19],[2,20]], H:[[6,15],[2,16]]}},
 ];
-// Above covers v1..v10 which is plenty for ticket URLs/content. Extend if needed.
 
-// EC codewords per block (spec) for v1..v10:
 const EC_PER_BLOCK = {
   L:[7,10,15,20,26,18,20,24,30,18],
   M:[10,16,26,18,24,16,18,22,22,26],
@@ -116,7 +72,6 @@ const EC_PER_BLOCK = {
 
 const ECC_LEVELS = { L:"L", M:"M", Q:"Q", H:"H" };
 
-/* --------------------------- Bit Buffer --------------------------- */
 class BitBuffer {
   constructor() { this.bits = []; }
   put(n, length) {
@@ -127,29 +82,16 @@ class BitBuffer {
   putBytes(arr) {
     for (const b of arr) this.put(b, 8);
   }
-  // pad to totalBits with 0s then 236/17 alternation
-  finalize(totalBits) {
-    while (this.bits.length % 8 !== 0) this.bits.push(0);
-    let padBytesNeeded = (totalBits - this.bits.length) / 8;
-    let toggle = true;
-    while (padBytesNeeded-- > 0) {
-      this.put(toggle ? 0xec : 0x11, 8);
-      toggle = !toggle;
-    }
-  }
 }
 
-/* --------------------- Encoding (Byte mode) ---------------------- */
 function utf8Bytes(s) {
   return new TextEncoder().encode(s);
 }
 
 function pickVersion(dataLen, ecc) {
-  // Estimate: for Byte mode, need: 4 (mode+length headers vary) + 8*len + terminator
-  // We'll try versions in order; accurate capacity is from VERSIONS[ver-1].ec[ecc]
   for (let v = 1; v <= VERSIONS.length; v++) {
-    const cap = VERSIONS[v-1].ec[ecc]; // data codewords capacity
-    if (cap >= dataLen + 3) return v;  // loose check; proper will use bits below
+    const cap = VERSIONS[v-1].ec[ecc];
+    if (cap >= dataLen + 3) return v;
   }
   return null;
 }
@@ -172,13 +114,11 @@ function interleaveBlocks(blocks) {
   const maxLen = Math.max(...blocks.map(b => b.data.length));
   const out = [];
 
-  // data codewords
   for (let i = 0; i < maxLen; i++) {
     for (const b of blocks) {
       if (i < b.data.length) out.push(b.data[i]);
     }
   }
-  // ecc codewords
   const ecMaxLen = Math.max(...blocks.map(b => b.ec.length));
   for (let i = 0; i < ecMaxLen; i++) {
     for (const b of blocks) {
@@ -188,12 +128,9 @@ function interleaveBlocks(blocks) {
   return new Uint8Array(out);
 }
 
-/* ------------------------- Matrix + Mask ------------------------- */
 function initMatrix(n) {
   const m = new Array(n);
-  for (let i = 0; i < n; i++) {
-    m[i] = new Array(n).fill(null);
-  }
+  for (let i = 0; i < n; i++) m[i] = new Array(n).fill(null);
   return m;
 }
 
@@ -220,7 +157,6 @@ function placeTiming(mat) {
 }
 
 function placeAlignPattern(mat, cx, cy) {
-  // 5x5
   const p = [
     [1,1,1,1,1],
     [1,0,0,0,1],
@@ -234,18 +170,9 @@ function placeAlignPattern(mat, cx, cy) {
   }
 }
 
-// Alignment pattern centers per version 1..10 (from spec)
 const ALIGN_POS = {
-  1: [],
-  2: [6,18],
-  3: [6,22],
-  4: [6,26],
-  5: [6,30],
-  6: [6,34],
-  7: [6,22,38],
-  8: [6,24,42],
-  9: [6,26,46],
-  10:[6,28,50],
+  1: [], 2: [6,18], 3: [6,22], 4: [6,26], 5: [6,30],
+  6: [6,34], 7: [6,22,38], 8: [6,24,42], 9: [6,26,46], 10:[6,28,50],
 };
 
 function placeAlignmentPatterns(mat, version) {
@@ -253,10 +180,7 @@ function placeAlignmentPatterns(mat, version) {
   for (let i = 0; i < pos.length; i++) {
     for (let j = 0; j < pos.length; j++) {
       const cx = pos[i], cy = pos[j];
-      // skip finder overlaps corners
-      const corner = ( (i===0 && j===0) ||
-                       (i===0 && j===pos.length-1) ||
-                       (i===pos.length-1 && j===0) );
+      const corner = ((i===0 && j===0) || (i===0 && j===pos.length-1) || (i===pos.length-1 && j===0));
       if (corner) continue;
       placeAlignPattern(mat, cx, cy);
     }
@@ -293,10 +217,8 @@ function maskFunc(mask, r, c) {
 }
 
 function formatBits(ecc, mask) {
-  // ECC: L=01, M=00, Q=11, H=10  (per spec)
   const eccBits = { L:1, M:0, Q:3, H:2 }[ecc];
-  const data = (eccBits << 3) | mask; // 5 bits
-  // BCH(15,5) with poly 0x537
+  const data = (eccBits << 3) | mask;
   let v = data << 10;
   const poly = 0x537;
   for (let i = 14; i >= 10; i--) {
@@ -311,7 +233,6 @@ function drawFormatBits(mat, ecc, mask) {
   const f = formatBits(ecc, mask);
   for (let i = 0; i < 15; i++) {
     const bit = (f >>> i) & 1;
-    // up-left timing row/col
     if (i < 6) {
       mat[8][i].v = bit;
       mat[i][8].v = bit;
@@ -322,7 +243,6 @@ function drawFormatBits(mat, ecc, mask) {
       mat[8][14 - i].v = bit;
       mat[14 - i][8].v = bit;
     } else {
-      // other side
       const j = i - 8;
       mat[8][mat.length - 1 - j].v = bit;
       mat[mat.length - 1 - j][8].v = bit;
@@ -335,7 +255,7 @@ function fillData(mat, dataBits, maskId) {
   let i = n - 1, dir = -1, bitIdx = 0;
 
   for (let col = n - 1; col > 0; col -= 2) {
-    if (col === 6) col--; // skip timing
+    if (col === 6) col--;
     for (;;) {
       for (let c = col; c >= col - 1; c--) {
         if (mat[i][c] == null || (mat[i][c] && !mat[i][c].f)) {
@@ -354,12 +274,11 @@ function fillData(mat, dataBits, maskId) {
   }
 }
 
-/* ------------------------- Penalty score ------------------------- */
 function penalty(mat) {
   const n = mat.length;
   let score = 0;
 
-  // Adjacent modules in row/col
+  // Adjacent runs
   for (let r=0;r<n;r++){
     let run = 1;
     for (let c=1;c<n;c++){
@@ -385,20 +304,18 @@ function penalty(mat) {
     }
   }
 
-  // Finder-like patterns (1:1:3:1:1)
+  // Finder-like patterns penalty
   const pattern = [1,1,3,1,1];
   const checkPattern = (arr) => {
     for (let i=0;i<=arr.length-11;i++){
-      const a = arr.slice(i, i+11);
-      const b = a.map(x=>x?1:0);
-      // pattern and its inverse with margins
+      const a = arr.slice(i, i+11).map(x=>x?1:0);
       const seqs = [
         [0,0,0,...pattern,0,0,0],
         [1,1,1,...pattern.map(x=>1-x),1,1,1]
       ];
       for (const s of seqs) {
         let ok = true;
-        for (let k=0;k<11;k++) if (b[k]!==s[k]) { ok=false; break; }
+        for (let k=0;k<11;k++) if (a[k]!==s[k]) { ok=false; break; }
         if (ok) return true;
       }
     }
@@ -413,7 +330,7 @@ function penalty(mat) {
     if (checkPattern(col)) score += 40;
   }
 
-  // Balance of dark modules
+  // Dark module ratio
   let dark = 0;
   for (let r=0;r<n;r++) for (let c=0;c<n;c++) if (mat[r][c].v) dark++;
   const ratio = Math.abs((dark * 100 / (n*n)) - 50) / 5;
@@ -422,29 +339,20 @@ function penalty(mat) {
   return score;
 }
 
-/* ------------------------- High-level build ------------------------ */
-function buildMatrix(version, ecc, dataCodewords) {
+function buildMatrix(version, ecc, dataBits) {
   const n = VERSIONS[version-1].size;
   const mat = initMatrix(n);
-
-  // Finder patterns + separators
   placeFinderPattern(mat, 0, 0);
   placeFinderPattern(mat, n - 7, 0);
   placeFinderPattern(mat, 0, n - 7);
-
-  // Timing + alignment
   placeTiming(mat);
   placeAlignmentPatterns(mat, version);
-
-  // Reserve format info areas
   reserveFormatAreas(mat);
 
-  // Try masks 0..7, choose lowest penalty
   let best = null, bestMask = 0, bestScore = Infinity;
   for (let mask=0; mask<8; mask++) {
-    // Deep copy light matrix
     const test = mat.map(row => row.map(cell => cell ? {...cell} : null));
-    fillData(test, dataCodewords, mask);
+    fillData(test, dataBits, mask);
     drawFormatBits(test, ecc, mask);
     const sc = penalty(test);
     if (sc < bestScore) { bestScore = sc; bestMask = mask; best = test; }
@@ -453,97 +361,88 @@ function buildMatrix(version, ecc, dataCodewords) {
 }
 
 function makeCodewords(version, ecc, dataBytes) {
-  const totalDC = totalDataCodewords(version, ecc); // data codewords capacity
-  const mode = 0b0100; // Byte mode
+  const totalDC = totalDataCodewords(version, ecc);
+  const mode = 0b0100; // Byte
   const ccBits = (version >= 10) ? 16 : 8;
 
-  const bb = new BitBuffer();
+  const bits = [];
+  const bb = {
+    put(n, length) {
+      for (let i = length - 1; i >= 0; i--) bits.push((n >>> i) & 1);
+    }
+  };
+
   bb.put(mode, 4);
   bb.put(dataBytes.length, ccBits);
-  bb.putBytes(dataBytes);
-  bb.put(0, Math.min(4, (totalDC*8) - bb.bits.length)); // terminator up to 4 bits
+  for (const b of dataBytes) bb.put(b, 8);
 
-  // align to byte
-  while (bb.bits.length % 8 !== 0) bb.bits.push(0);
+  const totalBits = totalDC * 8;
+  const remaining = totalBits - bits.length;
+  bb.put(0, Math.min(4, remaining)); // terminator
 
-  const needed = totalDC - (bb.bits.length / 8);
-  let toggle = true;
-  for (let i=0;i<needed;i++) {
-    bb.put(toggle ? 0xec : 0x11, 8);
-    toggle = !toggle;
+  while (bits.length % 8 !== 0) bits.push(0);
+
+  let padToggle = true;
+  while (bits.length < totalBits) {
+    const byte = padToggle ? 0xec : 0x11;
+    for (let i=7;i>=0;i--) bits.push((byte>>>i)&1);
+    padToggle = !padToggle;
   }
 
-  // Split into RS blocks as per plan
-  const blocks = [];
   const plan = blockPlan(version, ecc);
   const ecCount = ecPerBlock(version, ecc);
 
-  let offset = 0;
+  const blocks = [];
+  let byteIdx = 0;
   for (const [num, k] of plan) {
     for (let i=0;i<num;i++) {
       const dc = new Uint8Array(k);
       for (let j=0;j<k;j++) {
-        dc[j] = bitsToByte(bb.bits, (offset + j) * 8);
+        let v = 0;
+        for (let b=0;b<8;b++) v = (v<<1) | (bits[(byteIdx*8)+b]||0);
+        dc[j] = v;
+        byteIdx++;
       }
-      offset += k;
       const ec = rsEncode(dc, ecCount);
       blocks.push({ data: dc, ec });
     }
   }
 
-  // Interleave all blocks to final stream (in bytes -> bits)
   const inter = interleaveBlocks(blocks);
   const outBits = [];
   for (const b of inter) for (let i=7;i>=0;i--) outBits.push((b>>>i)&1);
   return outBits;
 }
 
-function bitsToByte(bits, idx) {
-  let v = 0;
-  for (let i=0;i<8;i++) v = (v<<1) | (bits[idx+i]||0);
-  return v;
-}
-
-/* --------------------------- Public API --------------------------- */
+/** Public: render a self-contained SVG QR */
 export async function renderSVG(data, size = 256, margin = 2, ecc = 'M') {
   try {
     const eccU = (ecc || 'M').toUpperCase();
     if (!ECC_LEVELS[eccU]) throw new Error("Invalid ECC level");
 
-    // Encode as UTF-8 bytes
     const bytes = utf8Bytes(String(data));
-    // Find minimal version that can fit
     const vPick = pickVersion(bytes.length, eccU);
     if (!vPick) throw new Error("Data too long for supported versions (v1..v10)");
 
     const bits = makeCodewords(vPick, eccU, bytes);
     const { matrix } = buildMatrix(vPick, eccU, bits);
 
-    // Render to SVG
     const n = matrix.length;
-    const cell = 1;
-    const dim = (n + margin * 2) * cell;
+    const dim = n + margin * 2;
 
     let path = "";
     for (let y=0;y<n;y++){
-      let run = 0; // build horizontal runs for compact path
       for (let x=0;x<n;x++){
-        if (matrix[y][x].v) {
-          // draw as unit square
-          path += `M${x+margin},${y+margin}h1v1h-1z`;
-        }
+        if (matrix[y][x].v) path += `M${x+margin},${y+margin}h1v1h-1z`;
       }
     }
 
-    const svg =
-`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" width="${size}" height="${size}" shape-rendering="crispEdges">
+    // Return a fully self-contained, portable SVG. No XML declaration is needed.
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${dim} ${dim}" width="${Number(size)||256}" height="${Number(size)||256}" shape-rendering="crispEdges" aria-label="QR">
   <rect width="100%" height="100%" fill="#fff"/>
   <path d="${path}" fill="#000"/>
 </svg>`;
-
-    return svg;
-  } catch (_e) {
-    // On any unexpected failure, return undefined so the caller can 501 gracefully
+  } catch {
     return undefined;
   }
 }
