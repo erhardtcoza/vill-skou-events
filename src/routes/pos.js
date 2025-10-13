@@ -1,9 +1,7 @@
 // /src/routes/pos.js
 import { json, bad } from "../utils/http.js";
 
-/* ------------------------------------------------------------------ *
- * Helpers: settings + WhatsApp (template-driven)                      *
- * ------------------------------------------------------------------ */
+/* ---------------- Settings + WhatsApp helpers ---------------- */
 async function getSetting(env, key) {
   const row = await env.DB.prepare(
     `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
@@ -13,52 +11,62 @@ async function getSetting(env, key) {
 
 async function parseTpl(env, key) {
   const sel = await getSetting(env, key);
-  if (!sel) return { name: null, lang: "en_US" };
+  if (!sel) return { name: null, lang: "af" };
   const [n, l] = String(sel).split(":");
-  return { name: (n || "").trim() || null, lang: (l || "").trim() || "en_US" };
+  return { name: (n || "").trim() || null, lang: (l || "").trim() || "af" };
 }
 
-async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText) {
-  if (!toMsisdn) return;
-  let svc = null;
-  try { svc = await import("../services/whatsapp.js"); } catch { return; }
-  const sendTpl = svc.sendWhatsAppTemplate || null;
-  const sendTxt = svc.sendWhatsAppTextIfSession || null;
+// We’ll use your existing services/whatsapp.js
+async function waSvc() {
+  try { return await import("../services/whatsapp.js"); }
+  catch { return null; }
+}
 
-  const { name, lang } = await parseTpl(env, tplKey);
+function normPhone(raw){
+  const s = String(raw||"").replace(/\D+/g,"");
+  if (s.length===10 && s.startsWith("0")) return "27"+s.slice(1);
+  return s;
+}
+
+async function sendPaymentConfirm(env, msisdn, shortCode){
+  const svc = await waSvc();
+  if (!svc || !msisdn) return;
+  const { name, lang } = await parseTpl(env, "WA_TMP_PAYMENT_CONFIRM");
+  const msg = `Betaling ontvang vir bestelling ${shortCode}. Dankie! 🎉`;
   try {
-    if (name && sendTpl) {
-      await sendTpl(env, toMsisdn, fallbackText, lang, name);
-    } else if (sendTxt) {
-      await sendTxt(env, toMsisdn, fallbackText);
+    if (name && svc.sendWhatsAppTemplate) {
+      await svc.sendWhatsAppTemplate(env, { to: msisdn, name, language: lang, variables: { code: shortCode }});
+    } else if (svc.sendWhatsAppTextIfSession) {
+      await svc.sendWhatsAppTextIfSession(env, msisdn, msg);
     }
-  } catch { /* non-blocking */ }
+  } catch {}
 }
 
-async function sendTicketDelivery(env, toMsisdn, code, buyerName) {
-  if (!toMsisdn || !code) return;
-  let svc = null;
-  try { svc = await import("../services/whatsapp.js"); } catch { return; }
-  const sendTicketTemplate = svc.sendTicketTemplate || null;
-  if (!sendTicketTemplate) return;
+// Ticket delivery: prefer template set in WA_TMP_TICKET_DELIVERY; else text with link
+async function sendTicketDelivery(env, msisdn, shortCode, buyerName){
+  const svc = await waSvc();
+  if (!svc || !msisdn || !shortCode) return;
+  const base = (await getSetting(env,"PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+  const link = `${base}/t/${encodeURIComponent(shortCode)}`;
+  const first = String(buyerName||"").split(/\s+/)[0] || "Vriend";
 
-  const sel = await getSetting(env, "WA_TMP_TICKET_DELIVERY");
-  const [tplName, lang] = String(sel || "").split(":");
-  const language = (lang || "en_US").trim();
-  const templateName = (tplName || "ticket_delivery").trim();
-  const firstName = String(buyerName||"").split(/\s+/)[0] || "Vriend";
-
-  await sendTicketTemplate(env, String(toMsisdn), {
-    templateName,
-    language,
-    bodyParam1: firstName,   // {{1}}
-    urlSuffixParam1: code    // {{1}} in URL button → /t/{{1}}
-  });
+  const { name, lang } = await parseTpl(env, "WA_TMP_TICKET_DELIVERY");
+  try {
+    if (name && svc.sendWhatsAppTemplate) {
+      await svc.sendWhatsAppTemplate(env, {
+        to: msisdn,
+        name,
+        language: lang,
+        variables: { name:first, code:shortCode, link }
+      });
+    } else if (svc.sendWhatsAppTextIfSession) {
+      await svc.sendWhatsAppTextIfSession(env, msisdn,
+        `Hallo ${first}! Jou kaartjies is gereed: ${link}`);
+    }
+  } catch {}
 }
 
-/* ------------------------------------------------------------------ *
- * DB helpers                                                          *
- * ------------------------------------------------------------------ */
+/* ---------------- Small DB helpers ---------------- */
 async function getGateIdByName(env, name){
   const n = String(name||"").trim();
   if (!n) return 0;
@@ -67,36 +75,30 @@ async function getGateIdByName(env, name){
   ).bind(n).first();
   if (found?.id) return Number(found.id);
   const ins = await env.DB.prepare(`INSERT INTO gates(name) VALUES(?1)`).bind(n).run();
-  const id = (ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
-  return Number(id);
+  return Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
 }
-
+async function getGateNameById(env, id){
+  const row = await env.DB.prepare(`SELECT name FROM gates WHERE id=?1`).bind(Number(id||0)).first();
+  return row?.name || null;
+}
 function shortCode(){
   const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let s = "";
-  for (let i=0;i<6;i++) s += A[Math.floor(Math.random()*A.length)];
+  let s=""; for(let i=0;i<6;i++) s += A[Math.floor(Math.random()*A.length)];
   return s;
 }
-function randToken(len=22){
+function randToken(len=24){
   const A="abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let s=""; for(let i=0;i<len;i++) s+=A[Math.floor(Math.random()*A.length)];
   return s;
 }
-function normPhone(raw){
-  const s = String(raw||"").replace(/\D+/g,"");
-  if (s.length===10 && s.startsWith("0")) return "27"+s.slice(1);
-  return s;
-}
-
 async function getTicketType(env, id){
   return await env.DB.prepare(
-    `SELECT id, event_id, name, price_cents FROM ticket_types WHERE id=?1 LIMIT 1`
+    `SELECT id,event_id,name,price_cents FROM ticket_types WHERE id=?1 LIMIT 1`
   ).bind(Number(id)).first();
 }
 
-/* Create a paid POS order + tickets and return {order_id, short_code, total_cents} */
+/* Create paid POS order + tickets; return {order_id, short_code, total_cents, event_id} */
 async function createPosOrder(env, { event_id, items, buyer_name, buyer_phone, method }) {
-  // Build items with price from DB and ensure same event_id
   let total = 0;
   const expanded = [];
   let evId = Number(event_id||0) || null;
@@ -116,66 +118,59 @@ async function createPosOrder(env, { event_id, items, buyer_name, buyer_phone, m
 
   const now = Math.floor(Date.now()/1000);
   const code = shortCode();
+  const msisdn = normPhone(buyer_phone||"");
 
-  // Insert order
+  // Save order as PAID (POS flow settles immediately)
   const ins = await env.DB.prepare(
-    `INSERT INTO orders (short_code, event_id, status, total_cents,
-                         created_at, updated_at, payment_method,
-                         contact_json, items_json, buyer_name, buyer_phone, paid_at)
-     VALUES (?1, ?2, 'paid', ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9, ?4)`
+    `INSERT INTO orders (short_code,event_id,status,total_cents,created_at,updated_at,
+                         payment_method,contact_json,items_json,buyer_name,buyer_phone,paid_at)
+     VALUES (?1,?2,'paid',?3,?4,?4,?5,?6,?7,?8,?9,?4)`
   ).bind(
     code, evId, total, now,
     method || "pos_cash",
-    JSON.stringify({ phone: normPhone(buyer_phone||"") }),
+    JSON.stringify({ phone: msisdn }),
     JSON.stringify(expanded),
-    buyer_name || "POS",
-    normPhone(buyer_phone||"")
+    buyer_name || "POS", msisdn
   ).run();
+  const order_id = Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
 
-  const order_id = (ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
-
-  // Issue tickets
+  // Issue tickets – set attendee name/phone so Admin list shows it
+  const [firstName, ...rest] = String(buyer_name||"").trim().split(/\s+/);
+  const lastName = rest.join(" ");
   for (const it of expanded) {
     for (let i=0; i<it.qty; i++){
-      const qr = "T" + randToken(18);
-      const token = randToken(24);
+      const qr = shortCode() + "-" + randToken(6).toUpperCase();
       await env.DB.prepare(
-        `INSERT INTO tickets (order_id, event_id, ticket_type_id,
-                              attendee_first, attendee_last, email, phone,
-                              qr, state, issued_at, token)
-         VALUES (?1, ?2, ?3, '', '', '', ?4, ?5, 'unused', ?6, ?7)`
-      ).bind(order_id, evId, it.ticket_type_id, normPhone(buyer_phone||""), qr, now, token).run();
+        `INSERT INTO tickets (order_id,event_id,ticket_type_id,
+                              attendee_first,attendee_last,phone,qr,state,issued_at,token)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,'unused',?8,?9)`
+      ).bind(order_id, evId, it.ticket_type_id,
+             firstName||"", lastName||"", msisdn, qr, now, randToken(28)).run();
     }
   }
 
-  return { order_id: Number(order_id), short_code: code, total_cents: total, event_id: evId };
+  return { order_id, short_code: code, total_cents: total, event_id: evId };
 }
 
-/* ------------------------------------------------------------------ *
- * Diagnostics used by /api/diag                                      *
- * ------------------------------------------------------------------ */
+/* ---------------- Public diag used by /api/diag ---------------- */
 export async function diagPOS(env){
-  const must = ["pos_sessions","ticket_types","orders","tickets","gates"];
+  const must = ["gates","pos_sessions","ticket_types","orders","tickets","pos_payments"];
   const out = {};
   for (const t of must){
-    try{
-      const r = await env.DB.prepare(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1`
-      ).bind(t).first();
-      out[t] = !!r;
-    }catch{ out[t] = false; }
+    const r = await env.DB.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1`
+    ).bind(t).first();
+    out[t] = !!r;
   }
   return { ok:true, tables: out };
 }
 
-/* ------------------------------------------------------------------ *
- * POS routes                                                          *
- * ------------------------------------------------------------------ */
+/* ---------------- Routes ---------------- */
 export function mountPOS(router, env) {
-  // light diag
+
   router.add("GET", "/api/pos/diag", async () => json({ ok:true, pos:"ready" }));
 
-  /* --------- Session open ---------- */
+  // Session OPEN
   router.add("POST", "/api/pos/session/open", async (req) => {
     try{
       const b = await req.json();
@@ -191,18 +186,18 @@ export function mountPOS(router, env) {
 
       const now = Math.floor(Date.now()/1000);
       const ins = await env.DB.prepare(
-        `INSERT INTO pos_sessions (cashier_name, gate_id, opening_float_cents, opened_at, event_id, cashier_msisdn)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
-      ).bind(cashier_name, gate_id, opening_float_cents, now, event_id, cashier_msisdn || null).run();
+        `INSERT INTO pos_sessions (cashier_name,gate_id,opening_float_cents,opened_at,event_id,cashier_msisdn)
+         VALUES (?1,?2,?3,?4,?5,?6)`
+      ).bind(cashier_name, gate_id, opening_float_cents, now, event_id, cashier_msisdn||null).run();
+      const id = Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
 
-      const session_id = (ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
-      return json({ ok:true, session:{ id:Number(session_id), gate_id, opened_at: now } });
-    }catch(e){
+      return json({ ok:true, session:{ id, gate_id, opened_at:now } });
+    }catch{
       return bad(500,"open_failed");
     }
   });
 
-  /* --------- Session close ---------- */
+  // Session CLOSE
   router.add("POST", "/api/pos/session/close", async (req) => {
     try{
       const { session_id, closing_manager='' } = await req.json();
@@ -212,25 +207,38 @@ export function mountPOS(router, env) {
         `UPDATE pos_sessions SET closed_at=?1, closing_manager=?2 WHERE id=?3 AND closed_at IS NULL`
       ).bind(now, String(closing_manager||"").trim() || null, Number(session_id)).run();
       return json({ ok:true, session_id:Number(session_id), closed_at: now });
-    }catch(_e){
+    }catch{
       return bad(500,"close_failed");
     }
   });
 
-  /* --------- POS order: sale (create + pay + tickets + WA) ---------- */
-  // Body: { session_id, event_id?, customer_name?, customer_msisdn?, method: 'pos_cash'|'pos_card', items:[{ticket_type_id, qty}] }
+  // Session INFO (for gate name on UI)
+  router.add("GET", "/api/pos/session/:id", async (_req, env2, _ctx, { id }) => {
+    const s = await env2.DB.prepare(
+      `SELECT ps.id, ps.gate_id, ps.cashier_name, ps.opened_at, ps.closed_at, ps.event_id
+         FROM pos_sessions ps WHERE ps.id=?1 LIMIT 1`
+    ).bind(Number(id||0)).first();
+    if (!s) return bad(404,"not_found");
+    const gate_name = await getGateNameById(env2, s.gate_id);
+    return json({ ok:true, session:{ ...s, gate_name } });
+  });
+
+  // POS order: SALE (create order + tickets, log payment, send WA)
   router.add("POST", "/api/pos/order/sale", async (req) => {
     let b;
     try { b = await req.json(); } catch { return bad(400,"bad_json"); }
+
     const method = (String(b.method||"pos_cash").toLowerCase()==="pos_card") ? "pos_card" : "pos_cash";
-    const session_id = Number(b.session_id||0) || null;
+    const name = String(b.customer_name||"").trim();
+    const phone = normPhone(b.customer_msisdn||"");
+    if (!name || !phone) return bad(400,"name_phone_required");
 
     try{
       const order = await createPosOrder(env, {
         event_id: b.event_id,
         items: b.items || [],
-        buyer_name: String(b.customer_name||"POS"),
-        buyer_phone: normPhone(b.customer_msisdn||""),
+        buyer_name: name,
+        buyer_phone: phone,
         method
       });
 
@@ -239,53 +247,62 @@ export function mountPOS(router, env) {
         await env.DB.prepare(
           `INSERT INTO pos_payments (session_id, order_id, method, amount_cents, created_at)
            VALUES (?1, ?2, ?3, ?4, ?5)`
-        ).bind(session_id, order.order_id, method, order.total_cents, Math.floor(Date.now()/1000)).run();
+        ).bind(Number(b.session_id||0)||null, order.order_id, method, order.total_cents, Math.floor(Date.now()/1000)).run();
       }catch{}
 
-      // WhatsApp payment confirm + ticket delivery
-      try {
-        const to = normPhone(b.customer_msisdn||"");
-        if (to) {
-          await sendViaTemplateKey(env, "WA_TMP_PAYMENT_CONFIRM", to,
-            `Betaling ontvang vir bestelling ${order.short_code}. Dankie! 🎉`);
-          await sendTicketDelivery(env, to, order.short_code, String(b.customer_name||""));
-        }
-      } catch {}
+      // WhatsApp
+      await sendPaymentConfirm(env, phone, order.short_code);
+      await sendTicketDelivery(env, phone, order.short_code, name);
 
       return json({ ok:true, order_id: order.order_id, code: order.short_code });
     }catch(e){
-      const msg = e?.message || "sale_failed";
-      return bad(400, msg);
+      return bad(400, e?.message || "sale_failed");
     }
   });
 
-  /* --------- POS order: lookup by short code (for Recall) ---------- */
+  // Recall: if PAID -> do not return cart, offer resend details instead
   router.add("GET", "/api/pos/order/lookup/:code", async (_req, env2, _ctx, { code }) => {
     const c = String(code||"").toUpperCase();
     if (!c) return bad(400,"code_required");
     const row = await env2.DB.prepare(
-      `SELECT id, short_code, buyer_name, buyer_phone, total_cents, items_json
+      `SELECT id, short_code, buyer_name, buyer_phone, total_cents, status, items_json
          FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
     ).bind(c).first();
     if (!row) return bad(404,"not_found");
 
+    const paid = String(row.status||"").toLowerCase()==="paid";
     let items = [];
-    try { items = JSON.parse(row.items_json||"[]"); } catch { items = []; }
-    // Map to expected shape: [{ticket_type_id, qty}]
-    const compact = items.map(it => ({ ticket_type_id: it.ticket_type_id, qty: it.qty }));
-
-    return json({ ok:true, order:{
+    if (!paid){
+      try { items = JSON.parse(row.items_json||"[]"); } catch {}
+      items = items.map(it => ({ ticket_type_id: it.ticket_type_id, qty: it.qty }));
+    }
+    return json({ ok:true, paid, order:{
       id: row.id, short_code: row.short_code,
       buyer_name: row.buyer_name, buyer_phone: row.buyer_phone,
-      total_cents: row.total_cents, items: compact
+      total_cents: row.total_cents,
+      items
     }});
   });
 
-  /* --------- Existing: settle (idempotent) ---------- */
-  // Body: { order_id?, code?, buyer_phone?, buyer_name?, method?: 'cash'|'card' }
+  // Resend tickets for a paid order
+  router.add("POST", "/api/pos/order/resend/:code", async (req, env2, _ctx, { code }) => {
+    const b = await req.json().catch(()=>({}));
+    const c = String(code||"").toUpperCase();
+    const row = await env2.DB.prepare(
+      `SELECT id, short_code, buyer_name, buyer_phone, status
+         FROM orders WHERE UPPER(short_code)=?1 LIMIT 1`
+    ).bind(c).first();
+    if (!row) return bad(404,"not_found");
+    if (String(row.status||"").toLowerCase()!=="paid") return bad(409,"not_paid");
+    const to = normPhone(row.buyer_phone || b.to || "");
+    if (!to) return bad(400,"no_msisdn");
+    await sendTicketDelivery(env2, to, row.short_code, row.buyer_name);
+    return json({ ok:true, code: row.short_code });
+  });
+
+  /* Existing settle (idempotent) kept for compatibility */
   router.add("POST", "/api/pos/settle", async (req, env3) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-
     const code = String(b?.code || "").trim().toUpperCase();
     const methodRaw = String(b?.method || "cash").toLowerCase();
     const method = methodRaw === "card" ? "pos_card" : "pos_cash";
@@ -298,7 +315,6 @@ export function mountPOS(router, env) {
     if (!row) return bad("Order not found", 404);
 
     const now = Math.floor(Date.now()/1000);
-
     await env3.DB.prepare(
       `UPDATE orders SET status='paid', payment_method=?1, paid_at=?2, updated_at=?2 WHERE id=?3`
     ).bind(method, now, row.id).run();
@@ -306,19 +322,11 @@ export function mountPOS(router, env) {
     await env3.DB.prepare(
       `INSERT INTO payments (order_id, amount_cents, method, status, created_at, updated_at)
        VALUES (?1, ?2, ?3, 'approved', ?4, ?4)`
-    ).bind(row.id, Number(row.total_cents || 0), method, now).run();
+    ).bind(row.id, Number(row.total_cents||0), method, now).run();
 
-    try {
-      const msg = `Betaling ontvang vir bestelling ${code}. Dankie! 🎉`;
-      const to = String(row.buyer_phone || b?.buyer_phone || "").trim();
-      if (to) await sendViaTemplateKey(env3, "WA_TMP_PAYMENT_CONFIRM", to, msg);
-    } catch {}
-
-    try {
-      const to = String(row.buyer_phone || b?.buyer_phone || "").trim();
-      if (to) await sendTicketDelivery(env3, to, code, (row.buyer_name || b?.buyer_name || ""));
-    } catch {}
-
-    return json({ ok: true, order_id: row.id, code, method });
+    const to = normPhone(row.buyer_phone || b?.buyer_phone || "");
+    await sendPaymentConfirm(env3, to, code);
+    await sendTicketDelivery(env3, to, code, (row.buyer_name || b?.buyer_name || ""));
+    return json({ ok:true, order_id: row.id, code, method });
   });
 }
