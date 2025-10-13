@@ -40,7 +40,7 @@ export const posSellHTML = `<!doctype html><html><head>
       <span id="eventPill" class="pill" style="margin-left:6px"></span>
     </div>
     <div class="row">
-      <input id="recallCode" placeholder="Recall code e.g. ABC123" style="width:180px"/>
+      <input id="recallCode" placeholder="Recall code bv. ABC123" style="width:180px"/>
       <button id="recallBtn" class="btn">Recall</button>
       <span id="miniMsg" class="muted"></span>
     </div>
@@ -87,11 +87,7 @@ const session_id = Number(q.get('session_id')||0);
 const event_id = Number(q.get('event_id')||0);
 const event_slug = q.get('event_slug') || '';
 
-const state = {
-  ttypes: new Map(),  // id -> {id,name,price_cents}
-  cart: new Map()     // id -> qty
-};
-
+const state = { ttypes: new Map(), cart: new Map() };
 function rands(c){ return 'R' + ((c||0)/100).toFixed(2); }
 
 function renderCatalog(){
@@ -171,7 +167,6 @@ async function recall(){
     const r = await fetch('/api/pos/order/lookup/'+encodeURIComponent(code));
     const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'not found');
-    // Expect j.order.items = [{ticket_type_id, qty}]
     state.cart.clear();
     (j.order.items||[]).forEach(it => {
       if (state.ttypes.has(it.ticket_type_id)) state.cart.set(it.ticket_type_id, Number(it.qty||0));
@@ -193,8 +188,8 @@ async function tender(method){
     session_id,
     event_id: event_id || undefined,
     customer_name: ($('custName').value||'').trim(),
-    customer_msisdn: ($('custPhone').value||'').trim(),
-    method: method, // 'pos_cash' | 'pos_card'
+    customer_msisdn: String(($('custPhone').value||'').trim()).replace(/\\D+/g,''),
+    method, // 'pos_cash' | 'pos_card'
     items
   };
 
