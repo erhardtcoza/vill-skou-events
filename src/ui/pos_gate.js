@@ -1,4 +1,4 @@
-// /src/ui/pos.js
+// /src/ui/pos_gate.js
 
 /* POS landing (Gate) */
 export function posHTML() {
@@ -30,8 +30,8 @@ export function posHTML() {
         <input id="cashier" placeholder="e.g. Anna S." autocomplete="name"/>
       </div>
       <div>
-        <label for="gate">Gate name</label>
-        <input id="gate" placeholder="e.g. Main Gate"/>
+        <label for="gate">Gate</label>
+        <select id="gate"><option value="">Loading…</option></select>
       </div>
       <div>
         <label for="float">Opening float (R)</label>
@@ -71,6 +71,20 @@ async function loadEvents(){
   }catch(_e){ sel.innerHTML = '<option value="">Error loading events</option>'; }
 }
 
+async function loadGates(){
+  const sel = $('gate');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try{
+    const j = await fetch('/api/pos/gates').then(r=>r.json());
+    if (!j.ok){ sel.innerHTML = '<option value="">No gates</option>'; return; }
+    const list = j.gates || [];
+    if (!list.length){ sel.innerHTML = '<option value="">No gates</option>'; return; }
+    sel.innerHTML = '<option value="">Select a gate…</option>' + list.map(g => '<option value="'+g.id+'">'+g.name+'</option>').join('');
+  }catch(_e){
+    sel.innerHTML = '<option value="">Error loading gates</option>';
+  }
+}
+
 $('event').addEventListener('change', ()=>{
   const opt = $('event').selectedOptions[0];
   $('note').textContent = opt ? ('Selected event: ' + opt.textContent) : '';
@@ -78,14 +92,14 @@ $('event').addEventListener('change', ()=>{
 
 $('start').onclick = async ()=>{
   $('msg').textContent = '';
-  const cashier = ($('cashier').value||'').trim();
-  const gate    = ($('gate').value||'').trim();
-  const floatR  = $('float').value;
-  const opt     = $('event').selectedOptions[0];
-  const eventSlug = opt ? opt.value : '';
-  const eventId   = opt ? Number(opt.dataset.id||0) : 0;
+  const cashier  = ($('cashier').value||'').trim();
+  const gateId   = Number(($('gate').value||'').trim());
+  const floatR   = $('float').value;
+  const opt      = $('event').selectedOptions[0];
+  const eventSlug= opt ? opt.value : '';
+  const eventId  = opt ? Number(opt.dataset.id||0) : 0;
 
-  if (!cashier || !gate || !eventSlug){
+  if (!cashier || !gateId || !eventSlug){
     $('msg').textContent = 'Please fill cashier, gate and event.';
     return;
   }
@@ -96,7 +110,7 @@ $('start').onclick = async ()=>{
       headers:{'content-type':'application/json'},
       body: JSON.stringify({
         cashier_name: cashier,
-        gate_name: gate,
+        gate_id: gateId,
         opening_float_cents: centsFromRand(floatR) || 0,
         event_id: eventId || null
       })
@@ -112,6 +126,7 @@ $('start').onclick = async ()=>{
 };
 
 loadEvents();
+loadGates();
 </script>
 </body></html>`;
 }
