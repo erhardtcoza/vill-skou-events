@@ -1,4 +1,4 @@
-// /src/ui/pos_sell.js
+// /src/ui/gate_sell.js
 export const posSellHTML = `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>POS · Sell</title>
@@ -181,7 +181,6 @@ async function recall(){
 
     if (j.paid){ // already paid → offer resend only
       const to = j.order.buyer_phone || '';
-      const name = j.order.buyer_name || '';
       const yes = confirm('Order '+code+' is already PAID. Resend tickets to '+(to||'the saved number')+'?');
       if (yes){
         await fetch('/api/pos/order/resend/'+encodeURIComponent(code), {
@@ -190,7 +189,7 @@ async function recall(){
         });
         $('miniMsg').textContent = 'Tickets resent.';
       } else {
-        $('miniMsg').textContent = 'Order loaded.';
+        $('miniMsg').textContent = 'Order is paid.';
       }
       return;
     }
@@ -261,7 +260,7 @@ async function closeSession(){
     });
     const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'close failed');
-    location.href = '/pos';
+    location.href = '/gate';
   }catch(e){
     alert('Close failed: ' + (e.message||''));
   }
