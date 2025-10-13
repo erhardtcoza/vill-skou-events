@@ -1,6 +1,57 @@
 // /src/routes/cashbar.js
-import { nanoid } from '../utils/id.js'; // tiny id generator
-import { json, bad } from '../utils/http.js'; // your existing helpers
+import { nanoid } from '../utils/id.js';
+import { json, bad } from '../utils/http.js';
+
+// ---- WhatsApp helpers (use your in-Worker service) ----
+async function waSvc() {
+  try { return await import('../services/whatsapp.js'); }
+  catch { return null; }
+}
+async function getSetting(env, key) {
+  try {
+    const row = await env.DB
+      .prepare('SELECT value FROM site_settings WHERE key=?1 LIMIT 1')
+      .bind(key).first();
+    return row ? row.value : null;
+  } catch { return null; }
+}
+function normMSISDN(msisdn) {
+  const s = String(msisdn || '').replace(/\D+/g, '');
+  if (!s) return '';
+  if (s.startsWith('27') && s.length >= 11) return s;
+  if (s.length === 10 && s.startsWith('0')) return '27' + s.slice(1);
+  return s;
+}
+/**
+ * Sends a WA template if `site_settings[key]` is set as "name:lang".
+ * Falls back to a text message (if there’s a session) with `fallbackText`.
+ */
+async function sendWA(env, to, templateKey, variablesObj = {}, fallbackText = '') {
+  const svc = await waSvc();
+  const msisdn = normMSISDN(to);
+  if (!svc || !msisdn) return false;
+
+  const sel = (await getSetting(env, templateKey)) || '';  // e.g. "bar_topup:af"
+  const [name, lang] = String(sel).includes(':') ? sel.split(':') : [sel, 'af'];
+
+  if (name) {
+    try {
+      await svc.sendWhatsAppTemplate(env, {
+        to: msisdn,
+        name: name.trim(),
+        language: (lang || 'af').trim(),
+        variables: variablesObj
+      });
+      return true;
+    } catch (_) { /* fall through */ }
+  }
+  if (fallbackText) {
+    try { await svc.sendWhatsAppTextIfSession(env, msisdn, fallbackText); } catch {}
+  }
+  return true;
+}
+
+// -------------------------------------------------------
 
 export function mountCashbar(router, env) {
   // REGISTER from ticket or manual
@@ -8,13 +59,11 @@ export function mountCashbar(router, env) {
     const { source, ticket_code, name, mobile } = await req.json();
 
     let attendee = null;
-    if (source === 'ticket') {
-      // TODO: call your tickets DB/endpoint
-      attendee = await lookupAttendee(env, ticket_code); // {id,name,mobile?}
+    if (source === 'ticket' && ticket_code) {
+      attendee = await lookupAttendee(env, ticket_code); // {id,name,mobile?} or null
     }
     const fullName = (attendee?.name || name || '').trim();
-    const phone = (attendee?.mobile || mobile || '').trim();
-
+    const phone    = (attendee?.mobile || mobile || '').trim();
     if (!fullName || !phone) return bad(400, 'name_or_mobile_missing');
 
     const wallet_id = shortId();
@@ -24,17 +73,21 @@ export function mountCashbar(router, env) {
       VALUES(?1,?2,?3,?4,?5,'active',0,0)
     `).bind(wallet_id, attendee?.id ?? null, fullName, phone, now).run();
 
-    // Create DO stub with initial state
-    const id = env.WALLET_DO.idFromName(wallet_id);
-    const stub = env.WALLET_DO.get(id);
-    await stub.fetch(new URL('/init', 'https://do').toString(), {
-      method: 'POST', body: JSON.stringify({ wallet_id, balance_cents: 0, version: 0, status:'active' })
+    // init Durable Object
+    const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
+    await stub.fetch('https://do/init', {
+      method: 'POST',
+      body: JSON.stringify({ wallet_id, balance_cents: 0, version: 0, status: 'active' })
     });
 
-    const wallet_url = `${env.BASE_URL}/w/${wallet_id}`;
+    const wallet_url = `${env.PUBLIC_BASE_URL}/w/${wallet_id}`;
 
     // WhatsApp welcome
-    await sendWA(env, phone, 'bar_welcome', { name: first(fullName), wallet_url });
+    await sendWA(
+      env, phone, 'BAR_TMP_WELCOME',
+      { name: first(fullName), wallet_url },
+      `Hallo ${first(fullName)}! Jou Skou kroegrekening is gereed: ${wallet_url}`
+    );
 
     return json({ wallet_id, wallet_url, balance_cents: 0 });
   });
@@ -43,13 +96,15 @@ export function mountCashbar(router, env) {
   router.post('/api/wallets/:id/topup', async (req, params) => {
     const { amount_cents, source='yoco', ref='', cashier_id='' } = await req.json();
     const wallet_id = params.id;
+
     const w = await getWallet(env, wallet_id);
     if (!w) return bad(404, 'wallet_not_found');
 
     // DO atomic increment
     const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
-    const r = await stub.fetch(new URL('/topup', 'https://do').toString(), {
-      method: 'POST', body: JSON.stringify({ amount_cents })
+    const r = await stub.fetch('https://do/topup', {
+      method: 'POST',
+      body: JSON.stringify({ amount_cents })
     });
     if (!r.ok) return r;
     const { balance_cents, version } = await r.json();
@@ -64,9 +119,12 @@ export function mountCashbar(router, env) {
       .bind(balance_cents, version, wallet_id).run();
 
     // Notify
-    await sendWA(env, w.mobile, 'bar_topup', {
-      amount: cents(amount_cents), balance: cents(balance_cents), wallet_url: `${env.BASE_URL}/w/${wallet_id}`
-    });
+    const wallet_url = `${env.PUBLIC_BASE_URL}/w/${wallet_id}`;
+    await sendWA(
+      env, w.mobile, 'BAR_TMP_TOPUP',
+      { amount: cents(amount_cents), balance: cents(balance_cents), wallet_url },
+      `Top-up van R${cents(amount_cents)}. Nuwe balans: R${cents(balance_cents)}`
+    );
 
     return json({ new_balance_cents: balance_cents, version });
   });
@@ -88,19 +146,18 @@ export function mountCashbar(router, env) {
     const rec   = await getWallet(env, to);
     if (!donor || !rec) return bad(404, 'wallet_not_found');
 
-    // deduct donor
+    // donor deduct
     const sFrom = env.WALLET_DO.get(env.WALLET_DO.idFromName(from));
-    let r = await sFrom.fetch(new URL('/deduct', 'https://do').toString(), {
-      method:'POST', body: JSON.stringify({ amount_cents, expected_version: donor.version })
+    let r = await sFrom.fetch('https://do/deduct', {
+      method:'POST',
+      body: JSON.stringify({ amount_cents, expected_version: donor.version })
     });
     if (!r.ok) return r;
     const { balance_cents: donor_new, version: donor_ver } = await r.json();
 
-    // topup recipient
+    // recipient topup
     const sTo = env.WALLET_DO.get(env.WALLET_DO.idFromName(to));
-    r = await sTo.fetch(new URL('/topup', 'https://do').toString(), {
-      method:'POST', body: JSON.stringify({ amount_cents })
-    });
+    r = await sTo.fetch('https://do/topup', { method:'POST', body: JSON.stringify({ amount_cents }) });
     const { balance_cents: rec_new, version: rec_ver } = await r.json();
 
     // persist
@@ -108,13 +165,20 @@ export function mountCashbar(router, env) {
     await env.DB.batch([
       env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(donor_new, donor_ver, from),
       env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(rec_new,   rec_ver,   to),
-      env.DB.prepare(`INSERT INTO transfers(id,donor_wallet_id,recipient_wallet_id,amount_cents,created_at) VALUES(?1,?2,?3,?4,?5)`)
+      env.DB.prepare(`INSERT INTO transfers(id,donor_wallet_id,recipient_wallet_id,amount_cents,created_at)
+                      VALUES(?1,?2,?3,?4,?5)`)
         .bind(nanoid(), from, to, amount_cents, now)
     ]);
 
     // Notify both
-    await sendWA(env, donor.mobile, 'bar_transfer_out', { amount: cents(amount_cents), to_name: first(rec.name), balance: cents(donor_new) });
-    await sendWA(env, rec.mobile,   'bar_transfer_in',  { amount: cents(amount_cents), from_name: first(donor.name), balance: cents(rec_new) });
+    await sendWA(env, donor.mobile, 'BAR_TMP_TRANSFER_OUT',
+      { amount: cents(amount_cents), to_name: first(rec.name),   balance: cents(donor_new) },
+      `Jy het R${cents(amount_cents)} oorgedra na ${first(rec.name)}. Nuwe balans: R${cents(donor_new)}`
+    );
+    await sendWA(env, rec.mobile,   'BAR_TMP_TRANSFER_IN',
+      { amount: cents(amount_cents), from_name: first(donor.name), balance: cents(rec_new) },
+      `Jy het R${cents(amount_cents)} ontvang van ${first(donor.name)}. Nuwe balans: R${cents(rec_new)}`
+    );
 
     return json({ from_balance_cents: donor_new, to_balance_cents: rec_new });
   });
@@ -131,14 +195,16 @@ export function mountCashbar(router, env) {
     const total_cents = items.reduce((s,it)=> s + (it.unit_price_cents*it.qty), 0);
 
     const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
-    const r = await stub.fetch(new URL('/deduct','https://do').toString(), {
-      method:'POST', body: JSON.stringify({ amount_cents: total_cents, expected_version })
+    const r = await stub.fetch('https://do/deduct', {
+      method:'POST',
+      body: JSON.stringify({ amount_cents: total_cents, expected_version })
     });
     if (!r.ok) return r;
     const { balance_cents, version } = await r.json();
 
     await env.DB.batch([
-      env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(balance_cents, version, wallet_id),
+      env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`)
+        .bind(balance_cents, version, wallet_id),
       env.DB.prepare(`INSERT INTO sales(id,wallet_id,items_json,total_cents,bartender_id,device_id,created_at)
                       VALUES(?1,?2,?3,?4,?5,?6,?7)`)
         .bind(nanoid(), wallet_id, JSON.stringify(items), total_cents, bartender_id, device_id, Date.now())
@@ -146,9 +212,12 @@ export function mountCashbar(router, env) {
 
     // WhatsApp purchase + low-balance nudge
     const summary = items.map(i=>`${i.qty}× ${i.name}`).join(', ');
-    await sendWA(env, w.mobile, 'bar_purchase', { items_summary: summary, total: cents(total_cents), balance: cents(balance_cents) });
+    await sendWA(env, w.mobile, 'BAR_TMP_PURCHASE',
+      { items_summary: summary, total: cents(total_cents), balance: cents(balance_cents) },
+      `Aankoop: ${summary} – R${cents(total_cents)}. Balans: R${cents(balance_cents)}`
+    );
     if (balance_cents < 10000) {
-      await sendWA(env, w.mobile, 'bar_low_balance', {});
+      await sendWA(env, w.mobile, 'BAR_TMP_LOW_BAL', {}, 'Jou kroegbalans is onder R100. Vul gerus weer aan by die kas.');
     }
 
     return json({ new_balance_cents: balance_cents, version });
@@ -161,38 +230,21 @@ async function getWallet(env, id) {
 }
 
 function shortId() {
-  // 6–7 char readable id
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s='W';
-  for(let i=0;i<6;i++) s += alphabet[Math.floor(Math.random()*alphabet.length)];
+  let s='W'; for(let i=0;i<6;i++) s += alphabet[Math.floor(Math.random()*alphabet.length)];
   return s;
 }
-
 function first(n){ return (n||'').split(' ')[0]; }
 function cents(n){ return (n/100).toFixed(2); }
 
+/**
+ * Attendee lookup via INTERNAL route (recommended quick start).
+ * Ensure you mounted /api/attendees/:code. If not, replace with a direct D1 query.
+ */
 async function lookupAttendee(env, ticket_code){
-  // Replace with your real lookup (D1 or existing route)
-  const res = await fetch(`${env.BASE_URL}/api/tickets/${encodeURIComponent(ticket_code)}`);
-  if (!res.ok) return null;
-  return await res.json(); // {id,name,mobile?}
-}
-
-async function sendWA(env, to, template, vars){
-  if (!to) return;
-  // Map templates to your WhatsApp worker templates
-  const map = {
-    bar_welcome:      { name:'bar_welcome',      lang:'af' },
-    bar_topup:        { name:'bar_topup',        lang:'af' },
-    bar_purchase:     { name:'bar_purchase',     lang:'af' },
-    bar_low_balance:  { name:'bar_low_balance',  lang:'af' },
-    bar_transfer_out: { name:'bar_transfer_out', lang:'af' },
-    bar_transfer_in:  { name:'bar_transfer_in',  lang:'af' }
-  };
-  const sel = map[template] || {name:template, lang:'af'};
-  await fetch(`${env.WA_BASE}/api/wa/send`, {
-    method:'POST',
-    headers:{'content-type':'application/json', 'authorization': `Bearer ${env.WA_TOKEN}`},
-    body: JSON.stringify({ to, template_key: `${sel.name}:${sel.lang}`, variables: vars })
-  }).catch(()=>{});
+  try {
+    const res = await fetch(`${env.PUBLIC_BASE_URL}/api/attendees/${encodeURIComponent(ticket_code)}`);
+    if (!res.ok) return null;
+    return await res.json(); // {id,name,mobile?}
+  } catch { return null; }
 }
