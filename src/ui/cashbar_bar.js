@@ -16,7 +16,7 @@ return `<!doctype html><html lang="af"><head>
   .muted{opacity:.85}
   @media(max-width:900px){main{grid-template-columns:1fr}}
 </style></head><body>
-<header>Bar</header>
+<header>Kroeg</header>
 <main>
   <div class="panel">
     <div style="display:flex;gap:8px;align-items:center">
@@ -93,7 +93,6 @@ function clearCart(){ cart=[]; renderCart(); }
 
 async function done(){
   if(!wallet || !cart.length){ alert('Geen items'); return; }
-  const total = cart.reduce((s,x)=> s + x.qty*x.unit_price_cents, 0);
   const r = await fetch('/api/wallets/'+wallet+'/deduct',{
     method:'POST', headers:{'content-type':'application/json'},
     body: JSON.stringify({ items: cart, expected_version: version, bartender_id:'bar-1', device_id:'dev-1' })
