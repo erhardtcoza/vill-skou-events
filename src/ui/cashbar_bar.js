@@ -1,18 +1,20 @@
 // /src/ui/cashbar_bar.js
 export function barHTML() {
-return `<!doctype html><html><head>
+return `<!doctype html><html lang="af"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Bar</title>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/cashbar-sw.js')}</script>
 <style>
   body{font-family:system-ui;margin:0;background:#0b1320;color:#fff}
   header{padding:12px 16px;font-weight:600}
-  main{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  main{padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:980px;margin:0 auto}
   .panel{background:#111b33;border-radius:12px;padding:12px}
   .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-  button{padding:12px;border-radius:10px;border:0}
+  button{padding:12px;border-radius:10px;border:0;background:#1b2a59;color:#fff;cursor:pointer}
   .cart{min-height:140px}
   .row{display:flex;justify-content:space-between;margin:4px 0}
+  .muted{opacity:.85}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
 </style></head><body>
 <header>Bar</header>
 <main>
@@ -20,8 +22,9 @@ return `<!doctype html><html><head>
     <div style="display:flex;gap:8px;align-items:center">
       <input id="wallet" placeholder="Scan/enter Wallet ID" style="flex:1;padding:10px;border-radius:8px;border:0"/>
       <button onclick="scan()">Scan</button>
+      <button onclick="load()">Load</button>
     </div>
-    <div id="cust" style="margin-top:8px;opacity:.9"></div>
+    <div id="cust" class="muted" style="margin-top:8px"></div>
     <div style="margin:10px 0">
       <div class="grid" id="cats"></div>
       <div class="grid" id="items"></div>
@@ -32,7 +35,10 @@ return `<!doctype html><html><head>
     <div class="cart" id="cart"></div>
     <div style="margin-top:10px">
       <div id="total"></div>
-      <button onclick="done()">Done</button>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button onclick="done()">Done</button>
+        <button onclick="clearCart()">Clear</button>
+      </div>
     </div>
   </div>
 </main>
@@ -44,21 +50,37 @@ document.getElementById('cats').innerHTML = cats.map(c=>\`<button onclick="showC
 async function scan(){
   const id = prompt('Voer/scan wallet ID:');
   if(!id) return;
+  document.getElementById('wallet').value = id.trim();
+  await load();
+}
+
+async function load(){
+  const id = document.getElementById('wallet').value.trim();
+  if(!id){ alert('Voer wallet ID in'); return; }
   wallet = id;
-  const r = await fetch('/api/wallets/'+id); const j=await r.json();
-  if(!r.ok) { alert(j.error); return; }
+  const r = await fetch('/api/wallets/'+id);
+  const j = await r.json();
+  if(!r.ok) { alert(j.error || 'Wallet nie gevind'); return; }
   version=j.version; balance=j.balance_cents;
   document.getElementById('cust').textContent = \`\${j.name} • Balans R \${(balance/100).toFixed(2)}\`;
-  if(!allItems.length){ const ii=await (await fetch('/api/items')).json(); allItems=ii.items||[]; }
+  if(!allItems.length){
+    const ii=await (await fetch('/api/items')).json();
+    allItems=ii.items||[];
+  }
+  showCat(cats[0]);
 }
 
 function showCat(cat){
   const list = allItems.filter(i=>i.category===cat && i.active);
-  document.getElementById('items').innerHTML = list.map(i=>\`<button onclick='addItem("\${i.id}")'>\${i.name}<br>R \${(i.price_cents/100).toFixed(2)}</button>\`).join('');
+  document.getElementById('items').innerHTML = list.map(i=>
+    \`<button onclick='addItem("\${i.id}")'>\${i.name}<br>R \${(i.price_cents/100).toFixed(2)}</button>\`
+  ).join('');
 }
+
 function addItem(id){
   const it = allItems.find(x=>x.id===id); if(!it) return;
-  const row = cart.find(x=>x.id===id); if(row) row.qty++; else cart.push({id:it.id,name:it.name,qty:1,unit_price_cents:it.price_cents});
+  const row = cart.find(x=>x.id===id);
+  if(row) row.qty++; else cart.push({id:it.id,name:it.name,qty:1,unit_price_cents:it.price_cents});
   renderCart();
 }
 function renderCart(){
@@ -67,14 +89,18 @@ function renderCart(){
   const total = cart.reduce((s,x)=> s + x.qty*x.unit_price_cents, 0);
   document.getElementById('total').innerHTML = '<b>Totaal: R '+(total/100).toFixed(2)+'</b>  •  Oorblyf: R '+((balance-total)/100).toFixed(2);
 }
+function clearCart(){ cart=[]; renderCart(); }
+
 async function done(){
   if(!wallet || !cart.length){ alert('Geen items'); return; }
   const total = cart.reduce((s,x)=> s + x.qty*x.unit_price_cents, 0);
-  const r = await fetch('/api/wallets/'+wallet+'/deduct',{method:'POST',headers:{'content-type':'application/json'},
-    body: JSON.stringify({ items: cart, expected_version: version, bartender_id:'bar-1', device_id:'dev-1' })});
+  const r = await fetch('/api/wallets/'+wallet+'/deduct',{
+    method:'POST', headers:{'content-type':'application/json'},
+    body: JSON.stringify({ items: cart, expected_version: version, bartender_id:'bar-1', device_id:'dev-1' })
+  });
   const j=await r.json();
   if(!r.ok){ alert(j.error || 'Misluk'); return; }
-  balance=j.new_balance_cents; version=j.version; cart=[]; renderCart();
+  balance=j.new_balance_cents; version=j.version; clearCart();
   document.getElementById('cust').textContent = 'Balans R '+(balance/100).toFixed(2);
   alert('Afgereken. Nuwe balans: R '+(balance/100).toFixed(2));
 }
