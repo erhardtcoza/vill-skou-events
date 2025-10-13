@@ -16,7 +16,6 @@ async function parseTpl(env, key) {
   return { name: (n || "").trim() || null, lang: (l || "").trim() || "af" };
 }
 
-// We’ll use your existing services/whatsapp.js
 async function waSvc() {
   try { return await import("../services/whatsapp.js"); }
   catch { return null; }
@@ -67,20 +66,21 @@ async function sendTicketDelivery(env, msisdn, shortCode, buyerName){
 }
 
 /* ---------------- Small DB helpers ---------------- */
-async function getGateIdByName(env, name){
+async function getGateById(env, id){
+  const row = await env.DB.prepare(`SELECT id,name FROM gates WHERE id=?1`).bind(Number(id||0)).first();
+  return row || null;
+}
+async function getGateByName(env, name){
   const n = String(name||"").trim();
-  if (!n) return 0;
-  const found = await env.DB.prepare(
-    `SELECT id FROM gates WHERE name=?1 LIMIT 1`
-  ).bind(n).first();
-  if (found?.id) return Number(found.id);
-  const ins = await env.DB.prepare(`INSERT INTO gates(name) VALUES(?1)`).bind(n).run();
-  return Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
+  if (!n) return null;
+  const row = await env.DB.prepare(`SELECT id,name FROM gates WHERE name=?1 LIMIT 1`).bind(n).first();
+  return row || null;
 }
-async function getGateNameById(env, id){
-  const row = await env.DB.prepare(`SELECT name FROM gates WHERE id=?1`).bind(Number(id||0)).first();
-  return row?.name || null;
+async function listGates(env){
+  const res = await env.DB.prepare(`SELECT id,name FROM gates ORDER BY name ASC`).all();
+  return res?.results || [];
 }
+
 function shortCode(){
   const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s=""; for(let i=0;i<6;i++) s += A[Math.floor(Math.random()*A.length)];
@@ -170,19 +170,41 @@ export function mountPOS(router, env) {
 
   router.add("GET", "/api/pos/diag", async () => json({ ok:true, pos:"ready" }));
 
-  // Session OPEN
+  // NEW: list gates (UI will populate a <select>)
+  router.add("GET", "/api/pos/gates", async () => {
+    try {
+      const gates = await listGates(env);
+      return json({ ok:true, gates });
+    } catch {
+      return bad(500, "gates_failed");
+    }
+  });
+
+  // Session OPEN (now prefers gate_id; supports existing gate_name if already in DB)
   router.add("POST", "/api/pos/session/open", async (req) => {
     try{
       const b = await req.json();
       const cashier_name = String(b.cashier_name||"").trim();
-      const gate_name    = String(b.gate_name||b.gate||"").trim();
       const opening_float_cents = (b.opening_float_cents|0);
       const event_id = Number(b.event_id||0) || null;
       const cashier_msisdn = normPhone(b.cashier_msisdn||"");
-      if (!cashier_name || !gate_name) return bad(400,"missing_fields");
 
-      const gate_id = await getGateIdByName(env, gate_name);
-      if (!gate_id) return bad(400,"invalid_gate");
+      let gate_id = Number(b.gate_id||0) || 0;
+
+      if (!gate_id) {
+        // Compatibility path: accept a gate_name but DO NOT create new; require it exists
+        const gate_name = String(b.gate_name||b.gate||"").trim();
+        if (!cashier_name || !gate_name) return bad(400,"missing_fields");
+        const g = await getGateByName(env, gate_name);
+        if (!g) return bad(400,"invalid_gate");
+        gate_id = Number(g.id);
+      } else {
+        // Validate gate_id exists
+        const g = await getGateById(env, gate_id);
+        if (!g) return bad(400,"invalid_gate");
+      }
+
+      if (!cashier_name) return bad(400,"missing_fields");
 
       const now = Math.floor(Date.now()/1000);
       const ins = await env.DB.prepare(
@@ -219,7 +241,8 @@ export function mountPOS(router, env) {
          FROM pos_sessions ps WHERE ps.id=?1 LIMIT 1`
     ).bind(Number(id||0)).first();
     if (!s) return bad(404,"not_found");
-    const gate_name = await getGateNameById(env2, s.gate_id);
+    const g = await getGateById(env2, s.gate_id);
+    const gate_name = g?.name || null;
     return json({ ok:true, session:{ ...s, gate_name } });
   });
 
