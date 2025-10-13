@@ -54,15 +54,15 @@ export const adminHTML = `<!doctype html><html><head>
 </div>
 
 <script>
-// A tiny shared helper the modules use:
+// helpers
 window.$ = (id)=>document.getElementById(id);
 window.esc = (s)=>String(s||"").replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
 window.rands = (c)=>"R"+((c||0)/100).toFixed(2);
 
-// Registry each module attaches its renderer(s) to:
+// module registry
 window.AdminPanels = {};
 
-// Inject module code (compiled at build time; no runtime <script type="module"> imports)
+// modules
 ${adminEventsJS}
 ${adminTicketsJS}
 ${adminPOSJS}
@@ -89,8 +89,7 @@ document.querySelectorAll(".tab").forEach(t=>{
 // Default
 switchTab("events");
 
-// Optional deep-link directly to settings subtabs:
-// e.g. /admin#settings:whatsapp or /admin#settings:yoco or /admin#settings:general
+// Optional deep-link e.g. /admin#settings:whatsapp
 if (location.hash.startsWith("#settings:")){
   switchTab("settings");
   const sub = location.hash.split(":")[1] || "general";
