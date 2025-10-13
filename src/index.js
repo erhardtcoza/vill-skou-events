@@ -31,7 +31,11 @@ import { badgeHTML } from "./ui/badge.js";
 import { landingHTML } from "./ui/landing.js";
 import { adminHTML } from "./ui/admin.js";
 import { shopHTML } from "./ui/shop.js";
-import { posHTML, posSellHTML } from "./ui/pos.js";
+// Gate POS landing stays in pos.js:
+import { posHTML } from "./ui/pos.js";
+// Gate POS sell page lives in pos_sell.js (the real UI):
+import { posSellHTML as gateSellHTML } from "./ui/pos_sell.js";
+
 import { scannerHTML } from "./ui/scanner.js";
 import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
@@ -84,7 +88,7 @@ function initWithEnv(env) {
   mountVendor(router);              // /api/vendor/*
   mountWallet(router);              // /api/wallet/*
   mountPublicVendors(router);       // /api/public/vendors/*
-  mountCashbar(router, env);        // /api/wallets/* (cashbar)
+  mountCashbar(router, env);        // cashbar API
   mountItems(router, env);          // /api/items
 
   /* ------------------- UI ROUTES --------------------- */
@@ -94,13 +98,21 @@ function initWithEnv(env) {
   router.add("GET", "/admin", requireRole("admin", async () => renderHTML(adminHTML)));
   router.add("GET", "/admin/login", async () => renderHTML(() => loginHTML("admin")));
 
-  // POS (guarded)
+  // Gate POS (guarded) — clean paths
+  router.add("GET", "/gate", requireRole("pos", async () => renderHTML(posHTML)));
+  router.add("GET", "/gate/sell", requireRole("pos", async (req) => {
+    const u = new URL(req.url);
+    const session_id = Number(u.searchParams.get("session_id") || 0);
+    return renderHTML(gateSellHTML, session_id); // real sell UI from pos_sell.js
+  }));
+
+  // Legacy aliases for compatibility (still guarded)
   router.add("GET", "/pos", requireRole("pos", async () => renderHTML(posHTML)));
   router.add("GET", "/pos/login", async () => renderHTML(() => loginHTML("pos")));
   router.add("GET", "/pos/sell", requireRole("pos", async (req) => {
     const u = new URL(req.url);
     const session_id = Number(u.searchParams.get("session_id") || 0);
-    return renderHTML(posSellHTML, session_id);
+    return renderHTML(gateSellHTML, session_id);
   }));
 
   // Public shop + checkout
@@ -126,10 +138,16 @@ function initWithEnv(env) {
     renderHTML(() => thankYouHTML(code))
   );
 
-  // Cashbar UI (public for now — lock down later if needed)
-  router.add("GET", "/cashbar/bar",     async () => renderHTML(cashbarBarHTML));
+  // Bar UI (public for now — can guard later)
+  router.add("GET", "/bar/cashier", async () => renderHTML(cashbarCashierHTML));
+  router.add("GET", "/bar/sell",    async () => renderHTML(cashbarBarHTML));
+
+  // Existing bar aliases
   router.add("GET", "/cashbar/cashier", async () => renderHTML(cashbarCashierHTML));
-  router.add("GET", "/w/:id",           async (_req, env2, _ctx, { id }) => {
+  router.add("GET", "/cashbar/bar",     async () => renderHTML(cashbarBarHTML));
+
+  // Public wallet display
+  router.add("GET", "/w/:id", async (_req, env2, _ctx, { id }) => {
     const w = await env2.DB.prepare(`SELECT * FROM wallets WHERE id=?1`).bind(id).first();
     if (!w) return new Response("Not found", { status: 404 });
     return renderHTML(() => cashbarWalletHTML({ id: w.id, name: w.name, balance_cents: w.balance_cents }));
