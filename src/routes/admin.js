@@ -43,12 +43,10 @@ export function mountAdmin(router) {
 
   /* ---------------- Site settings (site_settings table) ------------------- */
   function normalizeInKey(k) {
-    // Accept UI keys and map them to canonical DB keys
     const map = {
       WHATSAPP_TOKEN:    "WA_TOKEN",
       PHONE_NUMBER_ID:   "WA_PHONE_NUMBER_ID",
       BUSINESS_ID:       "WA_BUSINESS_ID",
-      // Template selectors (UI -> DB)
       WA_TMP_ORDER_CONFIRM:    "WA_TMP_ORDER_CONFIRM",
       WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
       WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
@@ -58,12 +56,10 @@ export function mountAdmin(router) {
   }
 
   function normalizeOutKey(k) {
-    // Return UI-friendly keys for WhatsApp block
     const map = {
       WA_TOKEN:                "WHATSAPP_TOKEN",
       WA_PHONE_NUMBER_ID:      "PHONE_NUMBER_ID",
       WA_BUSINESS_ID:          "BUSINESS_ID",
-      // Template selectors (DB -> UI)
       WA_TMP_ORDER_CONFIRM:    "WA_TMP_ORDER_CONFIRM",
       WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
       WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
@@ -90,7 +86,6 @@ export function mountAdmin(router) {
     const wanted = [
       "PUBLIC_BASE_URL",
       "VERIFY_TOKEN",
-
       // WhatsApp (stored with WA_* in DB)
       "WA_TOKEN",
       "WA_PHONE_NUMBER_ID",
@@ -99,14 +94,12 @@ export function mountAdmin(router) {
       "WA_TMP_PAYMENT_CONFIRM",
       "WA_TMP_TICKET_DELIVERY",
       "WA_TMP_SKOU_SALES",
-
-      // ✅ auto-reply + variable mapping
+      // Auto-reply + variable mapping
       "WA_AUTOREPLY_ENABLED",
       "WA_AUTOREPLY_TEXT",
       "WA_MAP_VAR1",
       "WA_MAP_VAR2",
       "WA_MAP_VAR3",
-
       // Yoco
       "YOCO_MODE",
       "YOCO_PUBLIC_KEY",
@@ -119,7 +112,6 @@ export function mountAdmin(router) {
       "YOCO_TEST_SECRET_KEY",
       "YOCO_LIVE_PUBLIC_KEY",
       "YOCO_LIVE_SECRET_KEY",
-
       // Optional site block
       "SITE_NAME",
       "SITE_LOGO_URL",
@@ -187,27 +179,27 @@ export function mountAdmin(router) {
       const arr = Array.isArray(data?.data) ? data.data : [];
       for (const t of arr) {
         const name = t?.name || "";
-        const lang = t?.language || "";
-        if (!name || !lang) continue;
-
-        await env.DB.prepare(
-          `INSERT INTO wa_templates (name, language, status, category, components_json, updated_at)
-           VALUES (?1,?2,?3,?4,?5,?6)
-           ON CONFLICT(name, language) DO UPDATE SET
-             status=excluded.status,
-             category=excluded.category,
-             components_json=excluded.components_json,
-             updated_at=excluded.updated_at`
-        ).bind(
-          name,
-          lang,
-          (t?.status || null),
-          (t?.category || null),
-          (t?.components ? JSON.stringify(t.components) : null),
-          now
-        ).run();
-
-        fetched++;
+        the: {
+          const lang = t?.language || "";
+          if (!name || !lang) break the;
+          await env.DB.prepare(
+            `INSERT INTO wa_templates (name, language, status, category, components_json, updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(name, language) DO UPDATE SET
+               status=excluded.status,
+               category=excluded.category,
+               components_json=excluded.components_json,
+               updated_at=excluded.updated_at`
+          ).bind(
+            name,
+            lang,
+            (t?.status || null),
+            (t?.category || null),
+            (t?.components ? JSON.stringify(t.components) : null),
+            now
+          ).run();
+          fetched++;
+        }
       }
 
       url = data?.paging?.next || "";
@@ -364,7 +356,8 @@ export function mountAdmin(router) {
   /* ---------------- Ticket types for an event ---------------- */
   router.add("GET", "/api/admin/events/:id/ticket-types", guard(async (_req, env, _ctx, { id }) => {
     const q = await env.DB.prepare(
-      `SELECT id, event_id, name, code, price_cents, capacity, per_order_limit, requires_gender
+      `SELECT id, event_id, name, code, price_cents, capacity, per_order_limit,
+              requires_gender, requires_name
          FROM ticket_types
         WHERE event_id = ?1
         ORDER BY id ASC`
@@ -385,26 +378,30 @@ export function mountAdmin(router) {
       capacity: Number(b.capacity || 0),
       per_order_limit: Number(b.per_order_limit || 10),
       requires_gender: Number(b.requires_gender || 0) ? 1 : 0,
+      requires_name:   Number(b.requires_name   || 0) ? 1 : 0,
     };
 
     if (id) {
       await env.DB.prepare(
         `UPDATE ticket_types
-            SET name=?1, code=?2, price_cents=?3, capacity=?4, per_order_limit=?5, requires_gender=?6
-          WHERE id=?7 AND event_id=?8`
+            SET name=?1, code=?2, price_cents=?3, capacity=?4, per_order_limit=?5,
+                requires_gender=?6, requires_name=?7
+          WHERE id=?8 AND event_id=?9`
       ).bind(
         fields.name, fields.code, fields.price_cents, fields.capacity,
-        fields.per_order_limit, fields.requires_gender, id, event_id
+        fields.per_order_limit, fields.requires_gender, fields.requires_name,
+        id, event_id
       ).run();
       return json({ ok: true, id });
     } else {
       const r = await env.DB.prepare(
         `INSERT INTO ticket_types
-           (event_id, name, code, price_cents, capacity, per_order_limit, requires_gender)
-         VALUES (?1,?2,?3,?4,?5,?6,?7)`
+           (event_id, name, code, price_cents, capacity, per_order_limit,
+            requires_gender, requires_name)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`
       ).bind(
         event_id, fields.name, fields.code, fields.price_cents, fields.capacity,
-        fields.per_order_limit, fields.requires_gender
+        fields.per_order_limit, fields.requires_gender, fields.requires_name
       ).run();
       return json({ ok: true, id: r.meta.last_row_id });
     }
@@ -441,7 +438,7 @@ export function mountAdmin(router) {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
-  // 🔎 NEW: Tickets list (searchable & paginated)
+  // 🔎 Tickets list (searchable & paginated)
   router.add("GET", "/api/admin/tickets/list", guard(async (req, env) => {
     const u = new URL(req.url);
     const event_id = Number(u.searchParams.get("event_id") || 0);
