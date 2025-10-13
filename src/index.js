@@ -36,13 +36,18 @@ import { loginHTML } from "./ui/login.js";
 import { thankYouHTML } from "./ui/thankyou.js";
 import { ticketSingleHTML } from "./ui/ticket_single.js";
 
-// Auth guard for UI pages
+// Cashbar UI
+import { barHTML as cashbarBarHTML } from "./ui/cashbar_bar.js";
+import { cashierHTML as cashbarCashierHTML } from "./ui/cashbar_cashier.js";
+import { walletHTML as cashbarWalletHTML } from "./ui/cashbar_wallet.js";
+
+// Auth guard
 import { requireRole } from "./utils/auth.js";
 
 const router = Router();
-registerAddonRoutes(router); // keep addons
+registerAddonRoutes(router);
 
-// Helper: accept either a function (returning HTML) or a string export
+// helper: render function/string to HTML response
 function renderHTML(mod, ...args) {
   try {
     const html = (typeof mod === "function") ? mod(...args) : mod;
@@ -58,107 +63,55 @@ function initWithEnv(env) {
   if (__initialized) return;
 
   /* -------------- API ROUTES (need env) -------------- */
-  mountAuth(router);          // /api/auth/*
-  mountPublic(router);        // /api/public/*
-  mountAdmin(router);         // /api/admin/*
-  mountSync(router);          // /api/sync/*
-  mountWhatsApp(router);      // /api/whatsapp/*
-  mountWATest(router);        // /api/wa-test/*
-  mountDiag(router);          // /api/diag*
-  mountQR(router);            // /api/qr/*
-  mountPayments(router);      // /api/payments/*
-  mountPOS(router, env);      // /api/pos/*
-  mountScan(router, env);     // /api/scan/*
-  mountPastVisitors(router);  // /api/past-visitors/*
-  mountVendor(router);        // /api/vendor/*
-  mountWallet(router);        // /api/wallet/*
-  mountPublicVendors(router); // /api/public/vendors/* etc.
+  mountAuth(router);
+  mountPublic(router);
+  mountAdmin(router);
+  mountSync(router);
+  mountWhatsApp(router);
+  mountWATest(router);
+  mountDiag(router);
+  mountQR(router);
+  mountPayments(router);
+  mountPOS(router, env);
+  mountScan(router, env);
+  mountPastVisitors(router);
+  mountVendor(router);
+  mountWallet(router);
+  mountPublicVendors(router);
   mountCashbar(router, env);
   mountItems(router, env);
 
-
-
   /* ------------------- UI ROUTES --------------------- */
-  // Landing
   router.add("GET", "/", async () => renderHTML(landingHTML));
 
-  // Admin UI (guarded)
+  // Admin (guarded)
   router.add("GET", "/admin", requireRole("admin", async () => renderHTML(adminHTML)));
   router.add("GET", "/admin/login", async () => renderHTML(() => loginHTML("admin")));
 
-  // POS UI (guarded)
+  // POS (guarded)
   router.add("GET", "/pos", requireRole("pos", async () => renderHTML(posHTML)));
   router.add("GET", "/pos/login", async () => renderHTML(() => loginHTML("pos")));
-
-  // POS sell screen (guarded)
   router.add("GET", "/pos/sell", requireRole("pos", async (req) => {
     const u = new URL(req.url);
     const session_id = Number(u.searchParams.get("session_id") || 0);
     return renderHTML(posSellHTML, session_id);
   }));
 
-  // Printable vendor badge by QR (public)
-  router.add("GET", "/badge/:qr", async (_req, env2, _ctx, { qr }) => {
-    const p = await env2.DB.prepare(
-      `SELECT vp.id, vp.type, vp.label, vp.vehicle_reg, vp.qr,
-              v.name AS vendor_name, v.event_id,
-              e.name AS event_name, e.venue, e.starts_at, e.ends_at
-         FROM vendor_passes vp
-         JOIN vendors v ON v.id = vp.vendor_id
-         JOIN events  e ON e.id = v.event_id
-        WHERE vp.qr = ?1
-        LIMIT 1`
-    ).bind(qr).first();
+  // Public/Shop
+  router.add("GET", "/shop/:slug", async (_req, _env2, _ctx, { slug }) => renderHTML(() => shopHTML(slug)));
+  router.add("GET", "/shop/:slug/checkout", async (_req, _env2, _ctx, { slug }) => renderHTML(() => checkoutHTML(slug)));
+  router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) => renderHTML(() => ticketHTML(code)));
+  router.add("GET", "/tt/:token", async (_req, _env2, _ctx, { token }) => renderHTML(() => ticketSingleHTML(token)));
+  router.add("GET", "/thanks/:code", async (_req, _env2, _ctx, { code }) => renderHTML(() => thankYouHTML(code)));
 
-    if (!p) return new Response("Badge not found", { status: 404 });
-
-    const title =
-      p.type === "vehicle" ? "VEHICLE" :
-      p.type === "staff"   ? "VENDOR STAFF" : "VENDOR";
-
-    const html = badgeHTML({
-      title,
-      name: p.label || p.vendor_name,
-      org: p.vendor_name || "",
-      plate: p.type === "vehicle" ? (p.vehicle_reg || "") : "",
-      code: p.qr,
-      event: {
-        name: p.event_name,
-        venue: p.venue,
-        starts_at: p.starts_at,
-        ends_at: p.ends_at
-      }
-    });
-
-    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+  // Cashbar UI (public — lock down later if needed)
+  router.add("GET", "/cashbar/bar",        async () => renderHTML(cashbarBarHTML));
+  router.add("GET", "/cashbar/cashier",    async () => renderHTML(cashbarCashierHTML));
+  router.add("GET", "/w/:id",              async (_req, env2, _ctx, { id }) => {
+    const w = await env2.DB.prepare(`SELECT * FROM wallets WHERE id=?1`).bind(id).first();
+    if (!w) return new Response("Not found", { status: 404 });
+    return renderHTML(() => cashbarWalletHTML({ id:w.id, name:w.name, balance_cents:w.balance_cents }));
   });
-
-  // Scanner UI (guarded)
-  router.add("GET", "/scan", requireRole("scan", async () => renderHTML(scannerHTML)));
-  router.add("GET", "/scan/login", async () => renderHTML(() => loginHTML("scan")));
-
-  // Event shop + checkout (public)
-  router.add("GET", "/shop/:slug", async (_req, _env2, _ctx, { slug }) =>
-    renderHTML(() => shopHTML(slug))
-  );
-  router.add("GET", "/shop/:slug/checkout", async (_req, _env2, _ctx, { slug }) =>
-    renderHTML(() => checkoutHTML(slug))
-  );
-
-  // Ticket display (batch by order short code)
-  router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) =>
-    renderHTML(() => ticketHTML(code))
-  );
-
-  // Single-ticket display by token
-  router.add("GET", "/tt/:token", async (_req, _env2, _ctx, { token }) =>
-    renderHTML(() => ticketSingleHTML(token))
-  );
-
-  // Thank-you page after checkout
-  router.add("GET", "/thanks/:code", async (_req, _env2, _ctx, { code }) =>
-    renderHTML(() => thankYouHTML(code))
-  );
 
   __initialized = true;
 }
@@ -167,7 +120,7 @@ function initWithEnv(env) {
 export default {
   async fetch(req, env, ctx) {
     const bound = bindEnv(env);
-    initWithEnv(bound); // ensure routes that need env are mounted once
+    initWithEnv(bound);
     const handler = withCORS((rq, e, c) => router.handle(rq, e, c));
     return handler(req, bound, ctx);
   },
