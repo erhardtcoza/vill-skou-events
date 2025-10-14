@@ -31,7 +31,7 @@ export function posHTML() {
       </div>
       <div>
         <label for="gate">Gate</label>
-        <select id="gate"><option value="">Loading…</option></select>
+        <select id="gate"><option>Loading…</option></select>
       </div>
       <div>
         <label for="float">Opening float (R)</label>
@@ -72,16 +72,16 @@ async function loadEvents(){
 }
 
 async function loadGates(){
-  const sel = $('gate');
-  sel.innerHTML = '<option value="">Loading…</option>';
+  const gsel = $('gate');
+  gsel.innerHTML = '<option>Loading…</option>';
   try{
-    const j = await fetch('/api/pos/gates').then(r=>r.json());
-    if (!j.ok){ sel.innerHTML = '<option value="">No gates</option>'; return; }
-    const list = j.gates || [];
-    if (!list.length){ sel.innerHTML = '<option value="">No gates</option>'; return; }
-    sel.innerHTML = '<option value="">Select a gate…</option>' + list.map(g => '<option value="'+g.id+'">'+g.name+'</option>').join('');
+    const j = await fetch('/api/pos/gates').then(r=>r.json()).catch(()=>({ok:false}));
+    if (!j.ok){ gsel.innerHTML = '<option>Error loading gates</option>'; return; }
+    const gates = j.gates || [];
+    if (!gates.length){ gsel.innerHTML = '<option>No gates configured</option>'; return; }
+    gsel.innerHTML = gates.map(g => '<option value="'+g.id+'">'+g.name+'</option>').join('');
   }catch(_e){
-    sel.innerHTML = '<option value="">Error loading gates</option>';
+    gsel.innerHTML = '<option>Error loading gates</option>';
   }
 }
 
@@ -92,14 +92,15 @@ $('event').addEventListener('change', ()=>{
 
 $('start').onclick = async ()=>{
   $('msg').textContent = '';
-  const cashier  = ($('cashier').value||'').trim();
-  const gateId   = Number(($('gate').value||'').trim());
-  const floatR   = $('float').value;
-  const opt      = $('event').selectedOptions[0];
-  const eventSlug= opt ? opt.value : '';
-  const eventId  = opt ? Number(opt.dataset.id||0) : 0;
+  const cashier = ($('cashier').value||'').trim();
+  const gateOpt  = $('gate').selectedOptions[0];
+  const gate_id  = gateOpt ? Number(gateOpt.value) : 0;
+  const floatR  = $('float').value;
+  const eopt     = $('event').selectedOptions[0];
+  const eventSlug = eopt ? eopt.value : '';
+  const eventId   = eopt ? Number(eopt.dataset.id||0) : 0;
 
-  if (!cashier || !gateId || !eventSlug){
+  if (!cashier || !gate_id || !eventSlug){
     $('msg').textContent = 'Please fill cashier, gate and event.';
     return;
   }
@@ -110,7 +111,7 @@ $('start').onclick = async ()=>{
       headers:{'content-type':'application/json'},
       body: JSON.stringify({
         cashier_name: cashier,
-        gate_id: gateId,
+        gate_id,
         opening_float_cents: centsFromRand(floatR) || 0,
         event_id: eventId || null
       })
