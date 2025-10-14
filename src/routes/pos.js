@@ -27,60 +27,65 @@ function normPhone(raw){
   return s;
 }
 
-async function sendPaymentConfirm(env, msisdn, shortCode){
-  const svc = await waSvc();
-  if (!svc || !msisdn) return;
-  const { name, lang } = await parseTpl(env, "WA_TMP_PAYMENT_CONFIRM");
-  const msg = `Betaling ontvang vir bestelling ${shortCode}. Dankie! 🎉`;
-  try {
-    if (name && svc.sendWhatsAppTemplate) {
-      await svc.sendWhatsAppTemplate(env, { to: msisdn, name, language: lang, variables: { code: shortCode }});
-    } else if (svc.sendWhatsAppTextIfSession) {
-      await svc.sendWhatsAppTextIfSession(env, msisdn, msg);
-    }
-  } catch {}
-}
-
-// Ticket delivery: prefer template set in WA_TMP_TICKET_DELIVERY; else text with link
+/** Gate POS: send ONLY the ticket delivery message. */
 async function sendTicketDelivery(env, msisdn, shortCode, buyerName){
   const svc = await waSvc();
   if (!svc || !msisdn || !shortCode) return;
+
+  // Public link to the user's tickets for this order code
   const base = (await getSetting(env,"PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
   const link = `${base}/t/${encodeURIComponent(shortCode)}`;
-  const first = String(buyerName||"").split(/\s+/)[0] || "Vriend";
 
+  const first = String(buyerName||"").split(/\s+/)[0] || "Vriend";
   const { name, lang } = await parseTpl(env, "WA_TMP_TICKET_DELIVERY");
+
   try {
+    // If you have a purpose-built helper (older projects)
+    if (svc.sendTicketTemplate) {
+      await svc.sendTicketTemplate(env, String(msisdn), {
+        templateName: name || "ticket_delivery",
+        language: lang || "af",
+        bodyParam1: first,           // {{1}}
+        urlSuffixParam1: shortCode,  // appended to your button URL (…/t/{{1}})
+      });
+      return;
+    }
+
+    // Generic template sender (newer projects)
     if (name && svc.sendWhatsAppTemplate) {
       await svc.sendWhatsAppTemplate(env, {
         to: msisdn,
-        name,
-        language: lang,
-        variables: { name:first, code:shortCode, link }
+        name,               // template name as configured in Admin
+        language: lang,     // e.g. "af" | "en_US"
+        // We pass both a code and a link so your template can use either {{code}} or {{link}}
+        variables: { name:first, code: shortCode, link }
       });
-    } else if (svc.sendWhatsAppTextIfSession) {
+      return;
+    }
+
+    // Fallback: session text (only if an active WA session exists)
+    if (svc.sendWhatsAppTextIfSession) {
       await svc.sendWhatsAppTextIfSession(env, msisdn,
         `Hallo ${first}! Jou kaartjies is gereed: ${link}`);
     }
-  } catch {}
+  } catch { /* non-blocking */ }
 }
 
 /* ---------------- Small DB helpers ---------------- */
-async function getGateById(env, id){
-  const row = await env.DB.prepare(`SELECT id,name FROM gates WHERE id=?1`).bind(Number(id||0)).first();
-  return row || null;
-}
-async function getGateByName(env, name){
+async function getGateIdByName(env, name){
   const n = String(name||"").trim();
-  if (!n) return null;
-  const row = await env.DB.prepare(`SELECT id,name FROM gates WHERE name=?1 LIMIT 1`).bind(n).first();
-  return row || null;
+  if (!n) return 0;
+  const found = await env.DB.prepare(
+    `SELECT id FROM gates WHERE name=?1 LIMIT 1`
+  ).bind(n).first();
+  if (found?.id) return Number(found.id);
+  const ins = await env.DB.prepare(`INSERT INTO gates(name) VALUES(?1)`).bind(n).run();
+  return Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
 }
-async function listGates(env){
-  const res = await env.DB.prepare(`SELECT id,name FROM gates ORDER BY name ASC`).all();
-  return res?.results || [];
+async function getGateNameById(env, id){
+  const row = await env.DB.prepare(`SELECT name FROM gates WHERE id=?1`).bind(Number(id||0)).first();
+  return row?.name || null;
 }
-
 function shortCode(){
   const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s=""; for(let i=0;i<6;i++) s += A[Math.floor(Math.random()*A.length)];
@@ -170,41 +175,19 @@ export function mountPOS(router, env) {
 
   router.add("GET", "/api/pos/diag", async () => json({ ok:true, pos:"ready" }));
 
-  // NEW: list gates (UI will populate a <select>)
-  router.add("GET", "/api/pos/gates", async () => {
-    try {
-      const gates = await listGates(env);
-      return json({ ok:true, gates });
-    } catch {
-      return bad(500, "gates_failed");
-    }
-  });
-
-  // Session OPEN (now prefers gate_id; supports existing gate_name if already in DB)
+  // Session OPEN
   router.add("POST", "/api/pos/session/open", async (req) => {
     try{
       const b = await req.json();
       const cashier_name = String(b.cashier_name||"").trim();
+      const gate_name    = String(b.gate_name||b.gate||"").trim();
       const opening_float_cents = (b.opening_float_cents|0);
       const event_id = Number(b.event_id||0) || null;
       const cashier_msisdn = normPhone(b.cashier_msisdn||"");
+      if (!cashier_name || !gate_name) return bad(400,"missing_fields");
 
-      let gate_id = Number(b.gate_id||0) || 0;
-
-      if (!gate_id) {
-        // Compatibility path: accept a gate_name but DO NOT create new; require it exists
-        const gate_name = String(b.gate_name||b.gate||"").trim();
-        if (!cashier_name || !gate_name) return bad(400,"missing_fields");
-        const g = await getGateByName(env, gate_name);
-        if (!g) return bad(400,"invalid_gate");
-        gate_id = Number(g.id);
-      } else {
-        // Validate gate_id exists
-        const g = await getGateById(env, gate_id);
-        if (!g) return bad(400,"invalid_gate");
-      }
-
-      if (!cashier_name) return bad(400,"missing_fields");
+      const gate_id = await getGateIdByName(env, gate_name);
+      if (!gate_id) return bad(400,"invalid_gate");
 
       const now = Math.floor(Date.now()/1000);
       const ins = await env.DB.prepare(
@@ -241,12 +224,11 @@ export function mountPOS(router, env) {
          FROM pos_sessions ps WHERE ps.id=?1 LIMIT 1`
     ).bind(Number(id||0)).first();
     if (!s) return bad(404,"not_found");
-    const g = await getGateById(env2, s.gate_id);
-    const gate_name = g?.name || null;
+    const gate_name = await getGateNameById(env2, s.gate_id);
     return json({ ok:true, session:{ ...s, gate_name } });
   });
 
-  // POS order: SALE (create order + tickets, log payment, send WA)
+  // POS order: SALE (create order + tickets, log payment, send *only* ticket WA)
   router.add("POST", "/api/pos/order/sale", async (req) => {
     let b;
     try { b = await req.json(); } catch { return bad(400,"bad_json"); }
@@ -265,7 +247,7 @@ export function mountPOS(router, env) {
         method
       });
 
-      // log pos payment
+      // Log POS payment (session totals)
       try{
         await env.DB.prepare(
           `INSERT INTO pos_payments (session_id, order_id, method, amount_cents, created_at)
@@ -273,8 +255,7 @@ export function mountPOS(router, env) {
         ).bind(Number(b.session_id||0)||null, order.order_id, method, order.total_cents, Math.floor(Date.now()/1000)).run();
       }catch{}
 
-      // WhatsApp
-      await sendPaymentConfirm(env, phone, order.short_code);
+      // WhatsApp: ONLY ticket delivery (no separate payment message for gate POS)
       await sendTicketDelivery(env, phone, order.short_code, name);
 
       return json({ ok:true, order_id: order.order_id, code: order.short_code });
@@ -323,7 +304,8 @@ export function mountPOS(router, env) {
     return json({ ok:true, code: row.short_code });
   });
 
-  /* Existing settle (idempotent) kept for compatibility */
+  /* Compatibility: if something still calls /api/pos/settle, behave like gate POS:
+     mark paid (idempotent) and send ONLY ticket delivery. */
   router.add("POST", "/api/pos/settle", async (req, env3) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
@@ -348,7 +330,6 @@ export function mountPOS(router, env) {
     ).bind(row.id, Number(row.total_cents||0), method, now).run();
 
     const to = normPhone(row.buyer_phone || b?.buyer_phone || "");
-    await sendPaymentConfirm(env3, to, code);
     await sendTicketDelivery(env3, to, code, (row.buyer_name || b?.buyer_name || ""));
     return json({ ok:true, order_id: row.id, code, method });
   });
