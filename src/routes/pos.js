@@ -18,7 +18,7 @@ async function parseTpl(env, key) {
 
 async function waSvc() {
   try { return await import("../services/whatsapp.js"); }
-  catch { return null; }
+  catch (e) { console.warn("WA: service module not available", e?.message); return null; }
 }
 
 function normPhone(raw){
@@ -27,28 +27,69 @@ function normPhone(raw){
   return s;
 }
 
-// Ticket delivery only (gate sales)
+/**
+ * Ticket delivery only (gate sales)
+ * Tries in order:
+ *  1) services.whatsapp.sendTicketTemplate(env, to, { templateName, language, bodyParam1, urlSuffixParam1 })
+ *  2) services.whatsapp.sendWhatsAppTemplate(env, { to, name, language, variables:{...} })
+ *  3) services.whatsapp.sendWhatsAppTextIfSession(env, to, text)
+ */
 async function sendTicketDelivery(env, msisdn, shortCode, buyerName){
   const svc = await waSvc();
-  if (!svc || !msisdn || !shortCode) return;
+  if (!svc) { console.warn("WA: no service, skipping"); return; }
+  if (!msisdn || !shortCode) { console.warn("WA: missing msisdn/code, skipping"); return; }
+
   const base = (await getSetting(env,"PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
   const link = `${base}/t/${encodeURIComponent(shortCode)}`;
   const first = String(buyerName||"").split(/\s+/)[0] || "Vriend";
 
-  const { name, lang } = await parseTpl(env, "WA_TMP_TICKET_DELIVERY");
+  const sel = await getSetting(env, "WA_TMP_TICKET_DELIVERY"); // e.g. "ticket_delivery:af"
+  const [tplNameRaw, langRaw] = String(sel || "").split(":");
+  const templateName = (tplNameRaw || "ticket_delivery").trim();
+  const language = (langRaw || "af").trim();
+
   try {
-    if (name && svc.sendWhatsAppTemplate) {
+    if (typeof svc.sendTicketTemplate === "function") {
+      console.log("WA: using sendTicketTemplate", { templateName, language, to: msisdn });
+      await svc.sendTicketTemplate(env, String(msisdn), {
+        templateName,
+        language,
+        bodyParam1: first,          // {{1}}
+        urlSuffixParam1: shortCode, // used by URL button → /t/{{1}}
+      });
+      return;
+    }
+  } catch (e) {
+    console.error("WA: sendTicketTemplate failed", e?.message);
+  }
+
+  try {
+    if (typeof svc.sendWhatsAppTemplate === "function") {
+      console.log("WA: fallback sendWhatsAppTemplate", { name: templateName, language, to: msisdn });
       await svc.sendWhatsAppTemplate(env, {
         to: msisdn,
-        name,
-        language: lang,
+        name: templateName,
+        language,
         variables: { name:first, code:shortCode, link }
       });
-    } else if (svc.sendWhatsAppTextIfSession) {
+      return;
+    }
+  } catch (e) {
+    console.error("WA: sendWhatsAppTemplate failed", e?.message);
+  }
+
+  try {
+    if (typeof svc.sendWhatsAppTextIfSession === "function") {
+      console.log("WA: fallback sendWhatsAppTextIfSession", { to: msisdn });
       await svc.sendWhatsAppTextIfSession(env, msisdn,
         `Hallo ${first}! Jou kaartjies is gereed: ${link}`);
+      return;
     }
-  } catch {}
+  } catch (e) {
+    console.error("WA: sendWhatsAppTextIfSession failed", e?.message);
+  }
+
+  console.warn("WA: no compatible send method succeeded");
 }
 
 /* ---------------- Small DB helpers ---------------- */
@@ -112,7 +153,6 @@ async function createPosOrder(env, { event_id, items, buyer_name, buyer_phone, m
   const code = shortCode();
   const msisdn = normPhone(buyer_phone||"");
 
-  // Save order as PAID (gate flow settles immediately)
   const ins = await env.DB.prepare(
     `INSERT INTO orders (short_code,event_id,status,total_cents,created_at,updated_at,
                          payment_method,contact_json,items_json,buyer_name,buyer_phone,paid_at)
@@ -126,7 +166,6 @@ async function createPosOrder(env, { event_id, items, buyer_name, buyer_phone, m
   ).run();
   const order_id = Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
 
-  // Issue tickets – set attendee name/phone so Admin list shows it
   const [firstName, ...rest] = String(buyer_name||"").trim().split(/\s+/);
   const lastName = rest.join(" ");
   for (const it of expanded) {
@@ -162,13 +201,14 @@ export function mountPOS(router, env) {
 
   router.add("GET", "/api/pos/diag", async () => json({ ok:true, pos:"ready" }));
 
-  // 🚪 Gates list for dropdown
+  // Gates list for dropdown
   router.add("GET", "/api/pos/gates", async (_req, env2) => {
     try{
       const res = await env2.DB.prepare(`SELECT id,name FROM gates ORDER BY id`).all();
       const gates = res?.results || [];
       return json({ ok:true, gates });
-    }catch{
+    }catch(e){
+      console.error("gates_failed", e?.message);
       return bad(500, "gates_failed");
     }
   });
@@ -193,8 +233,10 @@ export function mountPOS(router, env) {
       ).bind(cashier_name, gate_id, opening_float_cents, now, event_id, cashier_msisdn||null).run();
       const id = Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
 
+      console.log("POS session opened", { id, gate_id, event_id, cashier_name });
       return json({ ok:true, session:{ id, gate_id, opened_at:now } });
-    }catch{
+    }catch(e){
+      console.error("open_failed", e?.message);
       return bad(500,"open_failed");
     }
   });
@@ -208,8 +250,10 @@ export function mountPOS(router, env) {
       await env.DB.prepare(
         `UPDATE pos_sessions SET closed_at=?1, closing_manager=?2 WHERE id=?3 AND closed_at IS NULL`
       ).bind(now, String(closing_manager||"").trim() || null, Number(session_id)).run();
+      console.log("POS session closed", { session_id });
       return json({ ok:true, session_id:Number(session_id), closed_at: now });
-    }catch{
+    }catch(e){
+      console.error("close_failed", e?.message);
       return bad(500,"close_failed");
     }
   });
@@ -250,13 +294,15 @@ export function mountPOS(router, env) {
           `INSERT INTO pos_payments (session_id, order_id, method, amount_cents, created_at)
            VALUES (?1, ?2, ?3, ?4, ?5)`
         ).bind(Number(b.session_id||0)||null, order.order_id, method, order.total_cents, Math.floor(Date.now()/1000)).run();
-      }catch{}
+      }catch(e){ console.warn("pos_payments insert failed", e?.message); }
 
       // WhatsApp: **only** deliver tickets for gate sales
       await sendTicketDelivery(env, phone, order.short_code, name);
+      console.log("WA queued for gate sale", { to: phone, code: order.short_code });
 
       return json({ ok:true, order_id: order.order_id, code: order.short_code });
     }catch(e){
+      console.error("sale_failed", e?.message);
       return bad(400, e?.message || "sale_failed");
     }
   });
@@ -298,10 +344,11 @@ export function mountPOS(router, env) {
     const to = normPhone(row.buyer_phone || b.to || "");
     if (!to) return bad(400,"no_msisdn");
     await sendTicketDelivery(env2, to, row.short_code, row.buyer_name);
+    console.log("WA resend for paid order", { to, code: row.short_code });
     return json({ ok:true, code: row.short_code });
   });
 
-  /* Existing settle kept for compatibility (sends both) */
+  /* Existing settle kept for compatibility */
   router.add("POST", "/api/pos/settle", async (req, env3) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
@@ -325,9 +372,8 @@ export function mountPOS(router, env) {
        VALUES (?1, ?2, ?3, 'approved', ?4, ?4)`
     ).bind(row.id, Number(row.total_cents||0), method, now).run();
 
-    // For settle we keep both for compatibility with older flows
-    const to = normPhone(row.buyer_phone || b?.buyer_phone || "");
-    await sendTicketDelivery(env3, to, code, (row.buyer_name || b?.buyer_name || ""));
+    await sendTicketDelivery(env3, normPhone(row.buyer_phone || b?.buyer_phone || ""), code, (row.buyer_name || b?.buyer_name || ""));
+    console.log("WA after settle", { code });
     return json({ ok:true, order_id: row.id, code, method });
   });
 }
