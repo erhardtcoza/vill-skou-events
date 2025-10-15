@@ -45,19 +45,28 @@ async function sendTpl(env, { msisdn, templateSettingKey, context, data, fallbac
   return false;
 }
 
-// low-balance helpers
+// --- low-balance helpers (configurable) -------------------------------------
 async function lowThresholdCents(env) {
   const v = Number(await getSetting(env, "BAR_LOW_BALANCE_THRESHOLD_CENTS"));
   return Number.isFinite(v) && v > 0 ? v : 8500; // default R85
 }
+async function lowWarnCooldownSecs(env) {
+  const v = Number(await getSetting(env, "BAR_LOW_BALANCE_COOLDOWN_SECS"));
+  return Number.isFinite(v) && v > 0 ? v : 7200; // default 2 hours
+}
 async function recentlyWarned(env, wallet_id) {
-  const row = await env.DB.prepare(`SELECT last_low_warn_at FROM wallets WHERE id=?1 LIMIT 1`).bind(wallet_id).first();
+  const row = await env.DB.prepare(
+    `SELECT last_low_warn_at FROM wallets WHERE id=?1 LIMIT 1`
+  ).bind(wallet_id).first();
   const last = Number(row?.last_low_warn_at || 0);
-  return last > (Math.floor(Date.now() / 1000) - 24 * 3600);
+  const age  = Math.floor(Date.now() / 1000) - last;
+  return last > 0 && age < (await lowWarnCooldownSecs(env));
 }
 async function markWarned(env, wallet_id) {
   const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare(`UPDATE wallets SET last_low_warn_at=?2 WHERE id=?1`).bind(wallet_id, now).run();
+  await env.DB.prepare(
+    `UPDATE wallets SET last_low_warn_at=?2 WHERE id=?1`
+  ).bind(wallet_id, now).run();
 }
 
 // --- data helpers -----------------------------------------------------------
