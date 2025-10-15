@@ -238,14 +238,17 @@ export const adminSiteSettingsJS = `
           + '</div>';
 
         const listEl = document.getElementById("waTplMapList");
-        const [tplRes, mapRes] = await Promise.all([
+        const [tplRes, mapRes, schemaRes] = await Promise.all([
           fetch("/api/admin/whatsapp/templates").then(r=>r.json()).catch(()=>({})),
-          fetch("/api/admin/whatsapp/mappings").then(r=>r.json()).catch(()=>({}))
+          fetch("/api/admin/whatsapp/mappings").then(r=>r.json()).catch(()=>({})),
+          fetch("/api/admin/db/schema").then(r=>r.json()).catch(()=>({}))
         ]);
         if (!tplRes.ok){ listEl.innerHTML = '<p class="error">Failed to load templates</p>'; return; }
 
         const templates = tplRes.templates || [];
         const mappings  = mapRes.ok ? (mapRes.mappings || []) : [];
+        const dbSchema  = schemaRes.ok ? (schemaRes.schema || {}) : {};
+
         const mapByKeyCtx = {};
         for (const m of mappings) mapByKeyCtx[m.template_key + ":" + m.context] = m;
 
@@ -254,7 +257,7 @@ export const adminSiteSettingsJS = `
         const frag = document.createElement('div');
         const hdr  = document.createElement('div');
         hdr.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap">'
-          + '<div class="muted"></div>'
+          + '<div class="muted">Map templates to DB fields, constants, or computed values.</div>'
           + '<a href="#settings:whatsapp" class="tab" id="waBackToTemplates" style="font-weight:800">← Back to Templates</a>'
           + '</div>';
         frag.appendChild(hdr);
@@ -290,21 +293,7 @@ export const adminSiteSettingsJS = `
             + (text ? '<pre style="white-space:pre-wrap;background:#f8fafc;border:1px solid #eef2f7;padding:8px;border-radius:8px;margin:10px 0 8px">'+esc(text)+'</pre>' : '')
             + '<table class="var-table" style="margin-top:4px;width:100%;border-collapse:collapse;">'
               + '<thead><tr><th style="text-align:left;">Variable</th><th>Source</th><th>Value</th><th>Fallback</th></tr></thead>'
-              + '<tbody>'
-                + vars.map(v=>{
-                    const ev = (mapObj.vars||[]).find(x=>String(x.variable)===String(v)) || {};
-                    return '<tr>'
-                      + '<td>{{'+v+'}}</td>'
-                      + '<td><select class="source">'
-                          + '<option value="field"  '+(ev.source==='field'?'selected':'')+'>field</option>'
-                          + '<option value="static" '+(ev.source==='static'?'selected':'')+'>static</option>'
-                          + '<option value="compute" '+(ev.source==='compute'?'selected':'')+'>compute</option>'
-                        + '</select></td>'
-                      + '<td><input class="value" value="'+esc(ev.value||'')+'" placeholder="Value or field name"></td>'
-                      + '<td><input class="fallback" value="'+esc(ev.fallback||'')+'" placeholder="Fallback (optional)"></td>'
-                    + '</tr>';
-                }).join('')
-              + '</tbody>'
+              + '<tbody></tbody>'
             + '</table>'
             + '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'
               + '<button class="tab saveBtn" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">💾 Save Mapping</button>'
@@ -313,17 +302,95 @@ export const adminSiteSettingsJS = `
 
           frag.appendChild(card);
 
+          // Build rows with DB field selector support
+          const tb = card.querySelector('tbody');
+
+          function buildFieldSelect(initial){
+            const sel = document.createElement('select');
+            sel.className = 'valueField';
+            for (const [table, cols] of Object.entries(dbSchema)){
+              const og = document.createElement('optgroup');
+              og.label = table;
+              (cols||[]).forEach(c=>{
+                const o = document.createElement('option');
+                o.value = table + '.' + c;
+                o.text  = table + '.' + c;
+                og.appendChild(o);
+              });
+              sel.appendChild(og);
+            }
+            if (initial) sel.value = initial;
+            return sel;
+          }
+
+          for (const v of vars){
+            const ev = (mapObj.vars||[]).find(x=>String(x.variable)===String(v)) || {};
+            const tr = document.createElement('tr');
+
+            // source
+            const srcSel = el(
+              '<select class="source">'
+              + '<option value="field"  '+(ev.source==='field'?'selected':'')+'>field</option>'
+              + '<option value="static" '+(ev.source==='static'?'selected':'')+'>static</option>'
+              + '<option value="compute" '+(ev.source==='compute'?'selected':'')+'>compute</option>'
+              + '</select>'
+            );
+
+            // value cell: either field selector (table.column) or free text
+            const valueTd = document.createElement('td');
+            const fieldSel = buildFieldSelect(ev.source==='field' ? ev.value : '');
+            const textInp  = el('<input class="valueText" placeholder="Value (literal) or expression">');
+            if (ev.source!=='field') textInp.value = ev.value || '';
+
+            const fallbackInp = el('<input class="fallback" placeholder="Fallback (optional)" value="'+esc(ev.fallback||'')+'">');
+
+            const srcTd = document.createElement('td'); srcTd.appendChild(srcSel);
+            const varTd = document.createElement('td'); varTd.textContent = '{{'+v+'}}';
+
+            // visibility toggler
+            function sync(){
+              if (srcSel.value === 'field'){
+                fieldSel.style.display = '';
+                textInp.style.display  = 'none';
+                if (!fieldSel.value) {
+                  // best-effort default: first option if exists
+                  const firstOpt = fieldSel.querySelector('option');
+                  if (firstOpt) fieldSel.value = firstOpt.value;
+                }
+              } else {
+                fieldSel.style.display = 'none';
+                textInp.style.display  = '';
+              }
+            }
+            sync();
+            srcSel.onchange = sync;
+
+            valueTd.appendChild(fieldSel);
+            valueTd.appendChild(textInp);
+
+            tr.appendChild(varTd);
+            tr.appendChild(srcTd);
+            tr.appendChild(valueTd);
+            tr.appendChild(fallbackInp);
+
+            tb.appendChild(tr);
+          }
+
+          // actions
           card.querySelector('.saveBtn').onclick = async ()=>{
             const context = card.querySelector('.ctx').value.trim();
             if (!context) return alert('Please select context first');
             const rows = [...card.querySelectorAll('tbody tr')];
             const mapping = {
-              vars: rows.map(r => ({
-                variable: r.children[0].innerText.replace(/[{}]/g,''),
-                source:   r.querySelector('.source').value,
-                value:    r.querySelector('.value').value.trim(),
-                fallback: r.querySelector('.fallback').value.trim()
-              }))
+              vars: rows.map(r => {
+                const variable = r.children[0].innerText.replace(/[{}]/g,'');
+                const src = r.querySelector('.source').value;
+                const val = src === 'field'
+                  ? r.querySelector('.valueField').value
+                  : r.querySelector('.valueText').value.trim();
+                const fb  = r.querySelector('.fallback').value.trim();
+                return { variable, source: src, value: val, fallback: fb };
+              })
             };
             await api('/api/admin/whatsapp/mappings/save', {
               method:'POST', headers:{'content-type':'application/json'},
@@ -374,7 +441,7 @@ export const adminSiteSettingsJS = `
           await api('/api/admin/whatsapp/inbox/0/reply', { // reuse reply sender, id ignored server-side if you prefer
             method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text, to })
           }).catch(async ()=>{
-            // fallback to dedicated endpoint if you have one:
+            // fallback to dedicated endpoint if present:
             await api('/api/admin/whatsapp/send-text', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ to, text }) });
           });
           alert('Sent.');
