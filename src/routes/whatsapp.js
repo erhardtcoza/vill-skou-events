@@ -154,7 +154,7 @@ export function mountWhatsApp(router) {
     const offset = Math.max(num(u.searchParams.get("offset") || 0), 0);
 
     const clauses = []; const args = [];
-    if (q) { clauses.push(`(UPPER(from_msisdn) LIKE UPPER(?1) OR UPPER(body) LIKE UPPER(?1))`); args.push(\`%\${q}%\`); }
+    if (q) { clauses.push(`(UPPER(from_msisdn) LIKE UPPER(?1) OR UPPER(body) LIKE UPPER(?1))`); args.push(`%${q}%`); }
     const whereSql = clauses.length ? \`WHERE \${clauses.join(" AND ")}\` : "";
 
     const list = await env.DB.prepare(
