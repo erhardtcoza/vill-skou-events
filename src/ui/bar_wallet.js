@@ -1,9 +1,11 @@
 // /src/ui/bar_wallet.js
 export function barWalletHTML(w) {
   const rands = (c)=>'R'+((c||0)/100).toFixed(2);
-  const id = Number(w?.id||0);
-  const name = String(w?.name||'Wallet');
-  const bal = Number(w?.balance_cents||0);
+  // accept either {wallet:{...}} or flat wallet object
+  const wallet = w?.wallet ? w.wallet : w || {};
+  const id = Number(wallet.id||0);
+  const name = String(wallet.name||'Wallet');
+  const bal = Number(wallet.balance_cents||0);
 
   return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -22,7 +24,7 @@ export function barWalletHTML(w) {
   <div class="card">
     <h1 style="margin:0">${name}</h1>
     <div id="bal" class="balance">${rands(bal)}</div>
-    <div class="qr"><img src="/api/qr/png?data=WALLET-${id}" width="220" height="220" alt="QR"/></div>
+    <div class="qr"><img src="/api/qr/svg/WALLET-${id}" width="220" height="220" alt="QR"/></div>
     <div style="margin-top:8px; color:#667085">Wallet ID: ${id}</div>
     <div style="margin-top:14px"><button id="refresh" class="btn">Refresh balance</button></div>
   </div>
@@ -32,8 +34,12 @@ const $ = (id)=>document.getElementById(id);
 const rands = (c)=>'R'+((c||0)/100).toFixed(2);
 async function refresh(){
   try{
-    const j = await fetch('/api/wallets/${id}').then(r=>r.json());
-    if (j?.ok) $('bal').textContent = rands(j.wallet.balance_cents||0);
+    const r = await fetch('/api/wallets/${id}');
+    const j = await r.json().catch(()=>({}));
+    if (r.ok && j && (j.ok!==false)) {
+      const w = j.wallet ? j.wallet : j;
+      $('bal').textContent = rands(w.balance_cents||0);
+    }
   }catch{}
 }
 $('refresh').onclick = refresh;
