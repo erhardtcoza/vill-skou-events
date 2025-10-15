@@ -164,22 +164,36 @@ export function mountAdminBar(router){
     const from = i(u.searchParams.get("from") || 0);
     const to   = i(u.searchParams.get("to")   || 4102444800); // ~2100-01-01
 
-    try{
-      const rows = await env.DB.prepare(
+    // primary: wallet_movements
+    const q1 = await env.DB.prepare(
+      `SELECT date(created_at,'unixepoch','localtime') AS day,
+              SUM(CASE WHEN json_extract(COALESCE(meta_json,'{}'),'$.method')='cash' THEN amount_cents ELSE 0 END) AS cash_cents,
+              SUM(CASE WHEN json_extract(COALESCE(meta_json,'{}'),'$.method')='card' THEN amount_cents ELSE 0 END) AS card_cents,
+              SUM(amount_cents) AS total_cents
+         FROM wallet_movements
+        WHERE kind='topup' AND created_at BETWEEN ?1 AND ?2
+        GROUP BY day
+        ORDER BY day DESC`
+    ).bind(from, to).all().catch(()=>({results:[]}));
+
+    let rows = q1.results || [];
+
+    // fallback: legacy topups table (source: 'cash'/'card')
+    if (!rows.length){
+      const q2 = await env.DB.prepare(
         `SELECT date(created_at,'unixepoch','localtime') AS day,
-                SUM(CASE WHEN json_extract(meta_json,'$.method')='cash' THEN amount_cents ELSE 0 END) AS cash_cents,
-                SUM(CASE WHEN json_extract(meta_json,'$.method')='card' THEN amount_cents ELSE 0 END) AS card_cents,
+                SUM(CASE WHEN source='cash' THEN amount_cents ELSE 0 END) AS cash_cents,
+                SUM(CASE WHEN source='card' THEN amount_cents ELSE 0 END) AS card_cents,
                 SUM(amount_cents) AS total_cents
-           FROM wallet_movements
-          WHERE kind='topup' AND created_at BETWEEN ?1 AND ?2
+           FROM topups
+          WHERE created_at BETWEEN ?1 AND ?2
           GROUP BY day
           ORDER BY day DESC`
-      ).bind(from, to).all();
-
-      return json({ ok:true, days: rows.results || [] });
-    }catch{
-      return json({ ok:true, days: [] });
+      ).bind(from, to).all().catch(()=>({results:[]}));
+      rows = q2.results || [];
     }
+
+    return json({ ok:true, days: rows });
   }));
 
   // Bar cashup (sales): totals by day + per-item
@@ -188,33 +202,65 @@ export function mountAdminBar(router){
     const from = i(u.searchParams.get("from") || 0);
     const to   = i(u.searchParams.get("to")   || 4102444800);
 
-    try{
-      const totals = await env.DB.prepare(
+    // totals from wallet_movements (purchases are negative amounts)
+    const totalsQ = await env.DB.prepare(
+      `SELECT date(created_at,'unixepoch','localtime') AS day,
+              SUM(CASE WHEN amount_cents < 0 THEN -amount_cents ELSE 0 END) AS sales_cents
+         FROM wallet_movements
+        WHERE kind='purchase' AND created_at BETWEEN ?1 AND ?2
+        GROUP BY day
+        ORDER BY day DESC`
+    ).bind(from, to).all().catch(()=>({results:[]}));
+
+    let totals = totalsQ.results || [];
+
+    if (!totals.length){
+      // fallback: legacy sales table
+      const t2 = await env.DB.prepare(
         `SELECT date(created_at,'unixepoch','localtime') AS day,
-                SUM(-amount_cents) AS sales_cents
-           FROM wallet_movements
-          WHERE kind='purchase' AND created_at BETWEEN ?1 AND ?2
+                SUM(total_cents) AS sales_cents
+           FROM sales
+          WHERE created_at BETWEEN ?1 AND ?2
           GROUP BY day
           ORDER BY day DESC`
-      ).bind(from, to).all();
+      ).bind(from, to).all().catch(()=>({results:[]}));
+      totals = t2.results || [];
+    }
 
-      // Per-item using json_each over meta_json.items
-      const items = await env.DB.prepare(
+    // per-item from wallet_movements.meta_json.items
+    const itemsQ = await env.DB.prepare(
+      `SELECT
+         json_extract(j.value,'$.id')   AS item_id,
+         json_extract(j.value,'$.name') AS item_name,
+         SUM(json_extract(j.value,'$.qty')) AS qty,
+         SUM(json_extract(j.value,'$.qty') * json_extract(j.value,'$.unit_price_cents')) AS cents
+       FROM wallet_movements wm,
+            json_each(COALESCE(wm.meta_json,'{}'),'$.items') AS j
+      WHERE wm.kind='purchase' AND wm.created_at BETWEEN ?1 AND ?2
+      GROUP BY item_id, item_name
+      ORDER BY cents DESC, item_name ASC`
+    ).bind(from, to).all().catch(()=>({results:[]}));
+
+    let items = itemsQ.results || [];
+
+    if (!items.length){
+      // fallback: legacy sales.items_json
+      const i2 = await env.DB.prepare(
         `SELECT
            json_extract(j.value,'$.id')   AS item_id,
            json_extract(j.value,'$.name') AS item_name,
            SUM(json_extract(j.value,'$.qty')) AS qty,
            SUM(json_extract(j.value,'$.qty') * json_extract(j.value,'$.unit_price_cents')) AS cents
-         FROM wallet_movements wm, json_each(wm.meta_json,'$.items') AS j
-        WHERE wm.kind='purchase' AND wm.created_at BETWEEN ?1 AND ?2
+         FROM sales s,
+              json_each(COALESCE(s.items_json,'[]')) AS j
+        WHERE s.created_at BETWEEN ?1 AND ?2
         GROUP BY item_id, item_name
         ORDER BY cents DESC, item_name ASC`
       ).bind(from, to).all().catch(()=>({results:[]}));
-
-      return json({ ok:true, totals: totals.results || [], items: items.results || [] });
-    }catch{
-      return json({ ok:true, totals: [], items: [] });
+      items = i2.results || [];
     }
+
+    return json({ ok:true, totals, items });
   }));
 
   // (No HTML routes here — UI is handled by /src/ui/admin.js with the Bar tab)
