@@ -6,7 +6,7 @@ import { bindEnv } from "./env.js";
 // Durable Object (must be exported from entrypoint)
 import { WalletDO } from "./do/wallet.js";
 
-// Routes (API)
+// ----- API route mounts -----
 import { mountWATest } from "./routes/wa_test.js";
 import { mountDiag } from "./routes/diag.js";
 import { mountQR } from "./routes/qr.js";
@@ -23,10 +23,13 @@ import { mountAdmin } from "./routes/admin.js";
 import { mountSync } from "./routes/sync.js";
 import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
-import { mountCashbar } from "./routes/cashbar.js";
+import { mountCashbar } from "./routes/cashbar.js";   // legacy
 import { mountItems } from "./routes/items.js";
 
-// UI
+// NEW: Bar admin routes (UI + API for bar management)
+import { mountAdminBar } from "./routes/bar_admin.js";
+
+// ----- UI -----
 import { badgeHTML } from "./ui/badge.js";
 import { landingHTML } from "./ui/landing.js";
 import { adminHTML } from "./ui/admin.js";
@@ -44,12 +47,12 @@ import { loginHTML } from "./ui/login.js";
 import { thankYouHTML } from "./ui/thankyou.js";
 import { ticketSingleHTML } from "./ui/ticket_single.js";
 
-// Bar UI (renamed files & exports)
+// Bar UI
 import { barSellHTML } from "./ui/bar_sell.js";
 import { barTopupHTML } from "./ui/bar_topup.js";
 import { barWalletHTML } from "./ui/bar_wallet.js";
 
-// Auth guard
+// Auth guard (for admin/gate areas)
 import { requireRole } from "./utils/auth.js";
 
 // Required: export Durable Object class from the entrypoint
@@ -74,23 +77,24 @@ function initWithEnv(env) {
   if (__initialized) return;
 
   /* -------------- API ROUTES (need env) -------------- */
-  mountAuth(router);                // /api/auth/*
-  mountPublic(router);              // /api/public/*
-  mountAdmin(router);               // /api/admin/*
-  mountSync(router);                // /api/sync/*
-  mountWhatsApp(router);            // /api/whatsapp/*
-  mountWATest(router);              // /api/wa-test/*
-  mountDiag(router);                // /api/diag*
-  mountQR(router);                  // /api/qr/*
-  mountPayments(router);            // /api/payments/*
-  mountPOS(router, env);            // /api/pos/*
-  mountScan(router, env);           // /api/scan/*
-  mountPastVisitors(router);        // /api/past-visitors/*
-  mountVendor(router);              // /api/vendor/*
-  mountWallet(router);              // /api/wallets/*
-  mountPublicVendors(router);       // /api/public/vendors/*
-  mountCashbar(router, env);        // keep legacy cashbar API for now
-  mountItems(router, env);          // /api/items
+  mountAuth(router);                 // /api/auth/*
+  mountPublic(router);               // /api/public/*
+  mountAdmin(router);                // /api/admin/*
+  mountAdminBar(router);             // /api/admin/bar/*  (+ /admin/bar UI endpoints)
+  mountSync(router);                 // /api/sync/*
+  mountWhatsApp(router);             // /api/whatsapp/*
+  mountWATest(router);               // /api/wa-test/*
+  mountDiag(router);                 // /api/diag*
+  mountQR(router);                   // /api/qr/*
+  mountPayments(router);             // /api/payments/*
+  mountPOS(router, env);             // /api/pos/*
+  mountScan(router, env);            // /api/scan/*
+  mountPastVisitors(router);         // /api/past-visitors/*
+  mountVendor(router);               // /api/vendor/*
+  mountWallet(router);               // /api/wallets/*
+  mountPublicVendors(router);        // /api/public/vendors/*
+  mountCashbar(router, env);         // legacy cashbar API (kept for compat)
+  mountItems(router, env);           // /api/items
 
   /* ------------------- UI ROUTES --------------------- */
   router.add("GET", "/", async () => renderHTML(landingHTML));
@@ -98,8 +102,9 @@ function initWithEnv(env) {
   // Admin (guarded)
   router.add("GET", "/admin", requireRole("admin", async () => renderHTML(adminHTML)));
   router.add("GET", "/admin/login", async () => renderHTML(() => loginHTML("admin")));
+  // NOTE: /admin/bar UI pages are provided by mountAdminBar()
 
-  // Gate POS (guarded) — clean paths
+  // Gate POS (guarded)
   router.add("GET", "/gate", requireRole("pos", async () => renderHTML(posHTML)));
   router.add("GET", "/gate/sell", requireRole("pos", async (req) => {
     const u = new URL(req.url);
@@ -134,17 +139,12 @@ function initWithEnv(env) {
     renderHTML(() => ticketSingleHTML(token))
   );
 
-  // Thank-you page after checkout
-  router.add("GET", "/thanks/:code", async (_req, _env2, _ctx, { code }) =>
-    renderHTML(() => thankYouHTML(code))
-  );
+  // Bar UI
+  router.add("GET", "/bar/sell",   async () => renderHTML(barSellHTML));
+  router.add("GET", "/bar/topup",  async () => renderHTML(barTopupHTML));
+  router.add("GET", "/bar/wallet", async () => renderHTML(barWalletHTML));
 
-  // Bar UI (renamed)
-  router.add("GET", "/bar/sell",    async () => renderHTML(barSellHTML));
-  router.add("GET", "/bar/topup",   async () => renderHTML(barTopupHTML));
-  router.add("GET", "/bar/wallet",  async () => renderHTML(barWalletHTML));
-
-  // Legacy bar aliases (optional)
+  // Legacy bar aliases
   router.add("GET", "/cashbar/cashier", async () => renderHTML(barTopupHTML));
   router.add("GET", "/cashbar/bar",     async () => renderHTML(barSellHTML));
 
