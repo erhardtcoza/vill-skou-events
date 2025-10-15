@@ -28,12 +28,14 @@ export const barTopupHTML = `<!doctype html><html><head>
     <div class="row">
       <div>
         <label>New wallet name</label>
-        <input id="newName" placeholder="Attendee name"/>
+        <input id="newName" placeholder="Attendee name" autocomplete="name"/>
+        <label style="margin-top:10px">Mobile (SA: 082… or 2772…)</label>
+        <input id="newPhone" placeholder="e.g. 0821234567" inputmode="tel" autocomplete="tel"/>
         <button id="create" class="btn">Create wallet</button>
       </div>
       <div>
         <label>Lookup wallet ID</label>
-        <input id="lookupId" placeholder="e.g. 123"/>
+        <input id="lookupId" placeholder="e.g. W2D2VHK"/>
         <button id="lookup" class="btn alt">Load wallet</button>
       </div>
     </div>
@@ -71,11 +73,15 @@ const toCents = (v)=> {
   return Number.isFinite(n) ? Math.round(n*100) : 0;
 };
 const rands = (c)=> 'R'+((c||0)/100).toFixed(2);
+const normPhone = (raw)=>{
+  const s = String(raw||'').replace(/\\D+/g,'');
+  if (s.length===10 && s.startsWith('0')) return '27'+s.slice(1);
+  return s;
+};
 
 let current = null;
 
 function show(raw){
-  // tolerate both {wallet:{...}} and flat {...}
   const w = raw?.wallet ? raw.wallet : raw;
   current = w;
   $('wname').textContent = w?.name || '—';
@@ -83,7 +89,6 @@ function show(raw){
   $('wid').textContent  = 'ID: ' + (w?.id ?? '—');
   const link = '/w/' + (w?.id ?? '');
   $('wlink').href = link; $('wlink').textContent = link;
-  // use SVG endpoint for crisp QR
   $('wqr').innerHTML = '<img src="/api/qr/svg/WALLET-'+encodeURIComponent(w.id)+'" width="200" height="200" alt="QR"/>';
 }
 
@@ -102,35 +107,36 @@ async function load(id){
 $('create').onclick = async ()=>{
   $('msg').textContent = '';
   const name = ($('newName').value||'').trim();
+  const phone = normPhone($('newPhone').value||'');
   if (!name){ $('msg').textContent='Enter a name'; return; }
+  if (!phone || phone.length < 11){ $('msg').textContent='Enter a valid SA mobile'; return; }
   try{
-    // support either /create or /register backends
     let r = await fetch('/api/wallets/create', {
       method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, phone })
     });
     if (r.status === 404) {
       r = await fetch('/api/wallets/register', {
         method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ name })
+        body: JSON.stringify({ name, phone })
       });
     }
     const j = await r.json().catch(()=>({}));
     if (!r.ok || j.ok === false) throw new Error(j.error||'create failed');
     show(j);
-    $('newName').value = '';
+    $('newName').value = ''; $('newPhone').value = '';
   }catch(e){ $('msg').textContent = e.message||'create failed'; }
 };
 
 $('lookup').onclick = ()=> {
-  const id = Number(($('lookupId').value||'').trim());
+  const id = String(($('lookupId').value||'').trim());
   if (!id) { $('msg').textContent='Enter wallet ID'; return; }
   load(id);
 };
 
-// enter-to-submit quality of life
 $('lookupId').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('lookup').click(); });
 $('newName').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('create').click(); });
+$('newPhone').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('create').click(); });
 
 async function topup(method){
   $('msg').textContent = '';
