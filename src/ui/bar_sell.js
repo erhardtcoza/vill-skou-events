@@ -76,12 +76,24 @@ const $ = (id)=>document.getElementById(id);
 const money = (c)=>'R'+((Number(c)||0)/100).toFixed(2);
 const digits = (s)=>String(s||'').replace(/\\D+/g,'');
 
-let wallet=null, version=0, balance=0;
-let catalog=[], categories=[], activeCat=null;
-let cart=new Map(); // id -> {id,name,unit_price_cents,qty}
+// DB categories → Afrikaans labels used in tabs
+const CAT_LABEL = {
+  'Beer':'Bier',
+  'Cider':'Ciders',
+  'Soft drink':'Koeldrank',
+  'Wine':'Wyn',
+  'Spirits':'Sterk drank',
+  'Shots':'Shots',           // keep as per poster
+  'Deposit':'Glas Deposito',
+  'Specials':'Spesiale'
+};
 
 // preferred order for tabs if present
 const PREFERRED = ['Beer','Cider','Soft drink','Wine','Spirits','Shots','Deposit','Specials'];
+
+let wallet=null, version=0, balance=0;
+let catalog=[], categories=[], activeCat=null;
+let cart=new Map(); // id -> {id,name,unit_price_cents,qty}
 
 function uniqueCategories(items){
   const got = Array.from(new Set(items.filter(i => i.active).map(i => String(i.category))));
@@ -90,10 +102,12 @@ function uniqueCategories(items){
   return [...ordered, ...rest];
 }
 
+function labelFor(cat){ return CAT_LABEL[cat] || cat; }
+
 function renderTabs(){
   const box = $('tabs');
   box.innerHTML = categories.map(c =>
-    \`<button class="tab\${c===activeCat?' active':''}" data-cat="\${c}">\${c}</button>\`
+    \`<button class="tab\${c===activeCat?' active':''}" data-cat="\${c}">\${labelFor(c)}</button>\`
   ).join('');
   box.querySelectorAll('[data-cat]').forEach(b=>{
     b.onclick = ()=>{ activeCat = b.dataset.cat; renderTabs(); showCat(activeCat); };
@@ -147,8 +161,8 @@ function changeQty(id, d){
 function addItem(id){
   const it = catalog.find(x => Number(x.id)===Number(id));
   if (!it) return;
-  const name = it.variant ? (it.name+' · '+it.variant) : it.name;
-  const row = cart.get(id) || { id, name, unit_price_cents: Number(it.price_cents||0), qty: 0 };
+  const disp = it.variant ? (it.name+' · '+it.variant) : it.name;
+  const row = cart.get(id) || { id, name: disp, unit_price_cents: Number(it.price_cents||0), qty: 0 };
   row.qty++;
   cart.set(id, row);
   renderCart();
