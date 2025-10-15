@@ -281,7 +281,7 @@ export function mountAdmin(router) {
         WHERE UPPER(short_code) = UPPER(?1)
         LIMIT 1`
     ).bind(c).first();
-    if (!o) return json({ ok: false, error: \`Kon nie bestelling vind met kode \${c} nie.\` }, 404);
+    if (!o) return json({ ok: false, error: `Kon nie bestelling vind met kode ${c} nie.` }, 404);
 
     const tickets = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
