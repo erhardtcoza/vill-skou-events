@@ -66,27 +66,34 @@ export const barTopupHTML = `<!doctype html><html><head>
 
 <script>
 const $ = (id)=>document.getElementById(id);
-const toCents = (v)=> Math.round(Number(String(v||'').replace(',','.'))*100);
+const toCents = (v)=> {
+  const n = Number(String(v||'').replace(',','.')); 
+  return Number.isFinite(n) ? Math.round(n*100) : 0;
+};
 const rands = (c)=> 'R'+((c||0)/100).toFixed(2);
 
 let current = null;
 
-function show(w){
+function show(raw){
+  // tolerate both {wallet:{...}} and flat {...}
+  const w = raw?.wallet ? raw.wallet : raw;
   current = w;
   $('wname').textContent = w?.name || '—';
   $('wbal').textContent = rands(w?.balance_cents||0);
   $('wid').textContent  = 'ID: ' + (w?.id ?? '—');
   const link = '/w/' + (w?.id ?? '');
   $('wlink').href = link; $('wlink').textContent = link;
-  $('wqr').innerHTML = '<img src="/api/qr/png?data=WALLET-'+encodeURIComponent(w.id)+'" width="200" height="200" alt="QR"/>';
+  // use SVG endpoint for crisp QR
+  $('wqr').innerHTML = '<img src="/api/qr/svg/WALLET-'+encodeURIComponent(w.id)+'" width="200" height="200" alt="QR"/>';
 }
 
 async function load(id){
   $('msg').textContent = '';
   try{
-    const j = await fetch('/api/wallets/'+encodeURIComponent(id)).then(r=>r.json());
-    if (!j.ok) throw new Error(j.error||'not found');
-    show(j.wallet);
+    const r = await fetch('/api/wallets/'+encodeURIComponent(id));
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error||'Wallet not found');
+    show(j);
   }catch(e){
     $('msg').textContent = e.message||'load failed';
   }
@@ -97,12 +104,21 @@ $('create').onclick = async ()=>{
   const name = ($('newName').value||'').trim();
   if (!name){ $('msg').textContent='Enter a name'; return; }
   try{
-    const j = await fetch('/api/wallets/create', {
+    // support either /create or /register backends
+    let r = await fetch('/api/wallets/create', {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ name })
-    }).then(r=>r.json());
-    if (!j.ok) throw new Error(j.error||'create failed');
-    show(j.wallet);
+    });
+    if (r.status === 404) {
+      r = await fetch('/api/wallets/register', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ name })
+      });
+    }
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error||'create failed');
+    show(j);
+    $('newName').value = '';
   }catch(e){ $('msg').textContent = e.message||'create failed'; }
 };
 
@@ -112,18 +128,23 @@ $('lookup').onclick = ()=> {
   load(id);
 };
 
+// enter-to-submit quality of life
+$('lookupId').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('lookup').click(); });
+$('newName').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('create').click(); });
+
 async function topup(method){
   $('msg').textContent = '';
   if (!current?.id){ $('msg').textContent='No wallet loaded.'; return; }
   const cents = toCents($('amt').value);
   if (!cents){ $('msg').textContent='Enter an amount'; return; }
   try{
-    const j = await fetch('/api/wallets/topup', {
+    const r = await fetch('/api/wallets/topup', {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ wallet_id: current.id, amount_cents: cents, method })
-    }).then(r=>r.json());
-    if (!j.ok) throw new Error(j.error||'topup failed');
-    show(j.wallet);
+    });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || j.ok === false) throw new Error(j.error||'topup failed');
+    show(j);
     $('amt').value = '';
   }catch(e){ $('msg').textContent = e.message||'topup failed'; }
 }
