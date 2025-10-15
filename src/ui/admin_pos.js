@@ -1,162 +1,172 @@
 // /src/ui/admin_pos.js
-export const adminPosJS = `
-window.AdminPanels.pos = async function renderPos(){
-  const el = $("panel-pos");
-  el.innerHTML = "<h2>POS Sessions</h2>";
+export const adminPOSJS = `
+window.AdminPanels.posadmin = async function renderPOSAdmin(){
+  const root = $("panel-pos");
+  if (!root) return;
 
-  // quick styles for neat alignment
-  const style = document.createElement("style");
-  style.textContent = \`
-    .pos-table { width:100%; border-collapse:collapse; }
-    .pos-table th, .pos-table td { padding:8px 10px; border-bottom:1px solid #eef1f3; }
-    .pos-table th { text-align:left; }
-    .pos-table td.num, .pos-table th.num { text-align:right; }
-    .pos-actions { display:flex; gap:8px; }
-    .pill-open { background:#fff5e6; color:#8a5a00; padding:2px 8px; border-radius:999px; font-size:12px; }
-    .pill-closed { background:#e8f7ee; color:#0a6b3a; padding:2px 8px; border-radius:999px; font-size:12px; }
-    .drawer { margin-top:14px; border:1px solid #eef1f3; border-radius:12px; padding:12px; display:none; }
-    .drawer.open { display:block; }
-    .btn.small { padding:6px 10px; font-size:13px; }
-    .muted { color:#6a7480; }
-  \`;
-  document.head.appendChild(style);
+  // ---------- styles ----------
+  (function ensureStyles(){
+    const id="pos-admin-styles";
+    if (document.getElementById(id)) return;
+    const s=document.createElement("style");
+    s.id=id;
+    s.textContent = \`
+      .pos-card { border:1px solid #eef1f3; border-radius:12px; padding:16px; }
+      table.pos-sessions { width:100%; border-collapse:collapse; }
+      .pos-sessions th, .pos-sessions td { padding:8px 10px; border-bottom:1px solid #eef1f3; }
+      .pos-sessions th { text-align:left; }
+      .pos-sessions td.num { text-align:right; white-space:nowrap; }
+      .pos-sessions td.compact { white-space:nowrap; }
+      .pos-actions { display:flex; gap:8px; }
+      .btn.small { font-size:12px; padding:6px 10px; }
+      .muted { color:#6b7280; }
+      .pill { background:#f4f6f8; border:1px solid #eef1f3; padding:4px 8px; border-radius:999px; }
+      /* modal */
+      .pos-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; z-index:1000; }
+      .pos-modal { width:min(920px, 92vw); max-height:90vh; overflow:auto; background:#fff; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+      .pos-modal header { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid #eef1f3; }
+      .pos-modal .body { padding:12px 16px; }
+      table.txs { width:100%; border-collapse:collapse; margin-top:10px; }
+      .txs th, .txs td { padding:6px 8px; border-bottom:1px solid #eef1f3; }
+      .txs td.num { text-align:right; white-space:nowrap; }
+    \`;
+    document.head.appendChild(s);
+  })();
 
-  function cents(n){ return "R" + (Number(n||0)/100).toFixed(2); }
-  function dt(sec){
-    if (!sec) return "<span class='muted'>—</span>";
-    const d = new Date((Number(sec)||0)*1000);
-    return d.toLocaleDateString() + ", " + d.toLocaleTimeString();
+  root.innerHTML = "<h2>POS Sessions</h2><div class='pos-card'><div id='pos-sessions-box'>Loading…</div></div>";
+
+  const box = document.getElementById("pos-sessions-box");
+
+  function rands(cents){ return "R" + (Number(cents||0)/100).toFixed(2); }
+  function dt(v){
+    if (!v) return "—";
+    try {
+      const d = new Date((Number(v)||0)*1000);
+      if (!isFinite(d)) return "—";
+      return d.toLocaleString();
+    } catch { return "—"; }
   }
 
-  const box = document.createElement("div");
-  el.appendChild(box);
+  async function fetchJSON(url, opts){
+    try { const r = await fetch(url, { credentials:"include", ...(opts||{}) }); return await r.json(); }
+    catch { return { ok:false }; }
+  }
 
-  const drawer = document.createElement("div");
-  drawer.className = "drawer";
-  el.appendChild(drawer);
-
-  async function load(){
-    const j = await fetch("/api/admin/pos/sessions", { credentials:"include" })
-      .then(r=>r.json()).catch(()=>({ok:false,sessions:[]}));
-    if (!j.ok){ box.innerHTML = "<div class='muted'>Kon nie laai nie.</div>"; return; }
-
+  async function loadSessions(){
+    const j = await fetchJSON("/api/admin/pos/sessions");
+    if (!j.ok) { box.textContent = "Kon nie laai nie."; return; }
     const rows = (j.sessions||[]).map(s=>{
-      const isClosed = !!s.closed_at;
-      const pill = isClosed
-        ? "<span class='pill-closed'>closed</span>"
-        : "<span class='pill-open'>open</span>";
-
-      const act = [
-        "<div class='pos-actions'>",
-          "<button class='btn small outline' data-view='"+s.id+"'>View</button>",
-          isClosed ? "" :
-            "<button class='btn small' data-close='"+s.id+"'>Close</button>",
-          "<button class='btn small danger' data-del='"+s.id+"'>Delete</button>",
-        "</div>"
-      ].join("");
-
+      const open = !s.closed_at;
+      const actions = [
+        "<button class='btn small outline' data-view='"+s.id+"'>View</button>",
+        open
+          ? "<button class='btn small' data-close='"+s.id+"'>Close</button>"
+          : "",
+        "<button class='btn small danger' data-del='"+s.id+"'>Delete</button>",
+      ].filter(Boolean).join("");
       return "<tr>"
-        + "<td class='num'>"+s.id+"</td>"
-        + "<td>"+esc(s.cashier_name||"")+"</td>"
-        + "<td>"+esc(s.gate_name||"")+"</td>"
-        + "<td>"+dt(s.opened_at)+"</td>"
-        + "<td>"+dt(s.closed_at)+"</td>"
-        + "<td class='num'>"+cents(s.cash_cents)+"</td>"
-        + "<td class='num'>"+cents(s.card_cents)+"</td>"
-        + "<td>"+esc(s.closing_manager||"")+"</td>"
-        + "<td>"+pill+"</td>"
-        + "<td>"+act+"</td>"
-        + "</tr>";
+        +"<td class='compact'>"+s.id+"</td>"
+        +"<td>"+esc(s.cashier_name||"")+"</td>"
+        +"<td>"+esc(s.gate_name||String(s.gate_id||""))+"</td>"
+        +"<td class='compact'>"+dt(s.opened_at)+"</td>"
+        +"<td class='compact'>"+dt(s.closed_at)+"</td>"
+        +"<td class='num'>"+rands(s.cash_cents)+"</td>"
+        +"<td class='num'>"+rands(s.card_cents)+"</td>"
+        +"<td>"+esc(s.closing_manager||"")+"</td>"
+        +"<td><div class='pos-actions'>"+actions+"</div></td>"
+        +"</tr>";
     }).join("");
 
     box.innerHTML = [
-      "<table class='pos-table'>",
-        "<thead>",
-          "<tr>",
-            "<th class='num'>ID</th>",
-            "<th>Cashier</th>",
-            "<th>Gate</th>",
-            "<th>Opened</th>",
-            "<th>Closed</th>",
-            "<th class='num'>Cash</th>",
-            "<th class='num'>Card</th>",
-            "<th>Closed by</th>",
-            "<th>Status</th>",
-            "<th>Actions</th>",
-          "</tr>",
-        "</thead>",
-        "<tbody>", rows || "<tr><td colspan='10' class='muted'>Geen sessies</td></tr>", "</tbody>",
-      "</table>"
+      "<table class='pos-sessions'>",
+        "<thead><tr>",
+          "<th class='compact'>ID</th>",
+          "<th>Cashier</th>",
+          "<th>Gate</th>",
+          "<th class='compact'>Opened</th>",
+          "<th class='compact'>Closed</th>",
+          "<th class='num'>Cash</th>",
+          "<th class='num'>Card</th>",
+          "<th>Closed by</th>",
+          "<th>Actions</th>",
+        "</tr></thead>",
+        "<tbody>", rows || "<tr><td colspan='9' class='muted'>Geen sessies nie.</td></tr>", "</tbody>",
+      "</table>",
+      "<div style='margin-top:10px' class='muted'>Tip: Klik “View” om transaksies vir oudit te sien.</div>"
     ].join("");
 
     // wire actions
-    box.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>openView(b.dataset.view));
-    box.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>doClose(b.dataset.close));
-    box.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>doDelete(b.dataset.del));
+    box.querySelectorAll("[data-close]").forEach(btn=>{
+      btn.onclick = async ()=>{
+        const id = btn.getAttribute("data-close");
+        if (!confirm("Close session #"+id+"?")) return;
+        const r = await fetchJSON("/api/admin/pos/session/"+encodeURIComponent(id)+"/close", { method:"POST" });
+        if (!r.ok){ alert("Kon nie sluit nie."); return; }
+        await loadSessions();
+      };
+    });
+    box.querySelectorAll("[data-del]").forEach(btn=>{
+      btn.onclick = async ()=>{
+        const id = btn.getAttribute("data-del");
+        if (!confirm("Delete session #"+id+"? This cannot be undone.")) return;
+        const r = await fetchJSON("/api/admin/pos/session/"+encodeURIComponent(id)+"/delete", { method:"POST" });
+        if (!r.ok){ alert("Kon nie uitvee nie."); return; }
+        await loadSessions();
+      };
+    });
+    box.querySelectorAll("[data-view]").forEach(btn=>{
+      btn.onclick = ()=> openViewer(btn.getAttribute("data-view"));
+    });
   }
 
-  async function doClose(id){
-    const who = prompt("Closing manager name (optional):",""); // simple
-    const r = await fetch("/api/admin/pos/session/"+encodeURIComponent(id)+"/close", {
-      method:"POST", credentials:"include",
-      headers:{ "content-type":"application/json" },
-      body: JSON.stringify({ closing_manager: who || null })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!r.ok) alert(r.error || "Close failed");
-    await load();
-  }
+  async function openViewer(id){
+    // Try fetch transactions; show graceful error if API not present yet.
+    const j = await fetchJSON("/api/admin/pos/session/"+encodeURIComponent(id)+"/transactions");
+    const payments = j.ok ? (j.payments||[]) : [];
+    const sales    = j.ok ? (j.sales||[])    : [];
+    const totalCash = payments.filter(p=>p.method==="pos_cash").reduce((s,p)=>s+Number(p.amount_cents||0),0);
+    const totalCard = payments.filter(p=>p.method==="pos_card").reduce((s,p)=>s+Number(p.amount_cents||0),0);
 
-  async function doDelete(id){
-    if (!confirm("Delete session "+id+"? This will also delete its payments.")) return;
-    const r = await fetch("/api/admin/pos/session/"+encodeURIComponent(id)+"/delete", {
-      method:"POST", credentials:"include"
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!r.ok) alert(r.error || "Delete failed");
-    // if the details drawer shows this id, hide it
-    if (drawer.dataset.forId === String(id)) drawer.classList.remove("open");
-    await load();
-  }
-
-  async function openView(id){
-    drawer.dataset.forId = String(id);
-    drawer.innerHTML = "<div class='muted'>Loading…</div>";
-    drawer.classList.add("open");
-
-    const j = await fetch("/api/admin/pos/session/"+encodeURIComponent(id)+"/details", {
-      credentials:"include"
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!j.ok){ drawer.innerHTML = "<div class='muted'>Kon nie details laai nie.</div>"; return; }
-
-    const s = j.session || {};
-    const pays = j.payments || [];
-
-    const rows = pays.map(p=>(
-      "<tr>"
-        +"<td>"+p.id+"</td>"
-        +"<td>"+(p.method==="pos_cash"?"Cash":"Card")+"</td>"
-        +"<td class='num'>R"+(p.amount_cents/100).toFixed(2)+"</td>"
-        +"<td>"+esc(p.reference||"")+"</td>"
-        +"<td>"+(new Date(p.created_at*1000)).toLocaleString()+"</td>"
-      +"</tr>"
-    )).join("");
-
-    drawer.innerHTML = [
-      "<div style='display:flex;justify-content:space-between;gap:10px;align-items:center'>",
-        "<h3 style='margin:0'>Session #"+s.id+" · "+esc(s.cashier_name||"")+"</h3>",
-        "<button class='btn small outline' id='pos-close-drawer'>Close</button>",
-      "</div>",
-      "<div class='muted' style='margin-bottom:10px'>Gate: "+esc(s.gate_name||"")+" · Opened "+(s.opened_at?new Date(s.opened_at*1000).toLocaleString():"—")
-        +" · Closed "+(s.closed_at?new Date(s.closed_at*1000).toLocaleString():"—")
-        +"</div>",
-      "<table class='pos-table'>",
-        "<thead><tr><th>ID</th><th>Method</th><th class='num'>Amount</th><th>Ref</th><th>When</th></tr></thead>",
-        "<tbody>", rows || "<tr><td colspan='5' class='muted'>Geen transaksies</td></tr>", "</tbody>",
-      "</table>"
+    const back = document.createElement("div");
+    back.className = "pos-modal-backdrop";
+    back.innerHTML = [
+      "<div class='pos-modal'>",
+        "<header><strong>Session #"+id+" · Transactions</strong>",
+        "<div style='display:flex;gap:8px;align-items:center'>",
+          "<span class='pill'>Cash: "+rands(totalCash)+"</span>",
+          "<span class='pill'>Card: "+rands(totalCard)+"</span>",
+          "<button class='btn small outline' id='posv-close'>Close</button>",
+        "</div>",
+        "</header>",
+        "<div class='body'>",
+          j.ok ? "" : "<div class='muted'>Transactions endpoint not available yet.</div>",
+          "<h3 style='margin:8px 0 4px'>Payments</h3>",
+          "<table class='txs'><thead><tr><th>When</th><th>Method</th><th>Ref</th><th class='num'>Amount</th></tr></thead><tbody>",
+            payments.map(p=>("<tr>"
+              +"<td class='compact'>"+dt(p.created_at)+"</td>"
+              +"<td>"+esc(p.method||"")+"</td>"
+              +"<td>"+esc(p.ref||"")+"</td>"
+              +"<td class='num'>"+rands(p.amount_cents)+"</td>"
+            +"</tr>")).join("") || "<tr><td colspan='4' class='muted'>Geen betalings</td></tr>",
+          "</tbody></table>",
+          "<h3 style='margin:14px 0 4px'>Sales</h3>",
+          "<table class='txs'><thead><tr><th>When</th><th>Kind</th><th>Device/Cashier</th><th class='num'>Amount</th></tr></thead><tbody>",
+            sales.map(s=>("<tr>"
+              +"<td class='compact'>"+dt(s.created_at)+"</td>"
+              +"<td>"+esc(s.kind||"")+"</td>"
+              +"<td>"+esc(s.source||"")+"</td>"
+              +"<td class='num'>"+rands(s.amount_cents)+"</td>"
+            +"</tr>")).join("") || "<tr><td colspan='4' class='muted'>Geen verkope</td></tr>",
+          "</tbody></table>",
+        "</div>",
+      "</div>"
     ].join("");
 
-    document.getElementById("pos-close-drawer").onclick = ()=>drawer.classList.remove("open");
+    back.addEventListener("click", (e)=>{ if (e.target === back) back.remove(); });
+    back.querySelector("#posv-close").onclick = ()=> back.remove();
+    document.body.appendChild(back);
   }
 
-  await load();
+  await loadSessions();
 };
 `;
