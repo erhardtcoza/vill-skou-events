@@ -152,26 +152,38 @@ export function mountWhatsApp(router) {
     const q = (u.searchParams.get("q") || "").trim();
     const limit = Math.min(Math.max(num(u.searchParams.get("limit") || 50), 1), 200);
     const offset = Math.max(num(u.searchParams.get("offset") || 0), 0);
-    const where = []; const args = [];
-    if (q) { where.push(`(UPPER(from_msisdn) LIKE UPPER(?1) OR UPPER(body) LIKE UPPER(?1))`); args.push(`%${q}%`); }
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+    const clauses = []; const args = [];
+    if (q) { clauses.push(`(UPPER(from_msisdn) LIKE UPPER(?1) OR UPPER(body) LIKE UPPER(?1))`); args.push(\`%\${q}%\`); }
+    const whereSql = clauses.length ? \`WHERE \${clauses.join(" AND ")}\` : "";
+
     const list = await env.DB.prepare(
-      `SELECT id,wa_id,from_msisdn,to_msisdn,direction,body,type,received_at,replied_auto,replied_manual
-         FROM wa_inbox ${whereSql}
-        ORDER BY received_at DESC,id DESC LIMIT ${limit} OFFSET ${offset}`
+      \`SELECT id,wa_id,from_msisdn,to_msisdn,direction,body,type,received_at,replied_auto,replied_manual
+         FROM wa_inbox \${whereSql}
+        ORDER BY received_at DESC,id DESC
+        LIMIT \${limit} OFFSET \${offset}\`
     ).bind(...args).all();
-    const c = await env.DB.prepare(`SELECT COUNT(*) AS c FROM wa_inbox ${whereSql}`).bind(...args).first();
+
+    const c = await env.DB.prepare(\`SELECT COUNT(*) AS c FROM wa_inbox \${whereSql}\`).bind(...args).first();
     return json({ ok:true, items:list.results||[], total:Number(c?.c||0), limit, offset });
   });
 
   const inboxReply = guardAdmin(async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad("bad json"); }
-    const text = String(b?.text || "").trim(); if (!text) return bad("text required");
-    const row = await env.DB.prepare(`SELECT from_msisdn FROM wa_inbox WHERE id=?1`).bind(num(id)).first();
-    if (!row) return bad("not found",404);
+    const text = String(b?.text || "").trim();
+    const overrideTo = (b?.to ? String(b.to).trim() : "");
+    if (!text) return bad("text required");
+
+    let row = null;
+    if (!overrideTo) {
+      row = await env.DB.prepare(`SELECT from_msisdn FROM wa_inbox WHERE id=?1`).bind(num(id)).first();
+      if (!row) return bad("not found",404);
+    }
+    const to = overrideTo || row.from_msisdn;
+
     try {
-      await sendWA(env, row.from_msisdn, { type:"text", text });
-      await env.DB.prepare(`UPDATE wa_inbox SET replied_manual=1 WHERE id=?1`).bind(num(id)).run();
+      await sendWA(env, to, { type:"text", text });
+      await env.DB.prepare(`UPDATE wa_inbox SET replied_manual=1 WHERE id=?1`).bind(num(id)).run().catch(()=>{});
       return json({ ok:true });
     } catch(e){ return bad("send failed:"+e.message,500); }
   });
@@ -181,15 +193,16 @@ export function mountWhatsApp(router) {
     return json({ ok:true });
   });
 
-  router.add("GET",  "/api/admin/whatsapp/inbox", inboxList);
-  router.add("GET",  "/api/whatsapp/inbox",       inboxList);
-  router.add("POST", "/api/admin/whatsapp/inbox/:id/reply", inboxReply);
+  router.add("GET",  "/api/admin/whatsapp/inbox",            inboxList);
+  router.add("GET",  "/api/whatsapp/inbox",                  inboxList);       // alias (guarded)
+  router.add("POST", "/api/admin/whatsapp/inbox/:id/reply",  inboxReply);
   router.add("POST", "/api/admin/whatsapp/inbox/:id/delete", inboxDelete);
 
   /* ----- Templates list / sync (admin + alias) ----- */
   const listTemplates = guardAdmin(async (_req, env) => {
     const rows = await env.DB.prepare(
-      `SELECT id,name,language,status,category,updated_at,components_json FROM wa_templates
+      `SELECT id,name,language,status,category,updated_at,components_json
+         FROM wa_templates
         ORDER BY name ASC,language ASC`
     ).all();
     return json({ ok:true, templates:rows.results||[] });
@@ -199,11 +212,14 @@ export function mountWhatsApp(router) {
     const token = await getSetting(env,"WA_TOKEN");
     const waba  = await getSetting(env,"WA_BUSINESS_ID");
     if(!token||!waba) return bad("WA_TOKEN/WA_BUSINESS_ID missing");
-    let url=`https://graph.facebook.com/v20.0/${enc(waba)}/message_templates?fields=${enc("name,language,status,category,components")}&limit=50&access_token=${enc(token)}`;
+
+    let url=\`https://graph.facebook.com/v20.0/\${enc(waba)}/message_templates?fields=\${enc("name,language,status,category,components")}&limit=50&access_token=\${enc(token)}\`;
     let fetched=0; const now=nowSec();
+
     while(url){
       const res=await fetch(url); const data=await res.json().catch(()=>({}));
-      if(!res.ok||data?.error) return bad(data?.error?.message||`Meta ${res.status}`,res.status);
+      if(!res.ok||data?.error) return bad(data?.error?.message||\`Meta \${res.status}\`,res.status);
+
       for(const t of (data.data||[])){
         const {name,language,status,category,components}=t;
         if(!name||!language) continue;
@@ -213,7 +229,7 @@ export function mountWhatsApp(router) {
            ON CONFLICT(name,language) DO UPDATE SET
              status=excluded.status,category=excluded.category,
              components_json=excluded.components_json,updated_at=excluded.updated_at`
-        ).bind(name,language,status,category,JSON.stringify(components||null),now).run();
+        ).bind(name,language,status||null,category||null,JSON.stringify(components||null),now).run();
         fetched++;
       }
       url=data?.paging?.next||"";
@@ -227,9 +243,7 @@ export function mountWhatsApp(router) {
   router.add("GET",  "/api/whatsapp/templates",       listTemplates);
   router.add("POST", "/api/whatsapp/templates/sync",  syncTemplates);
 
-  /* ============================================================
-     TEMPLATE MAPPINGS CRUD
-  ============================================================ */
+  /* ----- Template Mappings CRUD ----- */
   const listMappings = guardAdmin(async (req, env) => {
     const u = new URL(req.url);
     const ctx = (u.searchParams.get("context") || "").trim();
@@ -267,7 +281,32 @@ export function mountWhatsApp(router) {
     return json({ok:true});
   });
 
-  router.add("GET",  "/api/admin/whatsapp/mappings",      listMappings);
-  router.add("POST", "/api/admin/whatsapp/mappings/save", saveMapping);
+  router.add("GET",  "/api/admin/whatsapp/mappings",        listMappings);
+  router.add("POST", "/api/admin/whatsapp/mappings/save",   saveMapping);
   router.add("POST", "/api/admin/whatsapp/mappings/delete", deleteMapping);
+
+  /* ----- Quick template test sender (kept for the Send tab) ----- */
+  router.add("POST", "/api/admin/whatsapp/test", guardAdmin(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const to = String(b?.to || "").replace(/\\D+/g, "");
+    if (!to) return bad("to required (e.g. 2771… digits only)");
+
+    const key = String(b?.template_key || "WA_TMP_ORDER_CONFIRM");
+    const selRow = await env.DB.prepare(
+      `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
+    ).bind(key).first();
+
+    const sel = String(selRow?.value || "");
+    const [tplName, tplLang] = sel.split(":");
+    if (!tplName || !tplLang) {
+      return bad(\`Template not configured in site_settings for \${key}. Save "name:lang" first.\`);
+    }
+
+    try {
+      await sendWA(env, to, { type:"template", name: tplName, language: tplLang, variables: (b?.vars||[]) });
+      return json({ ok:true });
+    } catch (e) {
+      return bad(e?.message||"send failed", 502);
+    }
+  }));
 }
