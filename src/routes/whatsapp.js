@@ -97,6 +97,70 @@ async function sendWA(env, to, payload) {
   return await sendDirectGraph(env, to, payload);
 }
 
+/* =====================================================
+   MAPPING-AWARE SENDER (used by cashbar.js)
+===================================================== */
+/**
+ * Send template by key like "bar_purchase:af" and fill the variables
+ * for our four bar_* templates from the provided `data` object.
+ *
+ * Supported:
+ *  - bar_welcome     → {{1}} name, {{2}} wallet URL
+ *  - bar_topup       → {{1}} amount, {{2}} wallet URL, {{3}} balance
+ *  - bar_purchase    → {{1}} total,  {{2}} balance
+ *  - bar_low_balance → (no vars)
+ */
+export async function sendTemplateByKey(env, { template_key, msisdn, data }) {
+  if (!template_key || !msisdn) return false;
+
+  const [name, language = "af"] = String(template_key).split(":");
+  const R = (cents) => "R" + (Number(Math.abs(cents) || 0) / 100).toFixed(2);
+
+  const walletId = data?.wallets?.id || data?.wallet_id || "";
+  const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "https://tickets.villiersdorpskou.co.za";
+  const walletURL = walletId ? `${base}/w/${walletId}` : base;
+
+  const mvCents = Number(data?.wallet_movements?.amount_cents ?? 0);
+  const balCents = Number(data?.wallets?.balance_cents ?? 0);
+
+  let variables = [];
+  switch (name) {
+    case "bar_welcome":
+      variables = [
+        (data?.wallets?.name || data?.name || "").trim(),
+        walletURL
+      ];
+      break;
+    case "bar_topup":
+      variables = [
+        R(mvCents),
+        walletURL,
+        R(balCents)
+      ];
+      break;
+    case "bar_purchase":
+      variables = [
+        R(mvCents),
+        R(balCents)
+      ];
+      break;
+    case "bar_low_balance":
+      variables = [];
+      break;
+    default:
+      // Unknown template — don’t attempt to send
+      return false;
+  }
+
+  await sendWA(env, msisdn, {
+    type: "template",
+    name,
+    language,
+    variables
+  });
+  return true;
+}
+
 /* ---------------- Inbound parsing ------------------- */
 function extractInbound(valueObj) {
   const results = [];
@@ -133,6 +197,7 @@ export function mountWhatsApp(router) {
   /* ---------- Webhook verify ---------- */
   router.add("GET", "/api/whatsapp/webhook", async (req, env) => {
     const u = new URL(req.url);
+    the:
     const mode = u.searchParams.get("hub.mode");
     const token = u.searchParams.get("hub.verify_token");
     const challenge = u.searchParams.get("hub.challenge") || "";
