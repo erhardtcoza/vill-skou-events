@@ -5,9 +5,8 @@ import { bindEnv } from "./env.js";
 
 // Durable Object (must be exported from entrypoint)
 import { WalletDO } from "./do/wallet.js";
-export { WalletDO }; // required for CF DO binding
 
-/* -------------------- API ROUTES -------------------- */
+// Routes (API)
 import { mountWATest } from "./routes/wa_test.js";
 import { mountDiag } from "./routes/diag.js";
 import { mountQR } from "./routes/qr.js";
@@ -27,11 +26,17 @@ import { mountWhatsApp } from "./routes/whatsapp.js";
 import { mountCashbar } from "./routes/cashbar.js";
 import { mountItems } from "./routes/items.js";
 
-/* ---------------------- UI ------------------------- */
+// UI
 import { badgeHTML } from "./ui/badge.js";
 import { landingHTML } from "./ui/landing.js";
 import { adminHTML } from "./ui/admin.js";
 import { shopHTML } from "./ui/shop.js";
+
+// Gate POS landing (kept in pos_gate.js)
+import { posHTML } from "./ui/pos_gate.js";
+// Gate POS sell page (gate_sell.js)
+import { posSellHTML as gateSellHTML } from "./ui/gate_sell.js";
+
 import { scannerHTML } from "./ui/scanner.js";
 import { checkoutHTML } from "./ui/checkout.js";
 import { ticketHTML } from "./ui/ticket.js";
@@ -39,23 +44,21 @@ import { loginHTML } from "./ui/login.js";
 import { thankYouHTML } from "./ui/thankyou.js";
 import { ticketSingleHTML } from "./ui/ticket_single.js";
 
-// Gate POS pages (renamed files)
-import { posHTML } from "./ui/pos_gate.js";                   // was src/ui/pos.js
-import { posSellHTML as gateSellHTML } from "./ui/gate_sell.js"; // was src/ui/pos_sell.js
-
-// Bar UI pages (renamed files)
-import { barHTML as barSellHTML } from "./ui/bar_sell.js";        // was cashbar_bar.js
-import { cashierHTML as barTopupHTML } from "./ui/bar_topup.js";  // was cashbar_cashier.js
-import { walletHTML as barWalletHTML } from "./ui/bar_wallet.js"; // was cashbar_wallet.js
+// Bar UI (renamed files & exports)
+import { barSellHTML } from "./ui/bar_sell.js";
+import { barTopupHTML } from "./ui/bar_topup.js";
+import { barWalletHTML } from "./ui/bar_wallet.js";
 
 // Auth guard
 import { requireRole } from "./utils/auth.js";
 
-/* ----------------- ROUTER SETUP -------------------- */
+// Required: export Durable Object class from the entrypoint
+export { WalletDO };
+
 const router = Router();
 registerAddonRoutes(router);
 
-// Helper to render string/function to HTML response
+// Helper: accept function (returning HTML) or string export
 function renderHTML(mod, ...args) {
   try {
     const html = (typeof mod === "function") ? mod(...args) : mod;
@@ -84,9 +87,9 @@ function initWithEnv(env) {
   mountScan(router, env);           // /api/scan/*
   mountPastVisitors(router);        // /api/past-visitors/*
   mountVendor(router);              // /api/vendor/*
-  mountWallet(router);              // /api/wallet/*
+  mountWallet(router);              // /api/wallets/*
   mountPublicVendors(router);       // /api/public/vendors/*
-  mountCashbar(router, env);        // bar/wallet API
+  mountCashbar(router, env);        // keep legacy cashbar API for now
   mountItems(router, env);          // /api/items
 
   /* ------------------- UI ROUTES --------------------- */
@@ -96,16 +99,15 @@ function initWithEnv(env) {
   router.add("GET", "/admin", requireRole("admin", async () => renderHTML(adminHTML)));
   router.add("GET", "/admin/login", async () => renderHTML(() => loginHTML("admin")));
 
-  // Gate POS (guarded) — canonical paths
+  // Gate POS (guarded) — clean paths
   router.add("GET", "/gate", requireRole("pos", async () => renderHTML(posHTML)));
   router.add("GET", "/gate/sell", requireRole("pos", async (req) => {
     const u = new URL(req.url);
     const session_id = Number(u.searchParams.get("session_id") || 0);
-    // gateSellHTML reads its own query (event_slug etc.), but we still pass session_id for older builds
     return renderHTML(gateSellHTML, session_id);
   }));
 
-  // Legacy aliases (guarded) to avoid breaking old bookmarks
+  // Legacy aliases for compatibility (still guarded)
   router.add("GET", "/pos", requireRole("pos", async () => renderHTML(posHTML)));
   router.add("GET", "/pos/login", async () => renderHTML(() => loginHTML("pos")));
   router.add("GET", "/pos/sell", requireRole("pos", async (req) => {
@@ -114,7 +116,7 @@ function initWithEnv(env) {
     return renderHTML(gateSellHTML, session_id);
   }));
 
-  // Shop + checkout (public)
+  // Public shop + checkout
   router.add("GET", "/shop/:slug", async (_req, _env2, _ctx, { slug }) =>
     renderHTML(() => shopHTML(slug))
   );
@@ -122,7 +124,7 @@ function initWithEnv(env) {
     renderHTML(() => checkoutHTML(slug))
   );
 
-  // Ticket display (by order short code)
+  // Ticket display (batch by order short code)
   router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) =>
     renderHTML(() => ticketHTML(code))
   );
@@ -137,11 +139,17 @@ function initWithEnv(env) {
     renderHTML(() => thankYouHTML(code))
   );
 
-  // Bar UI (public for now — can restrict later)
-  router.add("GET", "/bar/topup", async () => renderHTML(barTopupHTML));
-  router.add("GET", "/bar/sell",  async () => renderHTML(barSellHTML));
+  // Bar UI (renamed)
+  router.add("GET", "/bar/sell",    async () => renderHTML(barSellHTML));
+  router.add("GET", "/bar/topup",   async () => renderHTML(barTopupHTML));
+  router.add("GET", "/bar/wallet",  async () => renderHTML(barWalletHTML));
 
-  // Public wallet display (QR page)
+  // Legacy bar aliases (optional)
+  router.add("GET", "/cashbar/cashier", async () => renderHTML(barTopupHTML));
+  router.add("GET", "/cashbar/bar",     async () => renderHTML(barSellHTML));
+
+  // Public wallet display (if your barWalletHTML accepts props it will render them;
+  // if it’s a static HTML export, renderHTML will ignore extra args harmlessly.)
   router.add("GET", "/w/:id", async (_req, env2, _ctx, { id }) => {
     const w = await env2.DB.prepare(`SELECT * FROM wallets WHERE id=?1`).bind(id).first();
     if (!w) return new Response("Not found", { status: 404 });
@@ -155,7 +163,7 @@ function initWithEnv(env) {
 export default {
   async fetch(req, env, ctx) {
     const bound = bindEnv(env);
-    initWithEnv(bound); // ensure routes are mounted once
+    initWithEnv(bound);
     const handler = withCORS((rq, e, c) => router.handle(rq, e, c));
     return handler(req, bound, ctx);
   },
