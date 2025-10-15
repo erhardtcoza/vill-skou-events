@@ -10,8 +10,6 @@ async function getSetting(env, key) {
 }
 
 function dbg(env, ...args) {
-  // Turn on with:
-  // INSERT OR REPLACE INTO site_settings(key,value) VALUES('WA_DEBUG','1');
   try {
     getSetting(env, "WA_DEBUG")
       .then(v => { if (String(v || "") === "1") console.log("[wa]", ...args); })
@@ -83,7 +81,95 @@ async function waFetch(env, path, body) {
   }
 }
 
+/* ----------------------- mapping/eval helpers ---------------------- */
+function getByPath(obj, path) {
+  try {
+    return String(path || "")
+      .split(".")
+      .reduce((o, k) => (o != null ? o[k] : undefined), obj);
+  } catch { return undefined; }
+}
+
+async function evalValue(env, rule, ctx) {
+  const src = String(rule?.source || "");
+  const val = rule?.value;
+
+  if (src === "field") {
+    const out = getByPath(ctx, String(val || ""));
+    return out == null ? "" : String(out);
+  }
+  if (src === "static") {
+    return String(val ?? "");
+  }
+  if (src === "compute") {
+    // Support expressions & template literals used in your mappings
+    try {
+      // expose ctx (data), PUBLIC_BASE_URL and _BASE_URL
+      const BASE = await baseURL(env);
+      const sandbox = { ...ctx, PUBLIC_BASE_URL: BASE, _BASE_URL: BASE };
+      // eslint-disable-next-line no-new-func
+      const fn = new Function("ctx", "with (ctx) { return (" + String(val || "''") + "); }");
+      const out = fn(sandbox);
+      return out == null ? "" : String(out);
+    } catch (e) {
+      dbg(env, "compute_error", e?.message || e, rule);
+      return String(rule?.fallback ?? "");
+    }
+  }
+  // default
+  return String(rule?.fallback ?? "");
+}
+
+async function buildParamsFromMapping(env, template_key, context, data) {
+  const row = await env.DB.prepare(
+    `SELECT mapping_json FROM wa_template_mappings
+      WHERE template_key=?1 AND context=?2
+      LIMIT 1`
+  ).bind(String(template_key || ""), String(context || "")).first();
+
+  if (!row) return [];
+
+  let mapping;
+  try { mapping = JSON.parse(row.mapping_json || "{}"); } catch { mapping = {}; }
+  const vars = Array.isArray(mapping?.vars) ? mapping.vars : [];
+
+  // ensure ordered by variable index (1..N)
+  const ordered = [...vars].sort((a,b) => Number(a.variable||0) - Number(b.variable||0));
+
+  const params = [];
+  for (const rule of ordered) {
+    const v = await evalValue(env, rule, data || {});
+    if (v === "" && rule?.fallback != null) {
+      params.push(String(rule.fallback));
+    } else {
+      params.push(String(v));
+    }
+  }
+  return params;
+}
+
 /* ----------------------------- exports ----------------------------- */
+/**
+ * Mapper-aware sender.
+ *  sendTemplateByKey(env, { template_key: "bar_purchase:af", context: "visitor", msisdn, data })
+ */
+export async function sendTemplateByKey(env, { template_key, context, msisdn, data }) {
+  try {
+    const ms = normMSISDN(msisdn);
+    if (!ms || !template_key) return false;
+
+    const [name, language = "af"] = String(template_key).includes(":")
+      ? String(template_key).split(":")
+      : [String(template_key), "af"];
+
+    const params = await buildParamsFromMapping(env, template_key, context, data);
+    return await sendWhatsAppTemplate(env, ms, "", language, name, params);
+  } catch (e) {
+    dbg(env, "sendTemplateByKey_error", e?.message || e);
+    return false;
+  }
+}
+
 /**
  * Send a pre-approved TEMPLATE message.
  * Backward-compatible signature:
@@ -180,6 +266,9 @@ export async function sendOrderOnWhatsApp(env, to, order) {
 }
 
 export default {
+  // mapper-aware
+  sendTemplateByKey,
+  // plain
   sendWhatsAppTemplate,
   sendWhatsAppTextIfSession,
   sendOrderOnWhatsApp
