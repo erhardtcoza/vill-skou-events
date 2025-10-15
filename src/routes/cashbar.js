@@ -30,29 +30,61 @@ async function getSetting(env, key) {
 /* ------------------------------------------------------------------ */
 /* WhatsApp via template mapper                                        */
 /* ------------------------------------------------------------------ */
-// expects routes/whatsapp.js to export sendTemplateByKey(env,{template_key,context,msisdn,data})
-// and optionally sendTextIfSession(env, msisdn, text)
+// send via the WA service (supports multiple function names)
 async function sendTpl(env, { msisdn, templateSettingKey, context, data, fallbackText }) {
+  let svc;
   try {
-    const svc = await import("./whatsapp.js");
-    const ms = normMSISDN(msisdn);
-    if (!ms) return false;
+    // ✅ correct path
+    svc = await import("../services/whatsapp.js");
+  } catch {
+    svc = null;
+  }
+  const ms = normMSISDN(msisdn);
+  if (!svc || !ms) {
+    return false;
+  }
 
-    const val = await getSetting(env, templateSettingKey);
-    const template_key = val && val.includes(":") ? val : (val || "");
+  // resolve template_key from site_settings (e.g. "bar_purchase:af")
+  let template_key = null;
+  try {
+    const v = await getSetting(env, templateSettingKey);
+    template_key = v && String(v).trim() ? String(v).trim() : null;
+  } catch {}
 
-    if (template_key) {
+  try {
+    if (template_key && typeof svc.sendTemplateByKey === "function") {
       await svc.sendTemplateByKey(env, { template_key, context, msisdn: ms, data });
       return true;
     }
-    if (fallbackText && svc.sendTextIfSession) {
-      await svc.sendTextIfSession(env, ms, fallbackText);
+    if (template_key && typeof svc.sendTemplateWithMapping === "function") {
+      await svc.sendTemplateWithMapping(env, { template_key, context, msisdn: ms, data });
       return true;
     }
-  } catch (_e) {}
+    // Fallback: old plain-sender (no mapper). Accepts name+lang split.
+    if (template_key && typeof svc.sendWhatsAppTemplate === "function") {
+      const [name, language = "af"] = template_key.includes(":")
+        ? template_key.split(":")
+        : [template_key, "af"];
+      await svc.sendWhatsAppTemplate(env, {
+        to: ms,
+        name: name.trim(),
+        language: language.trim(),
+        // pass data straight through; most implementations will map for you,
+        // or use simple {{1}}, {{2}} order if array-like.
+        variables: data
+      });
+      return true;
+    }
+  } catch (err) {
+    // fall through to text
+  }
+
+  // Last resort: session text
+  if (fallbackText && typeof svc.sendTextIfSession === "function") {
+    try { await svc.sendTextIfSession(env, ms, fallbackText); } catch {}
+  }
   return false;
 }
-
 /* ------------------------------------------------------------------ */
 /* low-balance behaviour                                               */
 /* ------------------------------------------------------------------ */
