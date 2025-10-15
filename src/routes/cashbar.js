@@ -1,230 +1,73 @@
 // /src/routes/cashbar.js
-import { nanoid } from '../utils/id.js';
-import { json, bad } from '../utils/http.js';
+import { nanoid } from "../utils/id.js";
+import { json, bad } from "../utils/http.js";
 
-// ---- WhatsApp helpers (use your in-Worker service) ----
-async function waSvc() {
-  try { return await import('../services/whatsapp.js'); }
-  catch { return null; }
-}
-async function getSetting(env, key) {
-  try {
-    const row = await env.DB
-      .prepare('SELECT value FROM site_settings WHERE key=?1 LIMIT 1')
-      .bind(key).first();
-    return row ? row.value : null;
-  } catch { return null; }
-}
-function normMSISDN(msisdn) {
-  const s = String(msisdn || '').replace(/\D+/g, '');
-  if (!s) return '';
-  if (s.startsWith('27') && s.length >= 11) return s;
-  if (s.length === 10 && s.startsWith('0')) return '27' + s.slice(1);
+// --- tiny helpers -----------------------------------------------------------
+function shortId() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "W"; for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
   return s;
 }
-/** Send WA template if site_settings[key] = "name:lang"; else fallback text (if session). */
-async function sendWA(env, to, templateKey, variablesObj = {}, fallbackText = '') {
-  const svc = await waSvc();
-  const msisdn = normMSISDN(to);
-  if (!svc || !msisdn) return false;
+function first(s) { return String(s || "").trim().split(/\s+/)[0] || ""; }
+function cents(n) { return (Number(n || 0) / 100).toFixed(2); }
+function normMSISDN(msisdn) {
+  const s = String(msisdn || "").replace(/\D+/g, "");
+  if (!s) return "";
+  if (s.startsWith("27") && s.length >= 11) return s;
+  if (s.length === 10 && s.startsWith("0")) return "27" + s.slice(1);
+  return s;
+}
+async function getSetting(env, key) {
+  const row = await env.DB.prepare(`SELECT value FROM site_settings WHERE key=?1 LIMIT 1`).bind(key).first();
+  return row?.value ?? null;
+}
 
-  const sel = (await getSetting(env, templateKey)) || '';
-  const [name, lang] = String(sel).includes(':') ? sel.split(':') : [sel, 'af'];
+// send via the new mapper-driven sender exported from routes/whatsapp.js
+async function sendTpl(env, { msisdn, templateSettingKey, context, data, fallbackText }) {
+  try {
+    const svc = await import("./whatsapp.js"); // exports sendTemplateByKey
+    const ms = normMSISDN(msisdn);
+    if (!ms) return false;
 
-  if (name) {
-    try {
-      await svc.sendWhatsAppTemplate(env, {
-        to: msisdn, name: name.trim(), language: (lang || 'af').trim(), variables: variablesObj
-      });
+    const val = await getSetting(env, templateSettingKey);
+    const template_key = val && val.includes(":") ? val : (val || "");
+    if (template_key) {
+      await svc.sendTemplateByKey(env, { template_key, context, msisdn: ms, data });
       return true;
-    } catch (_) { /* fall through to text */ }
-  }
-  if (fallbackText) {
-    try { await svc.sendWhatsAppTextIfSession(env, msisdn, fallbackText); } catch {}
-  }
-  return true;
+    }
+    if (fallbackText) {
+      // best-effort text if you keep a raw text sender around
+      try {
+        if (svc.sendTextIfSession) await svc.sendTextIfSession(env, ms, fallbackText);
+      } catch {}
+    }
+  } catch {}
+  return false;
 }
 
-// -------------------------------------------------------
-
-export function mountCashbar(router, env) {
-  // REGISTER (from ticket QR/order short_code OR manual)
-  router.post('/api/wallets/register', async (req) => {
-    const { source, ticket_code, name, mobile } = await req.json();
-
-    let attendee = null;
-    if (source === 'ticket' && ticket_code) attendee = await lookupAttendee(env, ticket_code);
-
-    const fullName = (attendee?.name || name || '').trim();
-    const phone    = (attendee?.mobile || mobile || '').trim();
-    if (!fullName || !phone) return bad(400, 'name_or_mobile_missing');
-
-    const wallet_id = shortId();
-    const now = Date.now();
-    await env.DB.prepare(`
-      INSERT INTO wallets(id,attendee_id,name,mobile,created_at,status,version,balance_cents)
-      VALUES(?1,?2,?3,?4,?5,'active',0,0)
-    `).bind(wallet_id, attendee?.id ?? null, fullName, phone, now).run();
-
-    // init Durable Object
-    const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
-    await stub.fetch('https://do/init', {
-      method: 'POST',
-      body: JSON.stringify({ wallet_id, balance_cents: 0, version: 0, status: 'active' })
-    });
-
-    const wallet_url = `${env.PUBLIC_BASE_URL}/w/${wallet_id}`;
-
-    // WhatsApp welcome
-    await sendWA(
-      env, phone, 'BAR_TMP_WELCOME',
-      { name: first(fullName), wallet_url },
-      `Hallo ${first(fullName)}! Jou Skou kroegrekening is gereed: ${wallet_url}`
-    );
-
-    return json({ wallet_id, wallet_url, balance_cents: 0 });
-  });
-
-  // TOP-UP
-  router.post('/api/wallets/:id/topup', async (req, params) => {
-    const { amount_cents, source='yoco', ref='', cashier_id='' } = await req.json();
-    const wallet_id = params.id;
-
-    if (!(Number.isFinite(amount_cents) || /^\d+$/.test(String(amount_cents)))) {
-      return bad(400, 'invalid_amount');
-    }
-
-    const w = await getWallet(env, wallet_id);
-    if (!w) return bad(404, 'wallet_not_found');
-
-    const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
-    const r = await stub.fetch('https://do/topup', {
-      method: 'POST', body: JSON.stringify({ amount_cents: Number(amount_cents) })
-    });
-    if (!r.ok) return r;
-    const { balance_cents, version } = await r.json();
-
-    await env.DB.prepare(`
-      INSERT INTO topups(id,wallet_id,amount_cents,source,ref,cashier_id,created_at)
-      VALUES(?1,?2,?3,?4,?5,?6,?7)
-    `).bind(nanoid(), wallet_id, Number(amount_cents), source, ref, cashier_id, Date.now()).run();
-
-    await env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`)
-      .bind(balance_cents, version, wallet_id).run();
-
-    const wallet_url = `${env.PUBLIC_BASE_URL}/w/${wallet_id}`;
-    await sendWA(
-      env, w.mobile, 'BAR_TMP_TOPUP',
-      { amount: cents(amount_cents), balance: cents(balance_cents), wallet_url },
-      `Top-up van R${cents(amount_cents)}. Nuwe balans: R${cents(balance_cents)}`
-    );
-
-    return json({ new_balance_cents: balance_cents, version });
-  });
-
-  // BALANCE
-  router.get('/api/wallets/:id', async (_req, params) => {
-    const w = await getWallet(env, params.id);
-    if (!w) return bad(404, 'wallet_not_found');
-    return json({ id:w.id, name:w.name, mobile:w.mobile, balance_cents:w.balance_cents, version:w.version });
-  });
-
-  // TRANSFER
-  router.post('/api/wallets/transfer', async (req) => {
-    const { from, to, amount_cents } = await req.json();
-    if (!from || !to || !amount_cents) return bad(400, 'missing_fields');
-    if (from === to) return bad(400, 'same_wallet');
-
-    const donor = await getWallet(env, from);
-    const rec   = await getWallet(env, to);
-    if (!donor || !rec) return bad(404, 'wallet_not_found');
-
-    const sFrom = env.WALLET_DO.get(env.WALLET_DO.idFromName(from));
-    let r = await sFrom.fetch('https://do/deduct', {
-      method:'POST', body: JSON.stringify({ amount_cents: Number(amount_cents), expected_version: donor.version })
-    });
-    if (!r.ok) return r;
-    const { balance_cents: donor_new, version: donor_ver } = await r.json();
-
-    const sTo = env.WALLET_DO.get(env.WALLET_DO.idFromName(to));
-    r = await sTo.fetch('https://do/topup', { method:'POST', body: JSON.stringify({ amount_cents: Number(amount_cents) }) });
-    const { balance_cents: rec_new, version: rec_ver } = await r.json();
-
-    const now = Date.now();
-    await env.DB.batch([
-      env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(donor_new, donor_ver, from),
-      env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(rec_new,   rec_ver,   to),
-      env.DB.prepare(`INSERT INTO transfers(id,donor_wallet_id,recipient_wallet_id,amount_cents,created_at)
-                      VALUES(?1,?2,?3,?4,?5)`)
-        .bind(nanoid(), from, to, Number(amount_cents), now)
-    ]);
-
-    await sendWA(env, donor.mobile, 'BAR_TMP_TRANSFER_OUT',
-      { amount: cents(amount_cents), to_name: first(rec.name),   balance: cents(donor_new) },
-      `Jy het R${cents(amount_cents)} oorgedra na ${first(rec.name)}. Nuwe balans: R${cents(donor_new)}`
-    );
-    await sendWA(env, rec.mobile,   'BAR_TMP_TRANSFER_IN',
-      { amount: cents(amount_cents), from_name: first(donor.name), balance: cents(rec_new) },
-      `Jy het R${cents(amount_cents)} ontvang van ${first(donor.name)}. Nuwe balans: R${cents(rec_new)}`
-    );
-
-    return json({ from_balance_cents: donor_new, to_balance_cents: rec_new });
-  });
-
-  // DEDUCT (bar sale)
-  router.post('/api/wallets/:id/deduct', async (req, params) => {
-    const wallet_id = params.id;
-    const { items=[], expected_version, bartender_id='', device_id='' } = await req.json();
-    if (!items.length) return bad(400, 'no_items');
-
-    const w = await getWallet(env, wallet_id);
-    if (!w) return bad(404, 'wallet_not_found');
-
-    const total_cents = items.reduce((s,it)=> s + (it.unit_price_cents*it.qty), 0);
-
-    const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
-    const r = await stub.fetch('https://do/deduct', {
-      method:'POST', body: JSON.stringify({ amount_cents: Number(total_cents), expected_version })
-    });
-    if (!r.ok) return r;
-    const { balance_cents, version } = await r.json();
-
-    await env.DB.batch([
-      env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`)
-        .bind(balance_cents, version, wallet_id),
-      env.DB.prepare(`INSERT INTO sales(id,wallet_id,items_json,total_cents,bartender_id,device_id,created_at)
-                      VALUES(?1,?2,?3,?4,?5,?6,?7)`)
-        .bind(nanoid(), wallet_id, JSON.stringify(items), Number(total_cents), bartender_id, device_id, Date.now())
-    ]);
-
-    const summary = items.map(i=>`${i.qty}× ${i.name}`).join(', ');
-    await sendWA(env, w.mobile, 'BAR_TMP_PURCHASE',
-      { items_summary: summary, total: cents(total_cents), balance: cents(balance_cents) },
-      `Aankoop: ${summary} – R${cents(total_cents)}. Balans: R${cents(balance_cents)}`
-    );
-    if (balance_cents < 10000) {
-      await sendWA(env, w.mobile, 'BAR_TMP_LOW_BAL', {}, 'Jou kroegbalans is onder R100. Vul gerus weer aan by die kas.');
-    }
-
-    return json({ new_balance_cents: balance_cents, version });
-  });
+// low-balance helpers
+async function lowThresholdCents(env) {
+  const v = Number(await getSetting(env, "BAR_LOW_BALANCE_THRESHOLD_CENTS"));
+  return Number.isFinite(v) && v > 0 ? v : 8500; // default R85
+}
+async function recentlyWarned(env, wallet_id) {
+  const row = await env.DB.prepare(`SELECT last_low_warn_at FROM wallets WHERE id=?1 LIMIT 1`).bind(wallet_id).first();
+  const last = Number(row?.last_low_warn_at || 0);
+  return last > (Math.floor(Date.now() / 1000) - 24 * 3600);
+}
+async function markWarned(env, wallet_id) {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(`UPDATE wallets SET last_low_warn_at=?2 WHERE id=?1`).bind(wallet_id, now).run();
 }
 
-/* helpers */
+// --- data helpers -----------------------------------------------------------
 async function getWallet(env, id) {
   return await env.DB.prepare(`SELECT * FROM wallets WHERE id=?1 LIMIT 1`).bind(id).first();
 }
-function shortId() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s='W'; for(let i=0;i<6;i++) s += alphabet[Math.floor(Math.random()*alphabet.length)];
-  return s;
-}
-function first(n){ return (n||'').split(' ')[0]; }
-function cents(n){ return (Number(n)/100).toFixed(2); }
 
-/** DIRECT D1 attendee lookup using your tables (tickets.qr OR orders.short_code). */
+// Look up attendee by ticket QR or order short_code
 async function lookupAttendee(env, codeOrQr) {
-  // try tickets.qr
+  // 1) via tickets.qr
   let row = await env.DB.prepare(
     `SELECT
        t.id AS attendee_id,
@@ -237,7 +80,7 @@ async function lookupAttendee(env, codeOrQr) {
   ).bind(codeOrQr).first();
 
   if (!row) {
-    // try orders.short_code
+    // 2) via orders.short_code
     row = await env.DB.prepare(
       `SELECT
          t.id AS attendee_id,
@@ -252,5 +95,288 @@ async function lookupAttendee(env, codeOrQr) {
   }
 
   if (!row) return null;
-  return { id: row.attendee_id ?? null, name: row.name || '', mobile: normMSISDN(row.mobile || '') };
+  return {
+    id: row.attendee_id ?? null,
+    name: row.name || "",
+    mobile: normMSISDN(row.mobile || "")
+  };
+}
+
+// --- routes -----------------------------------------------------------------
+export function mountCashbar(router, env) {
+  // Create/register a wallet (optionally from ticket/order)
+  router.post("/api/wallets/register", async (req) => {
+    let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
+    const { source, ticket_code, name, mobile } = body;
+
+    let attendee = null;
+    if (source === "ticket" && ticket_code) attendee = await lookupAttendee(env, ticket_code);
+
+    const fullName = (attendee?.name || name || "").trim();
+    const phone    = (attendee?.mobile || mobile || "").trim();
+    if (!fullName || !phone) return bad("name_or_mobile_missing", 400);
+
+    const wallet_id = shortId();
+    const now = Date.now();
+
+    await env.DB.prepare(
+      `INSERT INTO wallets (id, attendee_id, name, mobile, created_at, status, version, balance_cents)
+       VALUES (?1, ?2, ?3, ?4, ?5, 'active', 0, 0)`
+    ).bind(wallet_id, attendee?.id ?? null, fullName, phone, now).run();
+
+    // Initialize DO state
+    if (env.WALLET_DO) {
+      const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
+      await stub.fetch("https://do/init", {
+        method: "POST",
+        body: JSON.stringify({ wallet_id, balance_cents: 0, version: 0, status: "active" })
+      }).catch(()=>{});
+    }
+
+    const wallet_url = `${env.PUBLIC_BASE_URL}/w/${wallet_id}`;
+
+    // WhatsApp: bar_welcome
+    await sendTpl(env, {
+      msisdn: phone,
+      templateSettingKey: "WA_TMP_BAR_WELCOME",
+      context: "visitor",
+      data: { wallets: { id: wallet_id, name: fullName, mobile: phone, balance_cents: 0 } },
+      fallbackText: `Hallo ${first(fullName)}! Jou Skou kroegrekening is gereed: ${wallet_url}`
+    });
+
+    return json({ wallet_id, wallet_url, balance_cents: 0 });
+  });
+
+  // Top-up a wallet
+  router.post("/api/wallets/:id/topup", async (req, params) => {
+    let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
+    const { amount_cents, source = "yoco", ref = "", cashier_id = "" } = body;
+    const wallet_id = params.id;
+
+    if (!(Number.isFinite(Number(amount_cents)) && Number(amount_cents) > 0)) {
+      return bad("invalid_amount", 400);
+    }
+    const w = await getWallet(env, wallet_id);
+    if (!w) return bad("wallet_not_found", 404);
+
+    // DO: add funds
+    let balance_cents = w.balance_cents;
+    let version = w.version;
+    if (env.WALLET_DO) {
+      const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
+      const r = await stub.fetch("https://do/topup", {
+        method: "POST",
+        body: JSON.stringify({ amount_cents: Number(amount_cents) })
+      });
+      if (!r.ok) return r;
+      ({ balance_cents, version } = await r.json());
+    } else {
+      balance_cents = (Number(w.balance_cents) + Number(amount_cents));
+      version = Number(w.version) + 1;
+    }
+
+    const now = Date.now();
+
+    // Write to legacy table (if you keep it)
+    await env.DB.prepare(
+      `INSERT INTO topups (id, wallet_id, amount_cents, source, ref, cashier_id, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+    ).bind(nanoid(), wallet_id, Number(amount_cents), source, ref, cashier_id, now).run().catch(()=>{});
+
+    // Write to wallet_movements for mapper
+    const mv_id = nanoid();
+    await env.DB.prepare(
+      `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at)
+       VALUES (?1, ?2, 'topup', ?3, ?4, ?5)`
+    ).bind(mv_id, wallet_id, ref || source, Number(amount_cents), now).run();
+
+    // Update wallet
+    await env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`)
+      .bind(balance_cents, version, wallet_id).run();
+
+    // WhatsApp: bar_topup
+    await sendTpl(env, {
+      msisdn: w.mobile,
+      templateSettingKey: "WA_TMP_BAR_TOPUP",
+      context: "visitor",
+      data: {
+        wallets: { ...w, balance_cents, version },
+        wallet_movements: { id: mv_id, wallet_id, kind: "topup", amount_cents: Number(amount_cents) }
+      },
+      fallbackText: `Top-up van R${cents(amount_cents)}. Nuwe balans: R${cents(balance_cents)}`
+    });
+
+    // Low-balance check after movement (unlikely after top-up, but harmless)
+    await maybeWarnLowBalance(env, { wallet: { ...w, balance_cents }, msisdn: w.mobile });
+
+    return json({ new_balance_cents: balance_cents, version });
+  });
+
+  // Get a wallet
+  router.get("/api/wallets/:id", async (_req, params) => {
+    const w = await getWallet(env, params.id);
+    if (!w) return bad("wallet_not_found", 404);
+    return json({
+      id: w.id, name: w.name, mobile: w.mobile,
+      balance_cents: w.balance_cents, version: w.version
+    });
+  });
+
+  // Transfer between wallets
+  router.post("/api/wallets/transfer", async (req) => {
+    let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
+    const { from, to, amount_cents } = body;
+    if (!from || !to || !amount_cents) return bad("missing_fields", 400);
+    if (from === to) return bad("same_wallet", 400);
+
+    const donor = await getWallet(env, from);
+    const rec   = await getWallet(env, to);
+    if (!donor || !rec) return bad("wallet_not_found", 404);
+
+    // deduct donor (via DO or inline)
+    let donor_new = donor.balance_cents, donor_ver = donor.version;
+    if (env.WALLET_DO) {
+      const sFrom = env.WALLET_DO.get(env.WALLET_DO.idFromName(from));
+      const r = await sFrom.fetch("https://do/deduct", {
+        method: "POST",
+        body: JSON.stringify({ amount_cents: Number(amount_cents), expected_version: donor.version })
+      });
+      if (!r.ok) return r;
+      ({ balance_cents: donor_new, version: donor_ver } = await r.json());
+    } else {
+      donor_new = Number(donor.balance_cents) - Number(amount_cents);
+      donor_ver = donor.version + 1;
+    }
+
+    // topup recipient
+    let rec_new = rec.balance_cents, rec_ver = rec.version;
+    if (env.WALLET_DO) {
+      const sTo = env.WALLET_DO.get(env.WALLET_DO.idFromName(to));
+      const r2 = await sTo.fetch("https://do/topup", {
+        method: "POST",
+        body: JSON.stringify({ amount_cents: Number(amount_cents) })
+      });
+      ({ balance_cents: rec_new, version: rec_ver } = await r2.json());
+    } else {
+      rec_new = Number(rec.balance_cents) + Number(amount_cents);
+      rec_ver = rec.version + 1;
+    }
+
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(donor_new, donor_ver, from),
+      env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`).bind(rec_new,   rec_ver,   to),
+      env.DB.prepare(`INSERT INTO transfers(id,donor_wallet_id,recipient_wallet_id,amount_cents,created_at)
+                      VALUES(?1,?2,?3,?4,?5)`)
+        .bind(nanoid(), from, to, Number(amount_cents), now),
+      // movements for both sides (optional, helpful)
+      env.DB.prepare(`INSERT INTO wallet_movements(id,wallet_id,kind,ref,amount_cents,created_at)
+                      VALUES(?1,?2,'transfer_out',?3,?4,?5)`)
+        .bind(nanoid(), from, to, Number(amount_cents), now),
+      env.DB.prepare(`INSERT INTO wallet_movements(id,wallet_id,kind,ref,amount_cents,created_at)
+                      VALUES(?1,?2,'transfer_in',?3,?4,?5)`)
+        .bind(nanoid(), to, from, Number(amount_cents), now)
+    ]);
+
+    // texts (no dedicated templates for transfers yet)
+    await sendTpl(env, {
+      msisdn: donor.mobile,
+      templateSettingKey: "", // none; just fallback
+      context: "visitor",
+      data: {},
+      fallbackText: `Jy het R${cents(amount_cents)} oorgedra na ${first(rec.name)}. Nuwe balans: R${cents(donor_new)}`
+    });
+    await sendTpl(env, {
+      msisdn: rec.mobile,
+      templateSettingKey: "",
+      context: "visitor",
+      data: {},
+      fallbackText: `Jy het R${cents(amount_cents)} ontvang van ${first(donor.name)}. Nuwe balans: R${cents(rec_new)}`
+    });
+
+    // low-balance warn donor if needed
+    await maybeWarnLowBalance(env, { wallet: { ...donor, balance_cents: donor_new }, msisdn: donor.mobile });
+
+    return json({ from_balance_cents: donor_new, to_balance_cents: rec_new });
+  });
+
+  // Deduct for a bar sale
+  router.post("/api/wallets/:id/deduct", async (req, params) => {
+    let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
+    const { items = [], expected_version, bartender_id = "", device_id = "" } = body;
+    const wallet_id = params.id;
+
+    if (!items.length) return bad("no_items", 400);
+
+    const w = await getWallet(env, wallet_id);
+    if (!w) return bad("wallet_not_found", 404);
+
+    const total_cents = items.reduce((s, it) => s + (Number(it.unit_price_cents) * Number(it.qty)), 0);
+
+    // DO deduct
+    let balance_cents = w.balance_cents, version = w.version;
+    if (env.WALLET_DO) {
+      const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
+      const r = await stub.fetch("https://do/deduct", {
+        method: "POST",
+        body: JSON.stringify({ amount_cents: Number(total_cents), expected_version })
+      });
+      if (!r.ok) return r;
+      ({ balance_cents, version } = await r.json());
+    } else {
+      balance_cents = Number(w.balance_cents) - Number(total_cents);
+      version = Number(w.version) + 1;
+    }
+
+    const now = Date.now();
+
+    // legacy sales row (kept)
+    await env.DB.prepare(
+      `INSERT INTO sales (id, wallet_id, items_json, total_cents, bartender_id, device_id, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+    ).bind(nanoid(), wallet_id, JSON.stringify(items), Number(total_cents), bartender_id, device_id, now).run().catch(()=>{});
+
+    // movement for mapper
+    const mv_id = nanoid();
+    await env.DB.prepare(
+      `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at)
+       VALUES (?1, ?2, 'purchase', ?3, ?4, ?5)`
+    ).bind(mv_id, wallet_id, device_id || bartender_id || "bar", Number(total_cents), now).run();
+
+    // update wallet
+    await env.DB.prepare(`UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3`)
+      .bind(balance_cents, version, wallet_id).run();
+
+    // WhatsApp: bar_purchase
+    const summary = items.map(i => `${i.qty}× ${i.name}`).join(", ");
+    await sendTpl(env, {
+      msisdn: w.mobile,
+      templateSettingKey: "WA_TMP_BAR_PURCHASE",
+      context: "visitor",
+      data: {
+        wallets: { ...w, balance_cents, version },
+        wallet_movements: { id: mv_id, wallet_id, kind: "purchase", amount_cents: Number(total_cents) }
+      },
+      fallbackText: `Aankoop: ${summary} – R${cents(total_cents)}. Balans: R${cents(balance_cents)}`
+    });
+
+    await maybeWarnLowBalance(env, { wallet: { ...w, balance_cents }, msisdn: w.mobile });
+
+    return json({ new_balance_cents: balance_cents, version });
+  });
+}
+
+// warn if below threshold (once per 24h)
+async function maybeWarnLowBalance(env, { wallet, msisdn }) {
+  const thr = await lowThresholdCents(env);
+  if ((wallet.balance_cents || 0) < thr && !(await recentlyWarned(env, wallet.id))) {
+    await sendTpl(env, {
+      msisdn,
+      templateSettingKey: "WA_TMP_BAR_LOW_BALANCE",
+      context: "visitor",
+      data: { wallets: wallet },
+      fallbackText: "Jou kroegbeursie is amper leeg. Vul gerus weer aan 🍻"
+    }).catch(()=>{});
+    await markWarned(env, wallet.id);
+  }
 }
