@@ -27,15 +27,14 @@ export const barTopupHTML = `<!doctype html><html><head>
   <div class="card">
     <div class="row">
       <div>
-        <label>New wallet name</label>
-        <input id="newName" placeholder="Attendee name" autocomplete="name"/>
-        <label style="margin-top:10px">Mobile (SA: 082… or 2772…)</label>
-        <input id="newPhone" placeholder="e.g. 0821234567" inputmode="tel" autocomplete="tel"/>
+        <label>New wallet</label>
+        <input id="newName" placeholder="Attendee name"/>
+        <input id="newMobile" placeholder="Mobile (SA: 082… or 2772…)" style="margin-top:8px"/>
         <button id="create" class="btn">Create wallet</button>
       </div>
       <div>
-        <label>Lookup wallet ID</label>
-        <input id="lookupId" placeholder="e.g. W2D2VHK"/>
+        <label>Lookup by wallet ID or mobile</label>
+        <input id="lookupId" placeholder="e.g. V95AQHY or 07123…"/>
         <button id="lookup" class="btn alt">Load wallet</button>
       </div>
     </div>
@@ -68,16 +67,10 @@ export const barTopupHTML = `<!doctype html><html><head>
 
 <script>
 const $ = (id)=>document.getElementById(id);
-const toCents = (v)=> {
-  const n = Number(String(v||'').replace(',','.')); 
-  return Number.isFinite(n) ? Math.round(n*100) : 0;
-};
+const digits = (s)=>String(s||'').replace(/\\D+/g,'');
+const toCents = (v)=> { const n = Number(String(v||'').replace(',','.')); return Number.isFinite(n) ? Math.round(n*100) : 0; };
 const rands = (c)=> 'R'+((c||0)/100).toFixed(2);
-const normPhone = (raw)=>{
-  const s = String(raw||'').replace(/\\D+/g,'');
-  if (s.length===10 && s.startsWith('0')) return '27'+s.slice(1);
-  return s;
-};
+const normPhone = (raw)=>{ const s=digits(raw); if(s.length===10 && s.startsWith('0')) return '27'+s.slice(1); return s; };
 
 let current = null;
 
@@ -92,51 +85,46 @@ function show(raw){
   $('wqr').innerHTML = '<img src="/api/qr/svg/WALLET-'+encodeURIComponent(w.id)+'" width="200" height="200" alt="QR"/>';
 }
 
-async function load(id){
-  $('msg').textContent = '';
-  try{
-    const r = await fetch('/api/wallets/'+encodeURIComponent(id));
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok || j.ok === false) throw new Error(j.error||'Wallet not found');
-    show(j);
-  }catch(e){
-    $('msg').textContent = e.message||'load failed';
+async function loadByIdOrMobile(value){
+  // Try exact id first
+  let r = await fetch('/api/wallets/'+encodeURIComponent(value));
+  let j = await r.json().catch(()=>({}));
+  if (!r.ok){
+    // Fall back to mobile digits
+    const d = digits(value);
+    if (d){
+      r = await fetch('/api/wallets/by-mobile/'+encodeURIComponent(d));
+      j = await r.json().catch(()=>({}));
+    }
   }
+  if (!r.ok || j.ok === false) throw new Error(j.error || 'Wallet not found');
+  return j;
 }
+
+$('lookup').onclick = async ()=>{
+  $('msg').textContent = '';
+  const v = ($('lookupId').value||'').trim();
+  if (!v){ $('msg').textContent='Enter wallet ID or mobile'; return; }
+  try { const j = await loadByIdOrMobile(v); show(j); }
+  catch(e){ $('msg').textContent = e.message||'load failed'; }
+};
 
 $('create').onclick = async ()=>{
   $('msg').textContent = '';
   const name = ($('newName').value||'').trim();
-  const phone = normPhone($('newPhone').value||'');
+  const mobile = normPhone(($('newMobile').value||'').trim());
   if (!name){ $('msg').textContent='Enter a name'; return; }
-  if (!phone || phone.length < 11){ $('msg').textContent='Enter a valid SA mobile'; return; }
   try{
-    let r = await fetch('/api/wallets/create', {
+    const r = await fetch('/api/wallets/create', {
       method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ name, phone })
+      body: JSON.stringify({ name, mobile })
     });
-    if (r.status === 404) {
-      r = await fetch('/api/wallets/register', {
-        method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ name, phone })
-      });
-    }
     const j = await r.json().catch(()=>({}));
     if (!r.ok || j.ok === false) throw new Error(j.error||'create failed');
     show(j);
-    $('newName').value = ''; $('newPhone').value = '';
+    $('newName').value = ''; $('newMobile').value = '';
   }catch(e){ $('msg').textContent = e.message||'create failed'; }
 };
-
-$('lookup').onclick = ()=> {
-  const id = String(($('lookupId').value||'').trim());
-  if (!id) { $('msg').textContent='Enter wallet ID'; return; }
-  load(id);
-};
-
-$('lookupId').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('lookup').click(); });
-$('newName').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('create').click(); });
-$('newPhone').addEventListener('keydown', (e)=>{ if(e.key==='Enter') $('create').click(); });
 
 async function topup(method){
   $('msg').textContent = '';
@@ -157,5 +145,10 @@ async function topup(method){
 
 $('cash').onclick = ()=> topup('cash');
 $('card').onclick = ()=> topup('card');
+
+// Enter to submit QoL
+$('lookupId').addEventListener('keydown', e=>{ if(e.key==='Enter') $('lookup').click(); });
+$('newName').addEventListener('keydown', e=>{ if(e.key==='Enter') $('create').click(); });
+$('newMobile').addEventListener('keydown', e=>{ if(e.key==='Enter') $('create').click(); });
 </script>
 </body></html>`;
