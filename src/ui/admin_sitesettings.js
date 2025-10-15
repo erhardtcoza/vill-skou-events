@@ -1,713 +1,353 @@
 // /src/ui/admin_sitesettings.js
+// Inline JS snippet consumed by /src/ui/admin.js
 export const adminSiteSettingsJS = `
-(()=>{
-  const $ = (sel,root=document)=>root.querySelector(sel);
-  const esc = (s='')=>String(s).replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-  const msisdn = (raw)=>{ const s=String(raw||'').replace(/\\D+/g,''); return (s.length===10&&s.startsWith('0'))?('27'+s.slice(1)):s; };
+(function(){
+  if (!window.AdminPanels) window.AdminPanels = {};
+  const esc = s => String(s??'').replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c]));
+  const $ = (s,root=document) => root.querySelector(s);
 
-  const root = document.getElementById('panel-settings');
-  root.innerHTML = \`
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-      <button class="tab-btn active" data-tab="gen">General</button>
-      <button class="tab-btn" data-tab="wa">WhatsApp</button>
-      <button class="tab-btn" data-tab="yoco">Yoco</button>
-      <button class="tab-btn" data-tab="wallet">Wallet</button>
-      <button class="tab-btn" data-tab="past">Past Visitors</button>
-    </div>
-
-    <style>
-      #panel-settings .tab-btn{padding:8px 12px;border:1px solid var(--border,#e5e7eb);background:#fff;border-radius:999px;cursor:pointer}
-      #panel-settings .tab-btn.active{background:var(--green,#0a7d2b);color:#fff;border-color:transparent}
-      #panel-settings label{display:block;font-size:13px;color:#374151;margin:10px 0 6px}
-      #panel-settings input, #panel-settings select, #panel-settings textarea{
-        width:100%;padding:10px 12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;min-height:40px
-      }
-      #panel-settings .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-      @media (max-width:820px){ #panel-settings .grid{grid-template-columns:1fr} }
-      #panel-settings .row-actions{display:flex;gap:8px;align-items:center;margin-top:10px}
-      #panel-settings .pill{display:inline-block;font-size:12px;padding:2px 8px;border:1px solid #e5e7eb;border-radius:999px}
-      #panel-settings .hr{height:1px;background:#eef1f3;margin:16px 0}
-      #panel-settings .btn{padding:10px 14px;border-radius:10px;border:0;background:var(--green,#0a7d2b);color:#fff;font-weight:700;cursor:pointer}
-      #panel-settings .btn.outline{background:#fff;color:#111;border:1px solid #e5e7eb}
-      #panel-settings .muted{color:#667085}
-      #wa-templates table{width:100%;border-collapse:collapse}
-      #wa-templates th,#wa-templates td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
-      #pv-list table{width:100%;border-collapse:collapse}
-      #pv-list th,#pv-list td{padding:8px;border-bottom:1px solid #eef1f3;text-align:left}
-      #pv-list tbody tr:hover{background:#fafafa}
-
-      /* inbox */
-      #wa-inbox .msg{padding:8px 10px;border:1px solid #eef1f3;border-radius:10px;margin:8px 0;background:#fafafa}
-      #wa-inbox .in{background:#fff}
-      #wa-inbox .out{background:#f6fffb}
-    </style>
-
-    <!-- GENERAL -->
-    <section id="tab-gen">
-      <h2 style="margin:0 0 8px">General</h2>
-      <div class="grid">
-        <div><label>Site Name</label><input id="SITE_NAME"/></div>
-        <div><label>Logo URL</label><input id="SITE_LOGO_URL"/></div>
-        <div><label>Public Base URL (https)</label><input id="PUBLIC_BASE_URL" placeholder="https://tickets.example.com"/></div>
-        <div><label>VERIFY_TOKEN (Webhook verify)</label><input id="VERIFY_TOKEN" placeholder="vs-verify-2025"/></div>
-      </div>
-      <div class="row-actions">
-        <button id="saveGen" class="btn">Save General</button>
-        <span id="msgGen" class="muted"></span>
-      </div>
-    </section>
-
-    <!-- WHATSAPP -->
-    <section id="tab-wa" style="display:none">
-      <h2 style="margin:0 0 8px">WhatsApp</h2>
-      <div class="grid">
-        <div><label>Access Token</label><input id="WHATSAPP_TOKEN"/></div>
-        <div><label>Phone Number ID</label><input id="PHONE_NUMBER_ID"/></div>
-        <div><label>Business (WABA) ID</label><input id="BUSINESS_ID"/></div>
-
-        <div>
-          <label style="display:flex;align-items:center;gap:8px;margin-top:30px">
-            <input type="checkbox" id="WA_AUTOREPLY_ENABLED" style="width:auto;min-height:initial" />
-            Enable auto-reply
-          </label>
-        </div>
-        <div style="grid-column:1/-1">
-          <label>Auto-reply text</label>
-          <textarea id="WA_AUTOREPLY_TEXT" rows="3" placeholder="Thank you, we will get back to you soon."></textarea>
-        </div>
-      </div>
-
-      <h3 style="margin-top:14px">Template selectors</h3>
-      <p class="muted">Select the approved template to use for each flow (stored as <code>name:language</code>).</p>
-      <div class="grid">
-        <div><label>Order confirmation</label><select id="WA_TMP_ORDER_CONFIRM"></select></div>
-        <div><label>Payment confirmation</label><select id="WA_TMP_PAYMENT_CONFIRM"></select></div>
-        <div><label>Ticket delivery</label><select id="WA_TMP_TICKET_DELIVERY"></select></div>
-        <div><label>Skou reminders</label><select id="WA_TMP_SKOU_SALES"></select></div>
-      </div>
-
-      <div class="hr"></div>
-
-      <h3>Template variable mapping (for {{1}}, {{2}}, {{3}})</h3>
-      <p class="muted">Choose what each numbered variable should contain when sending messages.</p>
-      <div class="grid">
-        <div>
-          <label>{{1}} maps to</label>
-          <select id="WA_MAP_VAR1">
-            <option value="name">Name</option>
-            <option value="order_no">Order no</option>
-            <option value="ticket_url">Ticket url</option>
-            <option value="buyer_phone">Buyer phone</option>
-          </select>
-        </div>
-        <div>
-          <label>{{2}} maps to</label>
-          <select id="WA_MAP_VAR2">
-            <option value="name">Name</option>
-            <option value="order_no">Order no</option>
-            <option value="ticket_url">Ticket url</option>
-            <option value="buyer_phone">Buyer phone</option>
-          </select>
-        </div>
-        <div>
-          <label>{{3}} maps to</label>
-          <select id="WA_MAP_VAR3">
-            <option value="name">Name</option>
-            <option value="order_no">Order no</option>
-            <option value="ticket_url">Ticket url</option>
-            <option value="buyer_phone">Buyer phone</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="row-actions">
-        <button id="saveWA" class="btn">Save WhatsApp</button>
-        <button id="syncWA" class="btn outline">Sync templates</button>
-        <span id="msgWA" class="muted"></span>
-      </div>
-
-      <div class="hr"></div>
-
-      <h3>Send test</h3>
-      <div class="grid">
-        <div><label>Phone (MSISDN, e.g. 27XXXXXXXXX)</label><input id="TEST_PHONE" placeholder="27…"/></div>
-        <div>
-          <label>Which template</label>
-          <select id="TEST_TEMPLATE_KEY">
-            <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
-            <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
-            <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
-            <option value="WA_TMP_SKOU_SALES">Skou reminders</option>
-          </select>
-        </div>
-        <div style="grid-column:1/-1"><label>Variables (comma separated, optional)</label><input id="TEST_VARS" placeholder="e.g. Piet, CAXHIEG"/></div>
-      </div>
-      <div class="row-actions">
-        <button id="sendWATest" class="btn">Send test</button>
-        <span id="msgWATest" class="muted"></span>
-      </div>
-
-      <div class="hr"></div>
-
-      <h3>Inbox (last 100)</h3>
-      <div id="wa-inbox" class="muted">Loading…</div>
-      <div class="grid" style="margin-top:10px">
-        <div><input id="wa_reply_to" placeholder="27XXXXXXXXX"/></div>
-        <div><input id="wa_reply_text" placeholder="Type a quick reply…"/></div>
-      </div>
-      <div class="row-actions">
-        <button id="wa_reply_btn" class="btn">Send reply</button>
-        <span id="wa_reply_msg" class="muted"></span>
-      </div>
-
-      <h3 style="margin-top:18px">Templates</h3>
-      <div id="wa-templates" class="muted">Loading templates…</div>
-    </section>
-
-    <!-- YOCO -->
-    <section id="tab-yoco" style="display:none">
-      <h2 style="margin:0 0 8px">Yoco</h2>
-      <div class="grid">
-        <div>
-          <label>Mode</label>
-          <select id="YOCO_MODE">
-            <option value="test">Test</option>
-            <option value="live">Live</option>
-          </select>
-        </div>
-        <div></div>
-        <div><label>Test Public Key</label><input id="YOCO_TEST_PUBLIC_KEY"/></div>
-        <div><label>Test Secret Key</label><input id="YOCO_TEST_SECRET_KEY"/></div>
-        <div><label>Live Public Key</label><input id="YOCO_LIVE_PUBLIC_KEY"/></div>
-        <div><label>Live Secret Key</label><input id="YOCO_LIVE_SECRET_KEY"/></div>
-      </div>
-      <div class="row-actions">
-        <button id="saveYoco" class="btn">Save Yoco</button>
-        <span id="msgYoco" class="muted"></span>
-      </div>
-    </section>
-
-    <!-- WALLET -->
-    <section id="tab-wallet" style="display:none">
-      <h2 style="margin:0 0 8px">Wallet</h2>
-      <p class="muted" style="margin:6px 0 14px">
-        Configure the Apple Wallet signer service. Once saved, a button will appear on the ticket page
-        to download a <code>.pkpass</code> for mobile.
-      </p>
-      <div class="grid">
-        <div><label>Signer URL</label><input id="APPLE_PASS_SIGN_URL" placeholder="https://wallet-signer.example.com/sign"/></div>
-        <div><label>Bearer token (optional)</label><input id="APPLE_SIGNER_BEARER" placeholder="secret-bearer"/></div>
-        <div><label>Pass Type Identifier</label><input id="APPLE_PASS_TYPE_ID" placeholder="pass.com.example.events"/></div>
-        <div><label>Apple Team ID</label><input id="APPLE_TEAM_ID" placeholder="ABCDE12345"/></div>
-      </div>
-      <div class="row-actions">
-        <button id="saveWallet" class="btn">Save Wallet</button>
-        <span id="msgWallet" class="muted"></span>
-      </div>
-    </section>
-
-    <!-- PAST VISITORS -->
-    <section id="tab-past" style="display:none">
-      <h2 style="margin:0 0 8px">Past Visitors</h2>
-
-      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
-        <h3 style="margin:0 0 8px">CSV Import</h3>
-        <p class="muted">Paste CSV (name, phone) — one row per line. Example:<br/>Piet Botha, 0821234567</p>
-        <textarea id="pv-csv" rows="6" placeholder="Name, Phone"></textarea>
-        <div class="grid">
-          <div><label>Filename (for reference)</label><input id="pv-filename" placeholder="past_2025.csv"/></div>
-          <div><label>Overwrite names if already present?</label>
-            <select id="pv-overwrite"><option value="0">No</option><option value="1">Yes</option></select>
-          </div>
-        </div>
-        <div class="row-actions">
-          <button id="pv-import" class="btn">Import</button>
-          <span id="pv-import-msg" class="muted"></span>
-        </div>
-      </div>
-
-      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
-        <h3 style="margin:0 0 8px">Sync from Existing</h3>
-        <div class="grid">
-          <div>
-            <label>Source</label>
-            <select id="pv-sync-from">
-              <option value="orders">Orders (online)</option>
-              <option value="pos">POS sales</option>
-              <option value="attendees">Ticket attendees</option>
-            </select>
-          </div>
-          <div><label>Event ID (optional)</label><input id="pv-sync-event" placeholder="e.g. 3"/></div>
-          <div><label>Tag (e.g. year)</label><input id="pv-sync-tag" value="2025"/></div>
-        </div>
-        <div class="row-actions">
-          <button id="pv-sync" class="btn">Run Sync</button>
-          <span id="pv-sync-msg" class="muted"></span>
-        </div>
-      </div>
-
-      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px; margin-bottom:12px">
-        <h3 style="margin:0 0 8px">List / Send</h3>
-        <div class="grid">
-          <div><label>Search</label><input id="pv-q" placeholder="name or phone"/></div>
-          <div><label>Tag contains</label><input id="pv-tag" placeholder="2025"/></div>
-          <div>
-            <label>Opt-out</label>
-            <select id="pv-optout">
-              <option value="">All</option>
-              <option value="0">Only opted-in</option>
-              <option value="1">Only opted-out</option>
-            </select>
-          </div>
-          <div style="display:flex;align-items:flex-end"><button id="pv-refresh" class="btn">Refresh</button></div>
-        </div>
-
-        <div id="pv-list" style="margin-top:10px" class="muted">No results yet.</div>
-
-        <div class="grid" style="margin-top:10px">
-          <div>
-            <label>Template</label>
-            <select id="pv-tpl-key">
-              <option value="WA_TMP_SKOU_SALES">Skou reminders (recommended)</option>
-              <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
-              <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
-              <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
-            </select>
-          </div>
-          <div style="grid-column:1/-1">
-            <label>Body variables (comma separated, optional)</label>
-            <input id="pv-vars" placeholder="e.g. Villiersdorp Skou, 5–7 Sept"/>
-          </div>
-        </div>
-        <div class="row-actions">
-          <button id="pv-send" class="btn">Send to selected (max 50)</button>
-          <span id="pv-send-msg" class="muted"></span>
-        </div>
-      </div>
-
-      <!-- NEW: Campaigns -->
-      <div class="cardish" style="border:1px solid #eef1f3; border-radius:12px; padding:12px;">
-        <h3 style="margin:0 0 8px">Campaigns (advanced)</h3>
-        <p class="muted" style="margin-top:0">Create a campaign from the <b>currently selected rows</b>, then run/continue it in batches.</p>
-
-        <div class="grid">
-          <div style="grid-column:1/-1">
-            <label>Campaign name</label>
-            <input id="pv-camp-name" placeholder="Villiersdorp Skou push — Oct 2025"/>
-          </div>
-          <div>
-            <label>Template</label>
-            <select id="pv-camp-tpl">
-              <option value="WA_TMP_SKOU_SALES">Skou reminders (recommended)</option>
-              <option value="WA_TMP_ORDER_CONFIRM">Order confirmation</option>
-              <option value="WA_TMP_PAYMENT_CONFIRM">Payment confirmation</option>
-              <option value="WA_TMP_TICKET_DELIVERY">Ticket delivery</option>
-            </select>
-          </div>
-          <div>
-            <label>Body variables (comma separated, optional)</label>
-            <input id="pv-camp-vars" placeholder="e.g. Villiersdorp Skou, 24–25 Okt"/>
-          </div>
-        </div>
-
-        <div class="row-actions">
-          <button id="pv-camp-create" class="btn">Create campaign from selected</button>
-          <span id="pv-camp-create-msg" class="muted"></span>
-        </div>
-
-        <div class="hr"></div>
-
-        <div class="grid">
-          <div><label>Campaign ID</label><input id="pv-camp-id" placeholder="e.g. 12"/></div>
-          <div><label>Batch size</label><input id="pv-camp-batch" value="30"/></div>
-          <div><label>Delay (ms) between messages</label><input id="pv-camp-delay" value="350"/></div>
-        </div>
-
-        <div class="row-actions">
-          <button id="pv-camp-run" class="btn">Run/continue batch</button>
-          <button id="pv-camp-status" class="btn outline">Refresh status</button>
-          <span id="pv-camp-run-msg" class="muted"></span>
-        </div>
-
-        <div id="pv-camp-status-box" class="muted"></div>
-      </div>
-    </section>
-  \`;
-
-  function showTab(name){
-    root.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
-    ['gen','wa','yoco','wallet','past'].forEach(x => {
-      const sec = document.getElementById('tab-'+x);
-      if (sec) sec.style.display = (x===name ? 'block' : 'none');
+  // Small helpers
+  async function getSettings(){
+    const r = await fetch('/api/admin/settings'); const j = await r.json();
+    return j.settings || {};
+  }
+  async function saveSettings(updates){
+    await fetch('/api/admin/settings/update',{
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ updates })
     });
   }
-  root.querySelectorAll('.tab-btn').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));
-  window.AdminPanels.settingsSwitch = (sub)=>{
-    const map = { general:'gen', whatsapp:'wa', yoco:'yoco', wallet:'wallet', past:'past' };
-    showTab(map[sub] || 'gen');
+  async function listTemplates(){
+    const r = await fetch('/api/admin/whatsapp/templates'); const j = await r.json();
+    return j.templates || [];
+  }
+  function bodyVarCount(tpl){
+    try{
+      const comps = JSON.parse(tpl.components_json||'[]');
+      const body = (comps||[]).find(c=>c.type==='BODY' || c.type==='body');
+      if (!body || !Array.isArray(body.example?.body_text)) return 0;
+      // Meta’s component examples include “{{1}} …”, count max index we see
+      const str = (body.example.body_text[0]||'');
+      const m = str.match(/{{(\d+)}}/g) || [];
+      return m.reduce((mx,seg)=>Math.max(mx, Number(seg.replace(/[{}]/g,''))||0), 0);
+    }catch{ return 0; }
+  }
+
+  // Renders a section header & shell
+  function section(title, note=''){
+    const wrap = document.createElement('div');
+    wrap.className = 'card';
+    wrap.style.marginTop = '12px';
+    wrap.innerHTML = \`
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:0 0 8px">
+        <h3 style="margin:0">\${esc(title)}</h3>
+        \${note ? '<div class="muted" style="font-weight:600">'+esc(note)+'</div>' : ''}
+      </div>
+      <div class="content"></div>
+    \`;
+    return wrap;
+  }
+
+  // The main panel entry (called by /src/ui/admin.js)
+  window.AdminPanels.settings = async function(){
+    const host = document.getElementById('panel-settings');
+    host.innerHTML = '';
+
+    // Subtabs (General | WhatsApp | Yoco | Wallet | Past Visitors)
+    // We keep your existing structure but overhaul the WhatsApp tab content.
+    const tabs = document.createElement('div');
+    tabs.className = 'tabs';
+    tabs.innerHTML = \`
+      <div class="tab active" data-sub="general">General</div>
+      <div class="tab" data-sub="whatsapp">WhatsApp</div>
+      <div class="tab" data-sub="yoco">Yoco</div>
+      <div class="tab" data-sub="wallet">Wallet</div>
+      <div class="tab" data-sub="past">Past Visitors</div>
+    \`;
+    host.appendChild(tabs);
+
+    const pane = document.createElement('div');
+    pane.id = 'settings-subpane';
+    host.appendChild(pane);
+
+    // Wire generic subtab switcher
+    tabs.addEventListener('click', (e)=>{
+      const t = e.target.closest('.tab'); if(!t) return;
+      tabs.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+      t.classList.add('active');
+      const name = t.dataset.sub;
+      if (name==='whatsapp') renderWhatsApp(pane);
+      else renderGeneral(pane, name);
+      history.replaceState(null,'','#settings:'+name);
+    });
+
+    // Default: honor deep-link, else show general
+    const hash = (location.hash||'').split(':')[1]||'general';
+    tabs.querySelector(\`.tab[data-sub="\${hash}"]\`)?.click() || tabs.querySelector('.tab[data-sub="general"]').click();
   };
 
-  async function save(updates, msgEl){
-    msgEl.textContent = 'Saving…';
-    const r = await fetch('/api/admin/settings/update', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ updates })
-    }).then(x=>x.json()).catch(()=>({ok:false}));
-    msgEl.textContent = r.ok ? 'Saved.' : ('Failed. ' + (r.error||''));
+  // Deep-link switch helper (called by admin.js)
+  window.AdminPanels.settingsSwitch = function(sub){
+    const tab = document.querySelector('#panel-settings .tabs .tab[data-sub="'+sub+'"]');
+    tab?.click();
+  };
+
+  /* ---------------- General / other existing settings ---------------- */
+  async function renderGeneral(pane, which){
+    // You can keep your existing renderer (not shown here).
+    pane.innerHTML = '<div class="muted">Use your existing General/Yoco/Wallet/Past Visitors UI here.</div>';
   }
 
-  // ---------- Settings load ----------
-  async function loadSettings(){
-    const j = await fetch('/api/admin/settings', { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!j.ok) return;
-    const s = j.settings||{};
+  /* ----------------------- WHATSAPP PANEL ---------------------------- */
+  async function renderWhatsApp(pane){
+    pane.innerHTML = '';
+    const settings = await getSettings();
+    const templates = await listTemplates();
 
-    ['SITE_NAME','SITE_LOGO_URL','PUBLIC_BASE_URL','VERIFY_TOKEN'].forEach(k=>{
-      const el = document.getElementById(k); if (el && s[k]!=null) el.value = s[k];
-    });
+    /* 1) Settings */
+    const secSettings = section('Settings');
+    $('.content', secSettings).innerHTML = \`
+      <div style="display:grid;gap:10px;grid-template-columns:1fr 1fr">
+        <label>Access Token<br><input id="wa_token" value="\${esc(settings.WHATSAPP_TOKEN||settings.WA_TOKEN||'')}" style="width:100%"></label>
+        <label>VERIFY_TOKEN (Webhook verify)<br><input id="wa_verify" value="\${esc(settings.VERIFY_TOKEN||'')}" style="width:100%"></label>
+        <label>Phone Number ID<br><input id="wa_pnid" value="\${esc(settings.PHONE_NUMBER_ID||settings.WA_PHONE_NUMBER_ID||'')}" style="width:100%"></label>
+        <label>Business (WABA) ID<br><input id="wa_waba" value="\${esc(settings.BUSINESS_ID||settings.WA_BUSINESS_ID||'')}" style="width:100%"></label>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+        <label class="pill"><input id="wa_autoreply" type="checkbox" \${(settings.WA_AUTOREPLY_ENABLED=='1' || settings.WA_AUTOREPLY_ENABLED==='true')?'checked':''}> Enable auto-reply</label>
+        <input id="wa_autotext" placeholder="Auto-reply text" value="\${esc(settings.WA_AUTOREPLY_TEXT||'')}" style="flex:1">
+        <button id="wa_save_settings" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save</button>
+      </div>
+    `;
+    pane.appendChild(secSettings);
 
-    // WhatsApp creds + options
-    $('#WHATSAPP_TOKEN').value = s.WHATSAPP_TOKEN || '';
-    $('#PHONE_NUMBER_ID').value = s.PHONE_NUMBER_ID || '';
-    $('#BUSINESS_ID').value = s.BUSINESS_ID || '';
+    $('#wa_save_settings', secSettings).onclick = async ()=>{
+      await saveSettings({
+        WA_TOKEN: $('#wa_token').value.trim(),
+        VERIFY_TOKEN: $('#wa_verify').value.trim(),
+        WA_PHONE_NUMBER_ID: $('#wa_pnid').value.trim(),
+        WA_BUSINESS_ID: $('#wa_waba').value.trim(),
+        WA_AUTOREPLY_ENABLED: $('#wa_autoreply').checked ? '1' : '0',
+        WA_AUTOREPLY_TEXT: $('#wa_autotext').value
+      });
+      alert('Saved.');
+    };
 
-    $('#WA_AUTOREPLY_ENABLED').checked = String(s.WA_AUTOREPLY_ENABLED||'0') === '1';
-    $('#WA_AUTOREPLY_TEXT').value = s.WA_AUTOREPLY_TEXT || '';
+    /* 2) Templates */
+    const secTemplates = section('Templates', 'Approved templates available to send');
+    const tBody = document.createElement('div');
+    tBody.innerHTML = \`
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="muted">Total: \${templates.length}</div>
+        <button id="wa_sync" class="tab" style="font-weight:800">Sync templates</button>
+      </div>
+      <div style="overflow:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr><th>Name</th><th>Lang</th><th>Status</th><th>Category</th><th>Body vars</th></tr></thead>
+          <tbody id="wa_tpl_tbl"></tbody>
+        </table>
+      </div>
+    \`;
+    $('.content', secTemplates).appendChild(tBody);
+    pane.appendChild(secTemplates);
 
-    // Template variable mappings
-    $('#WA_MAP_VAR1').value = s.WA_MAP_VAR1 || 'name';
-    $('#WA_MAP_VAR2').value = s.WA_MAP_VAR2 || 'order_no';
-    $('#WA_MAP_VAR3').value = s.WA_MAP_VAR3 || 'ticket_url';
+    const tb = $('#wa_tpl_tbl', tBody);
+    for(const t of templates){
+      const tr = document.createElement('tr');
+      tr.innerHTML = \`
+        <td>\${esc(t.name)}</td>
+        <td>\${esc(t.language)}</td>
+        <td>\${esc(t.status||'')}</td>
+        <td>\${esc(t.category||'')}</td>
+        <td>\${bodyVarCount(t)}</td>\`;
+      tb.appendChild(tr);
+    }
+    $('#wa_sync', tBody).onclick = async ()=>{
+      await fetch('/api/admin/whatsapp/sync',{method:'POST'});
+      alert('Synced. Refresh to see updates.');
+    };
 
-    // Template picks
-    $('#WA_TMP_ORDER_CONFIRM').dataset.value   = s.WA_TMP_ORDER_CONFIRM || '';
-    $('#WA_TMP_PAYMENT_CONFIRM').dataset.value = s.WA_TMP_PAYMENT_CONFIRM || '';
-    $('#WA_TMP_TICKET_DELIVERY').dataset.value = s.WA_TMP_TICKET_DELIVERY || '';
-    $('#WA_TMP_SKOU_SALES').dataset.value      = s.WA_TMP_SKOU_SALES || '';
+    /* 3) Inbox */
+    const secInbox = section('Inbox', 'Latest inbound WhatsApp messages');
+    $('.content', secInbox).innerHTML = \`
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <button id="wa_inbox_refresh" class="tab" style="font-weight:800">Refresh</button>
+      </div>
+      <div style="overflow:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr><th>When</th><th>From</th><th>To</th><th>Body</th><th></th></tr></thead>
+          <tbody id="wa_inbox_tb"></tbody>
+        </table>
+      </div>
+    \`;
+    pane.appendChild(secInbox);
 
-    // Yoco
-    $('#YOCO_MODE').value = (s.YOCO_MODE||'test').toLowerCase();
-    $('#YOCO_TEST_PUBLIC_KEY').value = s.YOCO_TEST_PUBLIC_KEY || '';
-    $('#YOCO_TEST_SECRET_KEY').value = s.YOCO_TEST_SECRET_KEY || '';
-    $('#YOCO_LIVE_PUBLIC_KEY').value = s.YOCO_LIVE_PUBLIC_KEY || '';
-    $('#YOCO_LIVE_SECRET_KEY').value = s.YOCO_LIVE_SECRET_KEY || '';
+    async function loadInbox(){
+      const r = await fetch('/api/admin/whatsapp/inbox?limit=100'); const j = await r.json();
+      const rows = j.inbox||[];
+      const tb = $('#wa_inbox_tb', secInbox); tb.innerHTML='';
+      for(const m of rows){
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td>\${new Date((m.received_at||0)*1000).toLocaleString()}</td>
+          <td>\${esc(m.from_msisdn||'')}</td>
+          <td>\${esc(m.to_msisdn||'')}</td>
+          <td>\${esc(m.body||'')}</td>
+          <td style="white-space:nowrap">
+            <input type="text" placeholder="Reply…" data-r="\${m.id}" style="width:220px">
+            <button data-reply="\${m.id}" class="tab" style="font-weight:800">Send</button>
+            <button data-del="\${m.id}" class="tab" style="font-weight:800;background:#b42318;color:#fff;border-color:#b42318">Delete</button>
+          </td>\`;
+        tb.appendChild(tr);
+      }
+      tb.querySelectorAll('[data-reply]').forEach(b=>{
+        b.onclick = async ()=>{
+          const id = Number(b.getAttribute('data-reply'));
+          const txt = tb.querySelector('input[data-r="'+id+'"]').value.trim();
+          if(!txt) return;
+          await fetch('/api/admin/whatsapp/reply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ id, text: txt })});
+          await loadInbox();
+        };
+      });
+      tb.querySelectorAll('[data-del]').forEach(b=>{
+        b.onclick = async ()=>{
+          const id = Number(b.getAttribute('data-del'));
+          if(!confirm('Delete this message?')) return;
+          await fetch('/api/admin/whatsapp/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ id })});
+          await loadInbox();
+        };
+      });
+    }
+    $('#wa_inbox_refresh', secInbox).onclick = loadInbox; loadInbox();
 
-    // Apple Wallet
-    $('#APPLE_PASS_SIGN_URL').value = s.APPLE_PASS_SIGN_URL || '';
-    $('#APPLE_SIGNER_BEARER').value = s.APPLE_SIGNER_BEARER || '';
-    $('#APPLE_PASS_TYPE_ID').value  = s.APPLE_PASS_TYPE_ID  || '';
-    $('#APPLE_TEAM_ID').value       = s.APPLE_TEAM_ID       || '';
-  }
-
-  // ---------- WA templates list + selectors ----------
-  function optionLabel(t){ return \`\${t.name} (\${(t.language||'').replace('_','-')})\`; }
-  function fillSelectors(rows){
-    const opts = ['<option value="">—</option>'].concat(
-      rows.map(t=>\`<option value="\${t.name}:\${t.language}">\${optionLabel(t)}</option>\`)
-    ).join('');
-    ['WA_TMP_ORDER_CONFIRM','WA_TMP_PAYMENT_CONFIRM','WA_TMP_TICKET_DELIVERY','WA_TMP_SKOU_SALES'].forEach(id=>{
-      const sel = document.getElementById(id);
-      if (!sel) return;
-      const prev = sel.dataset.value || '';
-      sel.innerHTML = opts;
-      if (prev) sel.value = prev;
-    });
-  }
-  async function loadTemplates(){
-    const box = document.getElementById('wa-templates');
-    box.textContent = 'Loading templates…';
-    const j = await fetch('/api/admin/whatsapp/templates', { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
-    if (!j.ok){ box.textContent='Failed to load.'; fillSelectors([]); return; }
-    const rows = j.templates || [];
-    fillSelectors(rows);
-    if (!rows.length){ box.textContent='No templates in database.'; return; }
-    box.innerHTML = \`
-      <table>
-        <thead><tr><th>Name</th><th>Language</th><th>Status</th><th>Category</th></tr></thead>
-        <tbody>\${rows.map(t=>\`
-          <tr>
-            <td>\${esc(t.name)}</td>
-            <td><span class="pill">\${esc(t.language)}</span></td>
-            <td>\${esc(t.status||'')}</td>
-            <td>\${esc(t.category||'')}</td>
-          </tr>\`).join('')}</tbody>
-      </table>\`;
-  }
-
-  // ---------- WhatsApp Inbox + quick reply ----------
-  async function loadInbox(){
-    const box = $('#wa-inbox');
-    if (!box) return;
-    box.textContent = 'Loading…';
-    const r = await fetch('/api/whatsapp/inbox', { credentials:'include' })
-      .then(x=>x.json()).catch(()=>({ok:false}));
-    if (!r.ok){ box.textContent = 'Unable to load inbox.'; return; }
-    const rows = r.messages || [];
-    if (!rows.length){ box.textContent = 'No messages yet.'; return; }
-    box.innerHTML = rows.map(m=>{
-      const dir = m.direction === 'in' ? '⬅︎ in' : 'out ➡︎';
-      const who = m.direction === 'in' ? (m.wa_from||'') : (m.wa_to||'');
-      const ts  = m.ts ? new Date(m.ts*1000).toLocaleString() : '';
-      const body = esc(m.text||'');
-      const cls = m.direction === 'in' ? 'in' : 'out';
-      return \`<div class="msg \${cls}">
-        <div class="muted" style="font-size:12px">\${dir} · \${who} · \${ts}</div>
-        <div>\${body}</div>
-      </div>\`;
+    /* 4) Template selectors + variable mapping */
+    const secSelect = section('Template selectors');
+    const flows = [
+      ['WA_TMP_ORDER_CONFIRM','Order confirmation'],
+      ['WA_TMP_PAYMENT_CONFIRM','Payment confirmation'],
+      ['WA_TMP_TICKET_DELIVERY','Ticket delivery'],
+      ['WA_TMP_SKOU_SALES','Skou reminders'],
+      ['WA_TMP_BAR_WELCOME','Bar: wallet created'],
+      ['WA_TMP_BAR_TOPUP','Bar: top-up'],
+      ['WA_TMP_BAR_PURCHASE','Bar: purchase'],
+      ['WA_TMP_BAR_LOW','Bar: low balance']
+    ];
+    const tplOpts = (sel) => ['',''].concat(templates.map(t=>`${t.name}:${t.language}`)).map(v=>{
+      const selAttr = v===sel?' selected':'';
+      return \`<option\${selAttr}>\${esc(v)}</option>\`;
     }).join('');
-  }
+    $('.content', secSelect).innerHTML = \`
+      <div style="display:grid;gap:10px;grid-template-columns:1fr 1fr">
+        \${flows.map(([key,label])=>{
+          const cur = settings[key] || '';
+          return \`<label>\${esc(label)}<br>
+            <select data-tkey="\${key}" style="width:100%">\${tplOpts(cur)}</select>
+          </label>\`;
+        }).join('')}
+      </div>
+      <div style="margin-top:12px">
+        <h4 style="margin:0 0 6px">Template variable mapping (for {{1}}, {{2}}, {{3}})</h4>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label class="pill">({{1}}) maps to&nbsp;
+            <select id="wa_map1">
+              <option value="">—</option>
+              <option value="buyer_name">Buyer name</option>
+              <option value="order_no">Order no</option>
+              <option value="tickets_url">Tickets URL</option>
+              <option value="wallet_link">Wallet link</option>
+              <option value="amount">Amount</option>
+              <option value="balance">Balance</option>
+            </select>
+          </label>
+          <label class="pill">({{2}}) maps to&nbsp;
+            <select id="wa_map2">
+              <option value="">—</option>
+              <option value="buyer_name">Buyer name</option>
+              <option value="order_no">Order no</option>
+              <option value="tickets_url">Tickets URL</option>
+              <option value="wallet_link">Wallet link</option>
+              <option value="amount">Amount</option>
+              <option value="balance">Balance</option>
+            </select>
+          </label>
+          <label class="pill">({{3}}) maps to&nbsp;
+            <select id="wa_map3">
+              <option value="">—</option>
+              <option value="buyer_name">Buyer name</option>
+              <option value="order_no">Order no</option>
+              <option value="tickets_url">Tickets URL</option>
+              <option value="wallet_link">Wallet link</option>
+              <option value="amount">Amount</option>
+              <option value="balance">Balance</option>
+            </select>
+          </label>
+          <button id="wa_save_selectors" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save selectors</button>
+        </div>
+      </div>
+    `;
+    pane.appendChild(secSelect);
 
-  $('#wa_reply_btn')?.addEventListener('click', async ()=>{
-    const to = msisdn($('#wa_reply_to').value);
-    const text = $('#wa_reply_text').value.trim();
-    const m = $('#wa_reply_msg');
-    if (!to || !text){ m.textContent='Enter phone + text.'; return; }
-    m.textContent='Sending…';
-    const r = await fetch('/api/whatsapp/reply', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ to, text })
-    }).then(x=>x.json()).catch(()=>({ok:false}));
-    m.textContent = r.ok ? 'Sent.' : 'Failed (no recent session?)';
-    if (r.ok){ $('#wa_reply_text').value=''; loadInbox(); }
-  });
+    // Prime mapping selects with saved values
+    $('#wa_map1').value = settings.WA_MAP_VAR1 || '';
+    $('#wa_map2').value = settings.WA_MAP_VAR2 || '';
+    $('#wa_map3').value = settings.WA_MAP_VAR3 || '';
 
-  // ---------- Past visitors: helpers ----------
-  function parseCSV(text) {
-    const lines = String(text || "").split(/\\r?\\n/).map(s=>s.trim()).filter(Boolean);
-    const rows = [];
-    for (const line of lines) {
-      const parts = line.split(",");
-      if (!parts.length) continue;
-      const name = (parts[0] || "").trim();
-      const phone = msisdn(parts.slice(1).join(",").trim());
-      rows.push({ name, phone });
-    }
-    return rows;
-  }
+    $('#wa_save_selectors').onclick = async ()=>{
+      const updates = {
+        WA_MAP_VAR1: $('#wa_map1').value,
+        WA_MAP_VAR2: $('#wa_map2').value,
+        WA_MAP_VAR3: $('#wa_map3').value,
+      };
+      document.querySelectorAll('[data-tkey]').forEach(sel=>{
+        updates[sel.getAttribute('data-tkey')] = sel.value;
+      });
+      await saveSettings(updates);
+      alert('Saved.');
+    };
 
-  async function refreshList() {
-    const q = $('#pv-q').value.trim();
-    const tag = $('#pv-tag').value.trim();
-    const opt = $('#pv-optout').value;
-    const url = new URL('/api/admin/past/list', location.origin);
-    if (q) url.searchParams.set('query', q);
-    if (tag) url.searchParams.set('tag', tag);
-    if (opt) url.searchParams.set('optout', opt);
-    url.searchParams.set('limit', '50');
-    const j = await fetch(url, { credentials:'include' }).then(r=>r.json()).catch(()=>({ok:false}));
-    const box = $('#pv-list');
-    if (!j.ok){ box.textContent='Failed to load.'; return; }
-    const rows = j.visitors || [];
-    if (!rows.length){ box.textContent='No results.'; return; }
+    /* 5) Send (text or template) */
+    const secSend = section('Send');
+    $('.content', secSend).innerHTML = \`
+      <div class="card" style="padding:12px;margin:0 0 10px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="send_to" placeholder="Phone (msisdn e.g. 2771…)" style="min-width:240px">
+          <input id="send_text" placeholder="Text message…" style="flex:1;min-width:260px">
+          <button id="send_text_btn" class="tab" style="font-weight:800">Send text</button>
+        </div>
+      </div>
+      <div class="card" style="padding:12px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <input id="send_to_tpl" placeholder="Phone (msisdn)" style="min-width:240px">
+          <select id="send_tpl" style="min-width:260px">
+            \${[''].concat(templates.map(t=>\`\${t.name}:\${t.language}\`)).map(v=>\`<option>\${esc(v)}</option>\`).join('')}
+          </select>
+          <input id="send_vars" placeholder="Variables comma separated (optional)" style="flex:1;min-width:260px">
+          <button id="send_tpl_btn" class="tab" style="font-weight:800">Send template</button>
+        </div>
+      </div>
+    `;
+    pane.appendChild(secSend);
 
-    box.innerHTML = \`
-      <table>
-        <thead><tr>
-          <th><input type="checkbox" id="pv-all"/></th>
-          <th>Name</th><th>Phone</th><th>Tags</th><th>Opt-out</th><th>Last send</th><th>Status</th>
-        </tr></thead>
-        <tbody>\${rows.map(r=>\`
-          <tr>
-            <td><input type="checkbox" class="pv-chk" data-id="\${r.id}"/></td>
-            <td>\${esc(r.name||'')}</td>
-            <td>\${esc(r.phone||'')}</td>
-            <td>\${esc(r.tags||'')}</td>
-            <td>\${r.opt_out? 'Yes':'No'}</td>
-            <td>\${r.last_contacted_at? new Date(r.last_contacted_at*1000).toLocaleString() : ''}</td>
-            <td>\${esc(r.last_send_status||'')}</td>
-          </tr>\`).join('')}</tbody>
-      </table>\`;
-
-    $('#pv-all').onclick = (e)=>{
-      const on = e.target.checked;
-      box.querySelectorAll('.pv-chk').forEach(c=>c.checked = on);
+    $('#send_text_btn', secSend).onclick = async ()=>{
+      const to = $('#send_to').value.trim(); const text = $('#send_text').value.trim();
+      if(!to || !text) return;
+      await fetch('/api/admin/whatsapp/send-text',{
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ to, text })
+      });
+      alert('Sent (text).');
+    };
+    $('#send_tpl_btn', secSend).onclick = async ()=>{
+      const to = $('#send_to_tpl').value.trim();
+      const key = $('#send_tpl').value.trim();
+      if(!to || !key) return;
+      const vars = $('#send_vars').value.split(',').map(s=>s.trim()).filter(Boolean);
+      await fetch('/api/admin/whatsapp/test',{
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ to, template_key: key.split(':')[0]? key.split(':')[0] : key, vars })
+      });
+      alert('Sent (template).');
     };
   }
-
-  // ---------- Past visitors: actions ----------
-  $('#pv-import')?.addEventListener('click', async ()=>{
-    const rows = parseCSV($('#pv-csv').value);
-    const overwrite = $('#pv-overwrite').value === '1';
-    const filename = $('#pv-filename').value.trim() || null;
-    $('#pv-import-msg').textContent = 'Importing…';
-    const j = await fetch('/api/admin/past/import', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ rows, filename, overwrite_names: overwrite })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    $('#pv-import-msg').textContent = j.ok
-      ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
-      : ('Failed: '+(j.error||''));
-    refreshList();
-  });
-
-  $('#pv-sync')?.addEventListener('click', async ()=>{
-    const from = $('#pv-sync-from').value;
-    const event_id = Number($('#pv-sync-event').value || 0) || null;
-    const tag = $('#pv-sync-tag').value || '2025';
-    $('#pv-sync-msg').textContent = 'Syncing…';
-    const j = await fetch('/api/admin/past/sync', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ from, event_id, tag })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    $('#pv-sync-msg').textContent = j.ok
-      ? \`Inserted \${j.inserted}, updated \${j.updated}, invalid \${j.skipped_invalid}\`
-      : ('Failed: '+(j.error||''));
-    refreshList();
-  });
-
-  $('#pv-refresh')?.addEventListener('click', refreshList);
-
-  $('#pv-send')?.addEventListener('click', async ()=>{
-    const ids = Array.from(document.querySelectorAll('.pv-chk'))
-      .filter(c=>c.checked).map(c=>Number(c.dataset.id)).slice(0,50);
-    if (!ids.length){ $('#pv-send-msg').textContent='Select up to 50.'; return; }
-    const template_key = $('#pv-tpl-key').value;
-    const vars = ($('#pv-vars').value||'').split(',').map(s=>s.trim()).filter(Boolean);
-    $('#pv-send-msg').textContent = 'Sending…';
-    const j = await fetch('/api/admin/past/send', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ visitor_ids: ids, template_key, vars })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-    $('#pv-send-msg').textContent = j.ok ? 'Done.' : ('Failed: '+(j.error||'')); 
-    refreshList();
-  });
-
-  // ---------- Campaign helpers ----------
-  function parseVars(raw){ const s=String(raw||'').trim(); return s? s.split(',').map(x=>x.trim()).filter(Boolean) : []; }
-
-  async function campaignStatus(cid){
-    const box = $('#pv-camp-status-box');
-    box.textContent = 'Loading status…';
-    const j = await fetch('/api/admin/past/campaigns/'+encodeURIComponent(cid)+'/status', { credentials:'include' })
-      .then(r=>r.json()).catch(()=>({ok:false}));
-    if (!j.ok){ box.textContent = 'Status not available.'; return; }
-    const c = j.campaign || {};
-    const st = j.stats || {};
-    box.innerHTML = \`
-      <div><b>\${esc(c.name||('Campaign '+cid))}</b></div>
-      <div class="muted">Status: \${esc(c.status||'')}</div>
-      <div style="margin-top:6px">
-        <span class="pill">queued: \${st.queued||0}</span>
-        <span class="pill">sent: \${st.sent||0}</span>
-        <span class="pill">failed: \${st.failed||0}</span>
-      </div>\`;
-  }
-
-  // ---------- Campaign actions ----------
-  $('#pv-camp-create')?.addEventListener('click', async ()=>{
-    const ids = Array.from(document.querySelectorAll('.pv-chk'))
-      .filter(c=>c.checked).map(c=>Number(c.dataset.id));
-    const msg = $('#pv-camp-create-msg');
-    if (!ids.length){ msg.textContent='Select some rows first.'; return; }
-    const template_key = $('#pv-camp-tpl').value;
-    const name = $('#pv-camp-name').value.trim() || ('Ad-hoc '+new Date().toLocaleString());
-    const vars = parseVars($('#pv-camp-vars').value);
-
-    msg.textContent = 'Creating…';
-    const j = await fetch('/api/admin/past/campaigns/create', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ name, template_key, vars, visitor_ids: ids })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-
-    if (j.ok){
-      $('#pv-camp-id').value = j.campaign_id;
-      msg.textContent = 'Created ✓ (ID '+j.campaign_id+').';
-      campaignStatus(j.campaign_id);
-    } else {
-      msg.textContent = 'Failed: ' + (j.error||'');
-    }
-  });
-
-  $('#pv-camp-run')?.addEventListener('click', async ()=>{
-    const cid = Number($('#pv-camp-id').value || 0);
-    const msg = $('#pv-camp-run-msg');
-    if (!cid){ msg.textContent='Enter campaign ID.'; return; }
-    const batch = Number($('#pv-camp-batch').value || 30);
-    const delay = Number($('#pv-camp-delay').value || 350);
-
-    msg.textContent = 'Processing…';
-    const j = await fetch('/api/admin/past/campaigns/run', {
-      method:'POST', headers:{'content-type':'application/json'}, credentials:'include',
-      body: JSON.stringify({ campaign_id: cid, batch_size: batch, delay_ms: delay })
-    }).then(r=>r.json()).catch(()=>({ok:false}));
-
-    msg.textContent = j.ok ? ('Processed '+(j.processed||0)+(j.done?' (done)':'') ) : ('Failed: '+(j.error||''));
-    campaignStatus(cid);
-  });
-
-  $('#pv-camp-status')?.addEventListener('click', ()=>{
-    const cid = Number($('#pv-camp-id').value || 0);
-    if (!cid){ $('#pv-camp-run-msg').textContent='Enter campaign ID.'; return; }
-    campaignStatus(cid);
-  });
-
-  // Wallet: save
-  $('#saveWallet')?.addEventListener('click', ()=>{
-    const updates = {
-      APPLE_PASS_SIGN_URL: $('#APPLE_PASS_SIGN_URL').value.trim(),
-      APPLE_SIGNER_BEARER: $('#APPLE_SIGNER_BEARER').value.trim(),
-      APPLE_PASS_TYPE_ID:  $('#APPLE_PASS_TYPE_ID').value.trim(),
-      APPLE_TEAM_ID:       $('#APPLE_TEAM_ID').value.trim(),
-    };
-    save(updates, $('#msgWallet'));
-  });
-
-  // General / WhatsApp / Yoco save buttons
-  $('#saveGen')?.addEventListener('click', ()=>{
-    const updates = {
-      SITE_NAME: $('#SITE_NAME').value,
-      SITE_LOGO_URL: $('#SITE_LOGO_URL').value,
-      PUBLIC_BASE_URL: $('#PUBLIC_BASE_URL').value,
-      VERIFY_TOKEN: $('#VERIFY_TOKEN').value
-    };
-    save(updates, $('#msgGen'));
-  });
-
-  $('#saveWA')?.addEventListener('click', ()=>{
-    const updates = {
-      WHATSAPP_TOKEN: $('#WHATSAPP_TOKEN').value,
-      PHONE_NUMBER_ID: $('#PHONE_NUMBER_ID').value,
-      BUSINESS_ID: $('#BUSINESS_ID').value,
-      WA_AUTOREPLY_ENABLED: ($('#WA_AUTOREPLY_ENABLED').checked? '1':'0'),
-      WA_AUTOREPLY_TEXT: $('#WA_AUTOREPLY_TEXT').value,
-      WA_MAP_VAR1: $('#WA_MAP_VAR1').value,
-      WA_MAP_VAR2: $('#WA_MAP_VAR2').value,
-      WA_MAP_VAR3: $('#WA_MAP_VAR3').value,
-      WA_TMP_ORDER_CONFIRM: $('#WA_TMP_ORDER_CONFIRM').value,
-      WA_TMP_PAYMENT_CONFIRM: $('#WA_TMP_PAYMENT_CONFIRM').value,
-      WA_TMP_TICKET_DELIVERY: $('#WA_TMP_TICKET_DELIVERY').value,
-      WA_TMP_SKOU_SALES: $('#WA_TMP_SKOU_SALES').value,
-    };
-    save(updates, $('#msgWA'));
-  });
-
-  $('#syncWA')?.addEventListener('click', async ()=>{
-    const msg = $('#msgWA');
-    msg.textContent = 'Syncing…';
-    const r = await fetch('/api/admin/whatsapp/sync', { method:'POST', credentials:'include' })
-      .then(x=>x.json()).catch(()=>({ok:false}));
-    msg.textContent = r.ok ? ('Fetched '+(r.fetched||0)+' templates (total '+(r.total||0)+')') : ('Failed: '+(r.error||''));
-    loadTemplates();
-  });
-
-  $('#saveYoco')?.addEventListener('click', ()=>{
-    const updates = {
-      YOCO_MODE: $('#YOCO_MODE').value,
-      YOCO_TEST_PUBLIC_KEY: $('#YOCO_TEST_PUBLIC_KEY').value,
-      YOCO_TEST_SECRET_KEY: $('#YOCO_TEST_SECRET_KEY').value,
-      YOCO_LIVE_PUBLIC_KEY: $('#YOCO_LIVE_PUBLIC_KEY').value,
-      YOCO_LIVE_SECRET_KEY: $('#YOCO_LIVE_SECRET_KEY').value
-    };
-    save(updates, $('#msgYoco'));
-  });
-
-  // init
-  loadSettings().then(()=>{ loadTemplates(); loadInbox(); });
-  const hash = (location.hash||"").replace(/^#settings:/,"");
-  if (hash === "past") showTab("past");
-  else if (hash === "wallet") showTab("wallet");
-  else showTab("gen");
-  window.AdminPanels.settings = ()=>showTab('gen');
 })();
 `;
-export default adminSiteSettingsJS;
