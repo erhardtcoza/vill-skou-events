@@ -368,7 +368,7 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
   router.add("POST", "/api/admin/whatsapp/mappings/delete", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const key = String(b?.template_key || "").trim();
-    the ctx = String(b?.context || "").trim();
+    const ctx = String(b?.context || "").trim();
     if (!key || !ctx) return bad("template_key/context required");
     await env.DB.prepare(
       `DELETE FROM wa_template_mappings WHERE template_key=?1 AND context=?2`
