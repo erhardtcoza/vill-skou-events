@@ -209,16 +209,21 @@ export function mountCashbar(router, env) {
 
     const now = Date.now();
 
+    // legacy topups (optional)
     await env.DB.prepare(
       `INSERT INTO topups (id, wallet_id, amount_cents, source, ref, cashier_id, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
     ).bind(nanoid(), wallet_id, Number(amount_cents), source, ref, cashier_id, now).run().catch(() => {});
 
+    // movement for cashups — include method in meta_json
     const mv_id = nanoid();
     await env.DB.prepare(
-      `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at)
-       VALUES (?1, ?2, 'topup', ?3, ?4, ?5)`
-    ).bind(mv_id, wallet_id, ref || source, Number(amount_cents), now).run();
+      `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at, meta_json)
+       VALUES (?1, ?2, 'topup', ?3, ?4, ?5, ?6)`
+    ).bind(
+      mv_id, wallet_id, ref || source, Number(amount_cents), now,
+      JSON.stringify({ method: source })
+    ).run();
 
     await env.DB.prepare("UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3")
       .bind(balance_cents, version, wallet_id).run();
@@ -349,18 +354,22 @@ export function mountCashbar(router, env) {
 
     const now = Date.now();
 
+    // legacy sales row (optional)
     await env.DB.prepare(
       `INSERT INTO sales (id, wallet_id, items_json, total_cents, bartender_id, device_id, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
     ).bind(nanoid(), wallet_id, JSON.stringify(items), Number(total_cents), bartender_id, device_id, now)
      .run().catch(() => {});
 
+    // movement for mapper + admin “sales by item”
     const mv_id = nanoid();
     await env.DB.prepare(
       `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at, meta_json)
        VALUES (?1, ?2, 'purchase', ?3, ?4, ?5, ?6)`
-    ).bind(mv_id, wallet_id, device_id || bartender_id || "bar", Number(total_cents), now, JSON.stringify({ items }))
-     .run();
+    ).bind(
+      mv_id, wallet_id, device_id || bartender_id || "bar", Number(total_cents), now,
+      JSON.stringify({ items })
+    ).run();
 
     await env.DB.prepare("UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3")
       .bind(balance_cents, version, wallet_id).run();
