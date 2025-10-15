@@ -45,8 +45,7 @@ export function barSellHTML() {
 </main>
 <script>
 let wallet=null, version=0, balance=0, cart=[];
-let allItems=[];       // full catalog from /api/items
-let categories=[];     // computed unique categories
+let allItems=[];  let categories=[];
 
 const $ = (id)=>document.getElementById(id);
 $('scanBtn').onclick = scan;
@@ -54,7 +53,6 @@ $('loadBtn').onclick = load;
 $('doneBtn').onclick = done;
 $('clearBtn').onclick = clearCart;
 
-// ---- Helpers ----
 function cents(n){ return Number(n||0)|0; }
 function money(c){ return 'R '+(cents(c)/100).toFixed(2); }
 
@@ -62,7 +60,6 @@ function uniqueCategories(items){
   const set = new Set();
   items.forEach(i => { if (i.category) set.add(String(i.category)); });
   const got = Array.from(set);
-  // Friendly order if present
   const preferred = ['Beer','Wine','Shooters','Spirits','Specials'];
   const ordered = preferred.filter(x => got.includes(x));
   const rest = got.filter(x => !preferred.includes(x)).sort((a,b)=>a.localeCompare(b));
@@ -71,9 +68,7 @@ function uniqueCategories(items){
 
 function renderCategories(){
   const box = $('cats');
-  box.innerHTML = categories.map(c => 
-    \`<button data-cat="\${c}">\${c}</button>\`
-  ).join('');
+  box.innerHTML = categories.map(c => \`<button data-cat="\${c}">\${c}</button>\`).join('');
   box.querySelectorAll('[data-cat]').forEach(b=>{
     b.addEventListener('click', ()=> showCat(b.getAttribute('data-cat')));
   });
@@ -113,7 +108,6 @@ function addItem(id){
   renderCart();
 }
 
-// ---- Flow ----
 async function scan(){
   const id = prompt('Voer/scan wallet ID:');
   if(!id) return;
@@ -126,26 +120,21 @@ async function load(){
   if(!id){ alert('Voer wallet ID in'); return; }
   wallet = id;
 
-  // 1) Fetch wallet
   const r = await fetch('/api/wallets/'+encodeURIComponent(id));
   let j = await r.json().catch(()=>({}));
   if(!r.ok){ alert(j.error || 'Wallet nie gevind'); return; }
 
-  // tolerate both {wallet:{...}} or flat {...}
   const w = j.wallet || j;
   version = Number(w.version||0);
   balance = cents(w.balance_cents);
   $('cust').textContent = \`\${w.name||'Kliënt'} • Balans \${money(balance)}\`;
 
-  // 2) Fetch items (only once)
   if(!allItems.length){
     const ii = await (await fetch('/api/items')).json().catch(()=>({items:[]}));
     allItems = ii.items || [];
     categories = uniqueCategories(allItems);
     renderCategories();
   }
-
-  // 3) Show first category if available
   if(categories.length){ showCat(categories[0]); }
   else { $('items').innerHTML = '<div class="muted">Geen items beskikbaar nie.</div>'; }
 }
@@ -158,12 +147,7 @@ async function done(){
   }
   const r = await fetch('/api/wallets/'+encodeURIComponent(wallet)+'/deduct',{
     method:'POST', headers:{'content-type':'application/json'},
-    body: JSON.stringify({
-      items: cart,
-      expected_version: version,
-      bartender_id: 'bar-1',
-      device_id: 'dev-1'
-    })
+    body: JSON.stringify({ items: cart, expected_version: version, bartender_id:'bar-1', device_id:'dev-1' })
   });
   const j = await r.json().catch(()=>({}));
   if(!r.ok){ alert(j.error || 'Misluk'); return; }
