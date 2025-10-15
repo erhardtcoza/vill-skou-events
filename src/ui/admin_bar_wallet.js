@@ -10,7 +10,7 @@ export const adminBarWalletJS = `
 
   window.AdminBar.wallets = async function(container){
     container.innerHTML = '';
-
+    
     const controls = el(\`
       <div class="card" style="margin-bottom:16px">
         <input id="bw-q" placeholder="Search (id, name, mobile)" style="min-width:260px">
