@@ -120,6 +120,33 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
+  /* ---------------- NEW: DB schema for Template Mapper ------------------- */
+  router.add("GET", "/api/admin/db/schema", guard(async (_req, env) => {
+    const tablesRes = await env.DB.prepare(
+      `SELECT name
+         FROM sqlite_master
+        WHERE type='table'
+          AND name NOT LIKE 'sqlite_%'
+          AND name NOT LIKE '_cf_%'
+          AND name NOT LIKE 'd1_%'
+        ORDER BY name ASC`
+    ).all();
+
+    const schema = {};
+    for (const row of (tablesRes.results || [])) {
+      const tbl = String(row.name);
+      try {
+        const colsRes = await env.DB.prepare(\`PRAGMA table_info('\${tbl}')\`).all();
+        const cols = (colsRes.results || [])
+          .map(c => c.name)
+          .filter(n => typeof n === "string" && n.length > 0);
+        schema[tbl] = cols;
+      } catch {}
+    }
+
+    return json({ ok: true, schema });
+  }));
+
   /* ---------------- Events ---------------- */
   router.add("GET", "/api/admin/events", guard(async (_req, env) => {
     const q = await env.DB.prepare(
@@ -281,7 +308,7 @@ export function mountAdmin(router) {
         WHERE UPPER(short_code) = UPPER(?1)
         LIMIT 1`
     ).bind(c).first();
-    if (!o) return json({ ok: false, error: `Kon nie bestelling vind met kode ${c} nie.` }, 404);
+    if (!o) return json({ ok: false, error: \`Kon nie bestelling vind met kode \${c} nie.\` }, 404);
 
     const tickets = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
@@ -384,70 +411,4 @@ export function mountAdmin(router) {
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`
       ).bind(
         event_id, fields.name, fields.contact_name, fields.phone, fields.email,
-        fields.stand_number, fields.staff_quota, fields.vehicle_quota
-      ).run();
-      return json({ ok: true, id: r.meta.last_row_id });
-    }
-  }));
-
-  router.add("GET", "/api/admin/vendor/:id/passes", guard(async (_req, env, _ctx, { id }) => {
-    const v = await env.DB.prepare(
-      `SELECT id, event_id, name
-         FROM vendors
-        WHERE id = ?1
-        LIMIT 1`
-    ).bind(Number(id)).first();
-    if (!v) return bad("Vendor not found", 404);
-
-    const pQ = await env.DB.prepare(
-      `SELECT id, vendor_id, type, label, vehicle_reg, qr, state,
-              first_in_at, last_out_at, issued_at
-         FROM vendor_passes
-        WHERE vendor_id = ?1
-        ORDER BY id ASC`
-    ).bind(Number(id)).all();
-
-    return json({ ok: true, vendor: v, passes: pQ.results || [] });
-  }));
-
-  router.add("POST", "/api/admin/vendor/:id/pass/add", guard(async (req, env, _ctx, { id }) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const vendor_id = Number(id || 0);
-    if (!vendor_id) return bad("vendor_id required");
-
-    const type = (b.type || "").trim(); // 'staff' | 'vehicle'
-    if (!(type === "staff" || type === "vehicle")) return bad("Invalid type");
-
-    const label = (b.label || "").trim();
-    const vehicle_reg = type === "vehicle" ? (b.vehicle_reg || "").trim() : null;
-    const qr = ("VND-" + Math.random().toString(36).slice(2, 8)).toUpperCase();
-
-    await env.DB.prepare(
-      `INSERT INTO vendor_passes (vendor_id, type, label, vehicle_reg, qr)
-       VALUES (?1, ?2, ?3, ?4, ?5)`
-    ).bind(vendor_id, type, label || null, vehicle_reg, qr).run();
-
-    return json({ ok: true, qr });
-  }));
-
-  router.add("POST", "/api/admin/vendor/:id/pass/delete", guard(async (req, env, _ctx, { id }) => {
-    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
-    const pid = Number(b?.pass_id || 0);
-    if (!pid) return bad("pass_id required");
-    await env.DB.prepare(
-      `DELETE FROM vendor_passes
-        WHERE id = ?1 AND vendor_id = ?2`
-    ).bind(pid, Number(id || 0)).run();
-    return json({ ok: true });
-  }));
-
-  /* ---------------- Users ----------------------- */
-  router.add("GET", "/api/admin/users", guard(async (_req, env) => {
-    const q = await env.DB.prepare(
-      `SELECT id, username, role
-         FROM users
-        ORDER BY id ASC`
-    ).all();
-    return json({ ok: true, users: q.results || [] });
-  }));
-}
+        fields.stand_number,
