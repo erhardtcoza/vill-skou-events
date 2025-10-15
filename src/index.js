@@ -26,8 +26,6 @@ import { mountWhatsApp } from "./routes/whatsapp.js";
 import { mountCashbar } from "./routes/cashbar.js";
 import { mountItems } from "./routes/items.js";
 import { mountAdminBar } from "./routes/admin_bar.js"; // <-- correct file
-import { mountWhatsAppAdminExtras } from "./routes/whatsapp.js"; // or a new file if you put it elsewhere
-
 
 
 // UI
@@ -96,8 +94,6 @@ function initWithEnv(env) {
   mountPublicVendors(router);       // /api/public/vendors/*
   mountCashbar(router, env);        // legacy cashbar API
   mountItems(router, env);          // /api/items
-  mountWhatsApp(router);
-  mountWhatsAppAdminExtras(router);
 
 
   /* ------------------- UI ROUTES --------------------- */
