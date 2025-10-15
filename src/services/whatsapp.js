@@ -9,12 +9,9 @@ async function getSetting(env, key) {
   return row ? row.value : null;
 }
 
-function dbg(env, ...args) {
-  try {
-    getSetting(env, "WA_DEBUG")
-      .then(v => { if (String(v || "") === "1") console.log("[wa]", ...args); })
-      .catch(() => {});
-  } catch {}
+async function baseURL(env) {
+  const s = await getSetting(env, "PUBLIC_BASE_URL");
+  return s || env.PUBLIC_BASE_URL || "";
 }
 
 function normMSISDN(msisdn) {
@@ -27,33 +24,42 @@ function normMSISDN(msisdn) {
   } catch { return ""; }
 }
 
-async function baseURL(env) {
-  const s = await getSetting(env, "PUBLIC_BASE_URL");
-  return s || env.PUBLIC_BASE_URL || "";
+function deepGet(obj, path) {
+  if (!path) return undefined;
+  return String(path).split(".").reduce((o, k) => (o && k in o) ? o[k] : undefined, obj);
+}
+
+function dbg(env, ...args) {
+  try {
+    getSetting(env, "WA_DEBUG")
+      .then(v => { if (String(v || "") === "1") console.log("[wa]", ...args); })
+      .catch(() => {});
+  } catch {}
 }
 
 async function getWAConfig(env) {
   const token =
     (await getSetting(env, "WA_TOKEN")) ||
+    (await getSetting(env, "WHATSAPP_TOKEN")) ||
     env.WA_TOKEN ||
     "";
 
-  // Accept BOTH keys (DB or env): WA_PHONE_ID or WA_PHONE_NUMBER_ID
   const phone_id =
     (await getSetting(env, "WA_PHONE_ID")) ||
     (await getSetting(env, "WA_PHONE_NUMBER_ID")) ||
+    (await getSetting(env, "PHONE_NUMBER_ID")) ||
     env.WA_PHONE_ID ||
     env.WA_PHONE_NUMBER_ID ||
     "";
 
   const default_lang =
     (await getSetting(env, "WA_DEFAULT_LANG")) ||
-    "en_US";
+    "af";
 
   return {
     token: String(token).trim(),
     phone_id: String(phone_id).trim(),
-    default_lang: String(default_lang).trim() || "en_US"
+    default_lang: String(default_lang).trim() || "af"
   };
 }
 
@@ -81,137 +87,47 @@ async function waFetch(env, path, body) {
   }
 }
 
-/* ----------------------- mapping/eval helpers ---------------------- */
-function getByPath(obj, path) {
-  try {
-    return String(path || "")
-      .split(".")
-      .reduce((o, k) => (o != null ? o[k] : undefined), obj);
-  } catch { return undefined; }
-}
-
-async function evalValue(env, rule, ctx) {
-  const src = String(rule?.source || "");
-  const val = rule?.value;
-
-  if (src === "field") {
-    const out = getByPath(ctx, String(val || ""));
-    return out == null ? "" : String(out);
-  }
-  if (src === "static") {
-    return String(val ?? "");
-  }
-  if (src === "compute") {
-    // Support expressions & template literals used in your mappings
-    try {
-      // expose ctx (data), PUBLIC_BASE_URL and _BASE_URL
-      const BASE = await baseURL(env);
-      const sandbox = { ...ctx, PUBLIC_BASE_URL: BASE, _BASE_URL: BASE };
-      // eslint-disable-next-line no-new-func
-      const fn = new Function("ctx", "with (ctx) { return (" + String(val || "''") + "); }");
-      const out = fn(sandbox);
-      return out == null ? "" : String(out);
-    } catch (e) {
-      dbg(env, "compute_error", e?.message || e, rule);
-      return String(rule?.fallback ?? "");
-    }
-  }
-  // default
-  return String(rule?.fallback ?? "");
-}
-
-async function buildParamsFromMapping(env, template_key, context, data) {
-  const row = await env.DB.prepare(
-    `SELECT mapping_json FROM wa_template_mappings
-      WHERE template_key=?1 AND context=?2
-      LIMIT 1`
-  ).bind(String(template_key || ""), String(context || "")).first();
-
-  if (!row) return [];
-
-  let mapping;
-  try { mapping = JSON.parse(row.mapping_json || "{}"); } catch { mapping = {}; }
-  const vars = Array.isArray(mapping?.vars) ? mapping.vars : [];
-
-  // ensure ordered by variable index (1..N)
-  const ordered = [...vars].sort((a,b) => Number(a.variable||0) - Number(b.variable||0));
-
-  const params = [];
-  for (const rule of ordered) {
-    const v = await evalValue(env, rule, data || {});
-    if (v === "" && rule?.fallback != null) {
-      params.push(String(rule.fallback));
-    } else {
-      params.push(String(v));
-    }
-  }
-  return params;
-}
-
-/* ----------------------------- exports ----------------------------- */
+/* ----------------------------- core senders ----------------------------- */
 /**
- * Mapper-aware sender.
- *  sendTemplateByKey(env, { template_key: "bar_purchase:af", context: "visitor", msisdn, data })
+ * Send a TEMPLATE message.
+ *
+ * Dual signature (both supported):
+ *  1) Legacy positional: sendWhatsAppTemplate(env, to, fallbackText, lang, name, params[])
+ *  2) Object form:       sendWhatsAppTemplate(env, { to, name, language, variables })
  */
-export async function sendTemplateByKey(env, { template_key, context, msisdn, data }) {
-  try {
-    const ms = normMSISDN(msisdn);
-    if (!ms || !template_key) return false;
-
-    const [name, language = "af"] = String(template_key).includes(":")
-      ? String(template_key).split(":")
-      : [String(template_key), "af"];
-
-    const params = await buildParamsFromMapping(env, template_key, context, data);
-    return await sendWhatsAppTemplate(env, ms, "", language, name, params);
-  } catch (e) {
-    dbg(env, "sendTemplateByKey_error", e?.message || e);
-    return false;
-  }
-}
-
-/**
- * Send a pre-approved TEMPLATE message.
- * Backward-compatible signature:
- *   sendWhatsAppTemplate(env, to, fallbackText, lang, name)
- * Extended (optional) 6th param:
- *   params: string[] -> becomes {{1}}, {{2}}, ... in the template body
- */
-export async function sendWhatsAppTemplate(
-  env,
-  to,
-  fallbackText = "",
-  lang,
-  name,
-  params = []
-) {
+export async function sendWhatsAppTemplate(env, toOrObj, fallbackText, lang, name, params = []) {
   const { phone_id, default_lang } = await getWAConfig(env);
-  const msisdn = normMSISDN(to);
-  if (!phone_id || !msisdn || !name) {
-    dbg(env, "template precheck failed", { has_phone_id: !!phone_id, msisdn, name });
+
+  // Normalize signature
+  let msisdn, tplName, tplLang, variables;
+  if (typeof toOrObj === "object" && toOrObj !== null) {
+    msisdn    = normMSISDN(toOrObj.to);
+    tplName   = toOrObj.name;
+    tplLang   = toOrObj.language || default_lang || "af";
+    variables = Array.isArray(toOrObj.variables) ? toOrObj.variables : [];
+  } else {
+    msisdn    = normMSISDN(toOrObj);
+    tplName   = name;
+    tplLang   = lang || default_lang || "af";
+    variables = Array.isArray(params) && params.length ? params : (fallbackText ? [String(fallbackText)] : []);
+  }
+
+  if (!phone_id || !msisdn || !tplName) {
+    dbg(env, "template precheck failed", { has_phone_id: !!phone_id, msisdn, tplName });
     return false;
   }
 
-  let components;
-  if (Array.isArray(params) && params.length) {
-    components = [{
-      type: "body",
-      parameters: params.map(v => ({ type: "text", text: String(v ?? "") }))
-    }];
-  } else {
-    components = [{
-      type: "body",
-      parameters: [{ type: "text", text: String(fallbackText || "") }]
-    }];
-  }
+  const components = variables.length
+    ? [{ type: "body", parameters: variables.map(v => ({ type: "text", text: String(v ?? "") })) }]
+    : [];
 
   const body = {
     messaging_product: "whatsapp",
     to: msisdn,
     type: "template",
     template: {
-      name,
-      language: { code: (lang || default_lang || "en_US") },
+      name: tplName,
+      language: { code: tplLang },
       components
     }
   };
@@ -220,7 +136,7 @@ export async function sendWhatsAppTemplate(
   return !!res.ok;
 }
 
-/** Send a plain TEXT message (requires an active user session). */
+/** Plain text (requires an active user session) */
 export async function sendWhatsAppTextIfSession(env, to, text) {
   const { phone_id } = await getWAConfig(env);
   const msisdn = normMSISDN(to);
@@ -238,10 +154,75 @@ export async function sendWhatsAppTextIfSession(env, to, text) {
   return !!res.ok;
 }
 
+// Friendly alias used by other modules
+export const sendTextIfSession = sendWhatsAppTextIfSession;
+
+/* -------------- Mapper-driven sender: sendTemplateByKey --------------- */
 /**
- * Convenience helper for ticket delivery via text
- * (routes already handle template sends separately).
+ * Resolves a mapping from wa_template_mappings and sends the template.
+ * @param {object} args
+ *  - template_key: "name:lang"
+ *  - context: "visitor" | "order" | "ticket" | ...
+ *  - msisdn: destination
+ *  - data: object merged into compute scope (e.g. { wallets:{...}, wallet_movements:{...} })
  */
+export async function sendTemplateByKey(env, { template_key, context, msisdn, data }) {
+  const [tplName, tplLang = "af"] = String(template_key || "").split(":");
+  const to = normMSISDN(msisdn);
+  if (!tplName || !to) return false;
+
+  // Fetch mapping row
+  const row = await env.DB.prepare(
+    `SELECT mapping_json FROM wa_template_mappings WHERE template_key=?1 AND context=?2 LIMIT 1`
+  ).bind(String(template_key), String(context || "")).first();
+
+  // No mapping? send without variables
+  if (!row?.mapping_json) {
+    return sendWhatsAppTemplate(env, { to, name: tplName, language: tplLang, variables: [] });
+  }
+
+  let mapping;
+  try { mapping = JSON.parse(row.mapping_json); } catch { mapping = { vars: [] }; }
+
+  // Build compute context
+  const base = await baseURL(env);
+  const ctx = { ...(data || {}), PUBLIC_BASE_URL: base };
+
+  // Ensure stable order by {{n}}
+  const entries = Array.isArray(mapping.vars) ? mapping.vars.slice() : [];
+  entries.sort((a, b) => Number(a?.variable || 0) - Number(b?.variable || 0));
+
+  const variables = entries.map(v => {
+    const src = String(v?.source || "").trim();
+    const val = String(v?.value || "").trim();
+    const fb  = v?.fallback ?? "";
+
+    if (src === "field") {
+      const got = deepGet(ctx, val);
+      return (got == null || got === "") ? String(fb) : String(got);
+    }
+    if (src === "static") {
+      return String(val || fb || "");
+    }
+    if (src === "compute") {
+      try {
+        // allow expressions like:  `'R' + (wallet_movements.amount_cents / 100).toFixed(2)`
+        // or template string like: `${PUBLIC_BASE_URL}/w/${wallets.id}`
+        /* eslint no-new-func: "off" */
+        const fn = new Function(...Object.keys(ctx), `return ${val};`);
+        const out = fn(...Object.values(ctx));
+        return (out == null || out === "") ? String(fb || "") : String(out);
+      } catch {
+        return String(fb || "");
+      }
+    }
+    return String(fb || "");
+  });
+
+  return sendWhatsAppTemplate(env, { to, name: tplName, language: tplLang, variables });
+}
+
+/* ---------------- convenience (unchanged) ---------------- */
 export async function sendOrderOnWhatsApp(env, to, order) {
   try {
     const msisdn = normMSISDN(to);
@@ -266,10 +247,9 @@ export async function sendOrderOnWhatsApp(env, to, order) {
 }
 
 export default {
-  // mapper-aware
-  sendTemplateByKey,
-  // plain
   sendWhatsAppTemplate,
   sendWhatsAppTextIfSession,
+  sendTextIfSession,
+  sendTemplateByKey,
   sendOrderOnWhatsApp
 };
