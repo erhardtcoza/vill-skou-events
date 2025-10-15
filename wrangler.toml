@@ -17,7 +17,6 @@ bindings = [
 tag = "v1"
 new_classes = ["WalletDO"]
 
-
 [[kv_namespaces]]
 binding = "EVENTS_KV"
 id = "9ac093d84f2c499e97fff3bb17a386f1"
