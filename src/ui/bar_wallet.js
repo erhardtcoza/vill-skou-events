@@ -1,29 +1,42 @@
-// /src/ui/cashbar_wallet.js
-export function walletHTML({ id, name, balance_cents }) {
-  const R = (c)=>'R ' + (c/100).toFixed(2);
-  return `
-<!doctype html><html lang="af"><head>
+// /src/ui/bar_wallet.js
+export function barWalletHTML(w) {
+  const rands = (c)=>'R'+((c||0)/100).toFixed(2);
+  const id = Number(w?.id||0);
+  const name = String(w?.name||'Wallet');
+  const bal = Number(w?.balance_cents||0);
+
+  return `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Jou kroegrekening</title>
-<link rel="manifest" href="/cashbar.webmanifest">
-<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/cashbar-sw.js')}</script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<title>${name} · Wallet</title>
 <style>
-  body{font-family:system-ui;margin:0;padding:16px;background:#111;color:#fff}
-  .card{background:#1a1a1a;border-radius:12px;padding:16px;max-width:420px;margin:0 auto}
-  .bal{font-size:28px;margin:8px 0}
-  .name{opacity:.8}
-  .qr{display:flex;justify-content:center;margin:12px 0}
-  .btn{display:block;margin:8px auto;padding:10px 14px;border-radius:10px;border:0;background:#E10600;color:#fff}
-  .hint{text-align:center;opacity:.7}
-</style></head><body>
+  :root{ --ink:#0b1320; --muted:#667085; --bg:#f6f8f7; --card:#fff; --accent:#0a7d2b; --border:#e5e7eb }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif }
+  .wrap{ max-width:720px; margin:18px auto; padding:0 14px }
+  .card{ background:var(--card); border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px; text-align:center }
+  .balance{ font-size:34px; font-weight:900; margin:10px 0 }
+  .qr{ margin:12px auto; width:220px; height:220px; border:1px solid var(--border); border-radius:12px; background:#fff; display:flex; align-items:center; justify-content:center }
+  .btn{ display:inline-block; background:var(--accent); color:#fff; padding:10px 14px; border-radius:10px; text-decoration:none; font-weight:800; border:0; cursor:pointer; }
+</style>
+</head><body>
+<div class="wrap">
   <div class="card">
-    <div class="name">${name}</div>
-    <div class="bal">Balans: <b>${R(balance_cents)}</b></div>
-    <div class="qr"><canvas id="qr"></canvas></div>
-    <button class="btn" onclick="location.reload()">Verfris balans</button>
-    <p class="hint">Wys hierdie QR by die kroeg om te betaal • Voeg by Tuis-skerm vir maklike toegang.</p>
+    <h1 style="margin:0">${name}</h1>
+    <div id="bal" class="balance">${rands(bal)}</div>
+    <div class="qr"><img src="/api/qr/png?data=WALLET-${id}" width="220" height="220" alt="QR"/></div>
+    <div style="margin-top:8px; color:#667085">Wallet ID: ${id}</div>
+    <div style="margin-top:14px"><button id="refresh" class="btn">Refresh balance</button></div>
   </div>
-<script>QRCode.toCanvas(document.getElementById('qr'), ${JSON.stringify(id)}, { width: 220 });</script>
+</div>
+<script>
+const $ = (id)=>document.getElementById(id);
+const rands = (c)=>'R'+((c||0)/100).toFixed(2);
+async function refresh(){
+  try{
+    const j = await fetch('/api/wallets/${id}').then(r=>r.json());
+    if (j?.ok) $('bal').textContent = rands(j.wallet.balance_cents||0);
+  }catch{}
+}
+$('refresh').onclick = refresh;
+</script>
 </body></html>`;
 }
