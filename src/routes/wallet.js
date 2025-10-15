@@ -1,42 +1,41 @@
 // /src/routes/wallet.js
 import { json, bad } from "../utils/http.js";
 
-/** ----------------------- helpers ----------------------- **/
-function randsToCents(v) {
-  const n = Number(String(v ?? "").replace(",", "."));
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 100);
+/* Helpers */
+const toInt = (v) => Number.isFinite(Number(v)) ? Number(v) : 0;
+
+async function fetchWallet(env, id) {
+  return await env.DB
+    .prepare(`SELECT id, name, balance_cents FROM wallets WHERE id=?1 LIMIT 1`)
+    .bind(Number(id || 0))
+    .first();
 }
 
-function nowSec() { return Math.floor(Date.now()/1000); }
-
-async function ensureLedgerTables(db) {
-  await db.batch?.([
-    db.prepare(`CREATE TABLE IF NOT EXISTS pos_wallet_topups (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet_id INTEGER NOT NULL,
-      amount_cents INTEGER NOT NULL,
-      method TEXT NOT NULL,             -- 'cash' | 'card'
-      session_id INTEGER,
-      note TEXT,
-      created_at INTEGER NOT NULL
-    )`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS pos_wallet_spends (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      wallet_id INTEGER NOT NULL,
-      amount_cents INTEGER NOT NULL,
-      session_id INTEGER,
-      note TEXT,
-      created_at INTEGER NOT NULL
-    )`)
-  ]) ?? null;
+async function upsertTxn(env, payload) {
+  // Optional audit table: wallet_txns(id, wallet_id, type, amount_cents, method, meta_json, created_at)
+  // If table doesn't exist, just ignore.
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      `INSERT INTO wallet_txns (wallet_id, type, amount_cents, method, meta_json, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
+    ).bind(
+      payload.wallet_id,
+      payload.type,                     // 'topup' | 'spend'
+      payload.amount_cents,
+      payload.method || null,           // 'cash' | 'card' | 'pos'
+      JSON.stringify(payload.meta || {}),
+      now
+    ).run();
+  } catch (_e) {
+    // Table may not exist yet—non-blocking
+  }
 }
 
-/** ----------------------- routes ------------------------ **/
+/* Routes */
 export function mountWallet(router) {
-
-  // Create a wallet (name required)
-  router.add("POST", "/api/wallets/create", async (req, env) => {
+  // Create (register) a wallet
+  const createHandler = async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const name = String(b?.name || "").trim();
     if (!name) return bad(400, "name_required");
@@ -47,114 +46,73 @@ export function mountWallet(router) {
       ).bind(name).run();
 
       const id = Number(ins.lastRowId ?? ins.meta?.last_row_id ?? 0);
-      return json({ ok: true, wallet: { id, name, balance_cents: 0 } });
-    } catch (e) {
+      const w = await fetchWallet(env, id);
+      if (!w) return bad(500, "create_failed");
+      return json({ ok: true, wallet: w });
+    } catch (_e) {
       return bad(500, "create_failed");
     }
-  });
+  };
+
+  router.add("POST", "/api/wallets/create", createHandler);
+  router.add("POST", "/api/wallets/register", createHandler); // alias for current UI
 
   // Get wallet by id
   router.add("GET", "/api/wallets/:id", async (_req, env, _ctx, { id }) => {
-    const w = await env.DB.prepare(
-      `SELECT id, name, balance_cents FROM wallets WHERE id=?1 LIMIT 1`
-    ).bind(Number(id||0)).first();
+    const w = await fetchWallet(env, id);
     if (!w) return bad(404, "not_found");
     return json({ ok: true, wallet: w });
   });
 
-  // Top-up a wallet
-  // Body: { wallet_id, amount_cents? , amount_rands?, method: 'cash'|'card', session_id?, note? }
+  // Top-up wallet
   router.add("POST", "/api/wallets/topup", async (req, env) => {
-    await ensureLedgerTables(env.DB);
-
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const wallet_id = Number(b?.wallet_id || 0);
-    const method = (String(b?.method || "cash").toLowerCase() === "card") ? "card" : "cash";
-    const amount_cents = Number.isFinite(+b?.amount_cents)
-      ? Math.max(0, Number(b.amount_cents))
-      : randsToCents(b?.amount_rands);
-    const session_id = b?.session_id ? Number(b.session_id) : null;
-    const note = String(b?.note || "").trim() || null;
+    const amount_cents = toInt(b?.amount_cents || 0);
+    const method = String(b?.method || "").trim() || null; // 'cash' | 'card'
 
-    if (!wallet_id || !amount_cents) return bad(400, "wallet_or_amount_missing");
+    if (!wallet_id || amount_cents <= 0) return bad(400, "invalid_amount");
 
-    const w = await env.DB.prepare(
-      `SELECT id, balance_cents FROM wallets WHERE id=?1 LIMIT 1`
-    ).bind(wallet_id).first();
-    if (!w) return bad(404, "wallet_missing");
+    const w = await fetchWallet(env, wallet_id);
+    if (!w) return bad(404, "wallet_not_found");
 
-    const t = nowSec();
+    try {
+      await env.DB.prepare(
+        `UPDATE wallets SET balance_cents = balance_cents + ?1 WHERE id=?2`
+      ).bind(amount_cents, wallet_id).run();
 
-    // ledger row
-    await env.DB.prepare(
-      `INSERT INTO pos_wallet_topups (wallet_id, amount_cents, method, session_id, note, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
-    ).bind(wallet_id, amount_cents, method, session_id, note, t).run();
+      const upd = await fetchWallet(env, wallet_id);
+      await upsertTxn(env, { wallet_id, type: "topup", amount_cents, method });
 
-    // balance
-    await env.DB.prepare(
-      `UPDATE wallets SET balance_cents = balance_cents + ?1 WHERE id=?2`
-    ).bind(amount_cents, wallet_id).run();
-
-    const updated = await env.DB.prepare(
-      `SELECT id, name, balance_cents FROM wallets WHERE id=?1 LIMIT 1`
-    ).bind(wallet_id).first();
-
-    return json({ ok: true, wallet: updated });
-  });
-
-  // Spend from a wallet (for the bar POS; we’ll hook this up next)
-  // Body: { wallet_id, amount_cents, session_id?, note? }
-  router.add("POST", "/api/wallets/spend", async (req, env) => {
-    await ensureLedgerTables(env.DB);
-
-    let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
-    const wallet_id = Number(b?.wallet_id || 0);
-    const amount_cents = Math.max(0, Number(b?.amount_cents || 0));
-    const session_id = b?.session_id ? Number(b.session_id) : null;
-    const note = String(b?.note || "").trim() || null;
-
-    if (!wallet_id || !amount_cents) return bad(400, "wallet_or_amount_missing");
-
-    const w = await env.DB.prepare(
-      `SELECT id, balance_cents FROM wallets WHERE id=?1 LIMIT 1`
-    ).bind(wallet_id).first();
-    if (!w) return bad(404, "wallet_missing");
-
-    if (Number(w.balance_cents) < amount_cents) {
-      return bad(409, "insufficient_funds");
+      return json({ ok: true, wallet: upd });
+    } catch (_e) {
+      return bad(500, "topup_failed");
     }
-
-    const t = nowSec();
-
-    await env.DB.prepare(
-      `INSERT INTO pos_wallet_spends (wallet_id, amount_cents, session_id, note, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5)`
-    ).bind(wallet_id, amount_cents, session_id, note, t).run();
-
-    await env.DB.prepare(
-      `UPDATE wallets SET balance_cents = balance_cents - ?1 WHERE id=?2`
-    ).bind(amount_cents, wallet_id).run();
-
-    const updated = await env.DB.prepare(
-      `SELECT id, name, balance_cents FROM wallets WHERE id=?1 LIMIT 1`
-    ).bind(wallet_id).first();
-
-    return json({ ok: true, wallet: updated });
   });
 
-  // Simple history (last 30)
-  router.add("GET", "/api/wallets/:id/history", async (_req, env, _ctx, { id }) => {
-    await ensureLedgerTables(env.DB);
-    const wid = Number(id||0);
-    const topups = await env.DB.prepare(
-      `SELECT id, amount_cents, method, session_id, note, created_at
-         FROM pos_wallet_topups WHERE wallet_id=?1 ORDER BY id DESC LIMIT 30`
-    ).bind(wid).all();
-    const spends = await env.DB.prepare(
-      `SELECT id, amount_cents, session_id, note, created_at
-         FROM pos_wallet_spends WHERE wallet_id=?1 ORDER BY id DESC LIMIT 30`
-    ).bind(wid).all();
-    return json({ ok:true, topups: topups?.results || [], spends: spends?.results || [] });
+  // Spend from wallet (for bar POS)
+  router.add("POST", "/api/wallets/spend", async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
+    const wallet_id = Number(b?.wallet_id || 0);
+    const amount_cents = toInt(b?.amount_cents || 0);
+    const meta = b?.meta || {}; // e.g. { items:[{id,qty,price_cents}], order_id }
+    if (!wallet_id || amount_cents <= 0) return bad(400, "invalid_amount");
+
+    const w = await fetchWallet(env, wallet_id);
+    if (!w) return bad(404, "wallet_not_found");
+    if (Number(w.balance_cents || 0) < amount_cents) return bad(409, "insufficient_funds");
+
+    try {
+      await env.DB.prepare(
+        `UPDATE wallets SET balance_cents = balance_cents - ?1 WHERE id=?2`
+      ).bind(amount_cents, wallet_id).run();
+
+      const upd = await fetchWallet(env, wallet_id);
+      await upsertTxn(env, { wallet_id, type: "spend", amount_cents, method: "pos", meta });
+
+      return json({ ok: true, wallet: upd });
+    } catch (_e) {
+      return bad(500, "spend_failed");
+    }
   });
 }
