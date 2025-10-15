@@ -30,21 +30,13 @@ async function getSetting(env, key) {
 /* ------------------------------------------------------------------ */
 /* WhatsApp via template mapper                                        */
 /* ------------------------------------------------------------------ */
-// send via the WA service (supports multiple function names)
 async function sendTpl(env, { msisdn, templateSettingKey, context, data, fallbackText }) {
   let svc;
-  try {
-    // ✅ correct path
-    svc = await import("../services/whatsapp.js");
-  } catch {
-    svc = null;
-  }
+  try { svc = await import("../services/whatsapp.js"); } catch { svc = null; }
   const ms = normMSISDN(msisdn);
-  if (!svc || !ms) {
-    return false;
-  }
+  if (!svc || !ms) return false;
 
-  // resolve template_key from site_settings (e.g. "bar_purchase:af")
+  // resolve template_key (e.g. "bar_purchase:af")
   let template_key = null;
   try {
     const v = await getSetting(env, templateSettingKey);
@@ -60,31 +52,24 @@ async function sendTpl(env, { msisdn, templateSettingKey, context, data, fallbac
       await svc.sendTemplateWithMapping(env, { template_key, context, msisdn: ms, data });
       return true;
     }
-    // Fallback: old plain-sender (no mapper). Accepts name+lang split.
+    // Fallback: old plain-sender (positional signature)
     if (template_key && typeof svc.sendWhatsAppTemplate === "function") {
       const [name, language = "af"] = template_key.includes(":")
         ? template_key.split(":")
         : [template_key, "af"];
-      await svc.sendWhatsAppTemplate(env, {
-        to: ms,
-        name: name.trim(),
-        language: language.trim(),
-        // pass data straight through; most implementations will map for you,
-        // or use simple {{1}}, {{2}} order if array-like.
-        variables: data
-      });
+      await svc.sendWhatsAppTemplate(env, ms, "", language.trim(), name.trim(), []);
       return true;
     }
-  } catch (err) {
+  } catch {
     // fall through to text
   }
 
-  // Last resort: session text
   if (fallbackText && typeof svc.sendTextIfSession === "function") {
     try { await svc.sendTextIfSession(env, ms, fallbackText); } catch {}
   }
   return false;
 }
+
 /* ------------------------------------------------------------------ */
 /* low-balance behaviour                                               */
 /* ------------------------------------------------------------------ */
@@ -118,9 +103,7 @@ async function getWallet(env, id) {
   return await env.DB.prepare("SELECT * FROM wallets WHERE id=?1 LIMIT 1").bind(id).first();
 }
 
-// attendee lookup by ticket QR or order short_code
 async function lookupAttendee(env, codeOrQr) {
-  // tickets.qr
   let row = await env.DB.prepare(
     `SELECT
        t.id AS attendee_id,
@@ -133,7 +116,6 @@ async function lookupAttendee(env, codeOrQr) {
   ).bind(codeOrQr).first();
 
   if (!row) {
-    // orders.short_code
     row = await env.DB.prepare(
       `SELECT
          t.id AS attendee_id,
@@ -159,7 +141,6 @@ async function lookupAttendee(env, codeOrQr) {
 /* routes                                                              */
 /* ------------------------------------------------------------------ */
 export function mountCashbar(router, env) {
-  // create/register a wallet (optional: from ticket/order)
   router.post("/api/wallets/register", async (req) => {
     let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
     const { source, ticket_code, name, mobile } = body;
@@ -179,7 +160,6 @@ export function mountCashbar(router, env) {
        VALUES (?1, ?2, ?3, ?4, ?5, 'active', 0, 0)`
     ).bind(wallet_id, attendee?.id ?? null, fullName, phone, now).run();
 
-    // initialise DO state
     if (env.WALLET_DO) {
       const stub = env.WALLET_DO.get(env.WALLET_DO.idFromName(wallet_id));
       await stub.fetch("https://do/init", {
@@ -190,7 +170,6 @@ export function mountCashbar(router, env) {
 
     const wallet_url = `${env.PUBLIC_BASE_URL}/w/${wallet_id}`;
 
-    // WhatsApp welcome (bar_welcome)
     await sendTpl(env, {
       msisdn: phone,
       templateSettingKey: "WA_TMP_BAR_WELCOME",
@@ -202,7 +181,6 @@ export function mountCashbar(router, env) {
     return json({ wallet_id, wallet_url, balance_cents: 0 });
   });
 
-  // top-up a wallet
   router.post("/api/wallets/:id/topup", async (req, params) => {
     let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
     const { amount_cents, source = "yoco", ref = "", cashier_id = "" } = body;
@@ -214,7 +192,6 @@ export function mountCashbar(router, env) {
     const w = await getWallet(env, wallet_id);
     if (!w) return bad("wallet_not_found", 404);
 
-    // mutate balance via DO (or inline)
     let balance_cents = w.balance_cents;
     let version = w.version;
     if (env.WALLET_DO) {
@@ -232,24 +209,20 @@ export function mountCashbar(router, env) {
 
     const now = Date.now();
 
-    // legacy topups table (if present)
     await env.DB.prepare(
       `INSERT INTO topups (id, wallet_id, amount_cents, source, ref, cashier_id, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
     ).bind(nanoid(), wallet_id, Number(amount_cents), source, ref, cashier_id, now).run().catch(() => {});
 
-    // movement row for mapper
     const mv_id = nanoid();
     await env.DB.prepare(
       `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at)
        VALUES (?1, ?2, 'topup', ?3, ?4, ?5)`
     ).bind(mv_id, wallet_id, ref || source, Number(amount_cents), now).run();
 
-    // persist wallet
     await env.DB.prepare("UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3")
       .bind(balance_cents, version, wallet_id).run();
 
-    // WhatsApp: bar_topup
     await sendTpl(env, {
       msisdn: w.mobile,
       templateSettingKey: "WA_TMP_BAR_TOPUP",
@@ -261,13 +234,11 @@ export function mountCashbar(router, env) {
       fallbackText: `Top-up van R${cents(amount_cents)}. Nuwe balans: R${cents(balance_cents)}`
     });
 
-    // (harmless) low-balance check
     await maybeWarnLowBalance(env, { wallet: { ...w, balance_cents }, msisdn: w.mobile });
 
     return json({ new_balance_cents: balance_cents, version });
   });
 
-  // read a wallet
   router.get("/api/wallets/:id", async (_req, params) => {
     const w = await getWallet(env, params.id);
     if (!w) return bad("wallet_not_found", 404);
@@ -277,7 +248,6 @@ export function mountCashbar(router, env) {
     });
   });
 
-  // wallet-to-wallet transfer
   router.post("/api/wallets/transfer", async (req) => {
     let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
     const { from, to, amount_cents } = body;
@@ -288,7 +258,6 @@ export function mountCashbar(router, env) {
     const rec   = await getWallet(env, to);
     if (!donor || !rec) return bad("wallet_not_found", 404);
 
-    // deduct donor
     let donor_new = donor.balance_cents, donor_ver = donor.version;
     if (env.WALLET_DO) {
       const sFrom = env.WALLET_DO.get(env.WALLET_DO.idFromName(from));
@@ -303,7 +272,6 @@ export function mountCashbar(router, env) {
       donor_ver = donor.version + 1;
     }
 
-    // top up recipient
     let rec_new = rec.balance_cents, rec_ver = rec.version;
     if (env.WALLET_DO) {
       const sTo = env.WALLET_DO.get(env.WALLET_DO.idFromName(to));
@@ -324,14 +292,12 @@ export function mountCashbar(router, env) {
       env.DB.prepare(`INSERT INTO transfers(id,donor_wallet_id,recipient_wallet_id,amount_cents,created_at)
                       VALUES(?1,?2,?3,?4,?5)`)
         .bind(nanoid(), from, to, Number(amount_cents), now),
-      // movements for both parties (optional but useful)
       env.DB.prepare(`INSERT INTO wallet_movements(id,wallet_id,kind,ref,amount_cents,created_at)
                       VALUES(?1,?2,'transfer_out',?3,?4,?5)`).bind(nanoid(), from, to, Number(amount_cents), now),
       env.DB.prepare(`INSERT INTO wallet_movements(id,wallet_id,kind,ref,amount_cents,created_at)
                       VALUES(?1,?2,'transfer_in',?3,?4,?5)`).bind(nanoid(), to, from, Number(amount_cents), now)
     ]);
 
-    // simple fallbacks (no templates for transfers)
     await sendTpl(env, {
       msisdn: donor.mobile,
       templateSettingKey: "",
@@ -352,7 +318,6 @@ export function mountCashbar(router, env) {
     return json({ from_balance_cents: donor_new, to_balance_cents: rec_new });
   });
 
-  // deduct for a bar sale
   router.post("/api/wallets/:id/deduct", async (req, params) => {
     let body; try { body = await req.json(); } catch { return bad("Bad JSON", 400); }
     const { items = [], expected_version, bartender_id = "", device_id = "" } = body;
@@ -384,25 +349,22 @@ export function mountCashbar(router, env) {
 
     const now = Date.now();
 
-    // legacy sales row (if present)
     await env.DB.prepare(
       `INSERT INTO sales (id, wallet_id, items_json, total_cents, bartender_id, device_id, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
     ).bind(nanoid(), wallet_id, JSON.stringify(items), Number(total_cents), bartender_id, device_id, now)
      .run().catch(() => {});
 
-    // movement for mapper
     const mv_id = nanoid();
     await env.DB.prepare(
-      `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at)
-       VALUES (?1, ?2, 'purchase', ?3, ?4, ?5)`
-    ).bind(mv_id, wallet_id, device_id || bartender_id || "bar", Number(total_cents), now).run();
+      `INSERT INTO wallet_movements (id, wallet_id, kind, ref, amount_cents, created_at, meta_json)
+       VALUES (?1, ?2, 'purchase', ?3, ?4, ?5, ?6)`
+    ).bind(mv_id, wallet_id, device_id || bartender_id || "bar", Number(total_cents), now, JSON.stringify({ items }))
+     .run();
 
-    // update wallet
     await env.DB.prepare("UPDATE wallets SET balance_cents=?1, version=?2 WHERE id=?3")
       .bind(balance_cents, version, wallet_id).run();
 
-    // WhatsApp: bar_purchase
     const summary = items.map(i => `${i.qty}× ${i.name}`).join(", ");
     await sendTpl(env, {
       msisdn: w.mobile,
