@@ -312,7 +312,7 @@ export function mountAdmin(router) {
   router.add("POST", "/api/admin/whatsapp/mappings/delete", guard(async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const key = String(b?.template_key || "").trim();
-    const ctx = String(b?.context || "").trim();
+    the ctx = String(b?.context || "").trim();
     if (!key || !ctx) return bad("template_key/context required");
     await env.DB.prepare(
       `DELETE FROM wa_template_mappings WHERE template_key=?1 AND context=?2`
@@ -529,6 +529,75 @@ export function mountAdmin(router) {
     ).bind(event_id).all();
 
     return json({ ok: true, summary: rows.results || [] });
+  }));
+
+  // NEW: Tickets list for the UI "All tickets" panel
+  router.add("GET", "/api/admin/tickets/list", guard(async (req, env) => {
+    const u = new URL(req.url);
+    const event_id = Number(u.searchParams.get("event_id") || 0);
+    if (!event_id) return bad("event_id required");
+
+    const q = (u.searchParams.get("q") || "").trim();
+    const state = (u.searchParams.get("state") || "").trim(); // '', 'unused', 'in', 'out', 'void'
+    const limit  = Math.min(Math.max(Number(u.searchParams.get("limit")  || 50), 1), 200);
+    const offset = Math.max(Number(u.searchParams.get("offset") || 0), 0);
+
+    const where = ["tt.event_id = ?1"];
+    const args = [event_id];
+
+    if (state) {
+      where.push("t.state = ?" + (args.length + 1));
+      args.push(state);
+    }
+    if (q) {
+      // match QR, attendee name, phone, order code, buyer name/phone
+      where.push(`(
+        UPPER(t.qr) LIKE UPPER(?${args.length + 1}) OR
+        UPPER(COALESCE(t.attendee_first,'') || ' ' || COALESCE(t.attendee_last,'')) LIKE UPPER(?${args.length + 1}) OR
+        UPPER(COALESCE(t.phone,'')) LIKE UPPER(?${args.length + 1}) OR
+        UPPER(COALESCE(o.short_code,'')) LIKE UPPER(?${args.length + 1}) OR
+        UPPER(COALESCE(o.buyer_name,'')) LIKE UPPER(?${args.length + 1}) OR
+        UPPER(COALESCE(o.buyer_phone,'')) LIKE UPPER(?${args.length + 1})
+      )`);
+      args.push("%" + q + "%");
+    }
+
+    const whereSql = "WHERE " + where.join(" AND ");
+
+    const countRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS c
+         FROM tickets t
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+         LEFT JOIN orders o   ON o.id = t.order_id
+        ${whereSql}`
+    ).bind(...args).first();
+
+    const rows = await env.DB.prepare(
+      `SELECT
+          t.id,
+          t.qr,
+          t.state,
+          t.attendee_first,
+          t.attendee_last,
+          t.phone,
+          tt.name AS type_name,
+          o.short_code,
+          o.buyer_name
+         FROM tickets t
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+         LEFT JOIN orders o   ON o.id = t.order_id
+        ${whereSql}
+        ORDER BY t.id DESC
+        LIMIT ${limit} OFFSET ${offset}`
+    ).bind(...args).all();
+
+    return json({
+      ok: true,
+      tickets: rows.results || [],
+      total: Number(countRow?.c || 0),
+      limit,
+      offset
+    });
   }));
 
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
