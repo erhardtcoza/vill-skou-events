@@ -120,30 +120,227 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
-  /* ---------------- NEW: DB schema for Template Mapper ------------------- */
+  /* ---------------- WhatsApp: templates sync/list/diag -------------------- */
+  function enc(v){ return encodeURIComponent(String(v ?? "")); }
+
+  router.add("GET", "/api/admin/whatsapp/templates", guard(async (_req, env) => {
+    const rows = await env.DB.prepare(
+      `SELECT id, name, language, status, category, updated_at, components_json
+         FROM wa_templates
+        ORDER BY name ASC, language ASC`
+    ).all();
+    return json({ ok:true, templates: rows.results || [] });
+  }));
+
+  router.add("POST", "/api/admin/whatsapp/sync", guard(async (_req, env) => {
+    const token = await getSetting(env, "WA_TOKEN");
+    const waba  = await getSetting(env, "WA_BUSINESS_ID");
+    if (!token) return bad("WA_TOKEN missing");
+    if (!waba)  return bad("WA_BUSINESS_ID missing");
+
+    let url = "https://graph.facebook.com/v20.0/" + enc(waba)
+            + "/message_templates?fields="
+            + enc("name,language,status,category,components")
+            + "&limit=50&access_token=" + enc(token);
+
+    let fetched = 0;
+    const now = Math.floor(Date.now()/1000);
+
+    while (url) {
+      let res, data;
+      try {
+        res = await fetch(url);
+        data = await res.json();
+      } catch (e) {
+        return bad("Network error talking to Meta: " + (e?.message || e), 502);
+      }
+      if (!res.ok || data?.error) {
+        const msg = data?.error?.message || ("Meta error " + res.status);
+        return bad("Meta API: " + msg, res.status || 500);
+      }
+
+      const arr = Array.isArray(data?.data) ? data.data : [];
+      for (const t of arr) {
+        const name = t?.name || "";
+        const lang = t?.language || "";
+        if (!name || !lang) continue;
+        await env.DB.prepare(
+          `INSERT INTO wa_templates (name, language, status, category, components_json, updated_at)
+           VALUES (?1,?2,?3,?4,?5,?6)
+           ON CONFLICT(name, language) DO UPDATE SET
+             status=excluded.status,
+             category=excluded.category,
+             components_json=excluded.components_json,
+             updated_at=excluded.updated_at`
+        ).bind(
+          name,
+          lang,
+          (t?.status || null),
+          (t?.category || null),
+          (t?.components ? JSON.stringify(t.components) : null),
+          now
+        ).run();
+        fetched++;
+      }
+      url = data?.paging?.next || "";
+    }
+
+    const countRow = await env.DB.prepare(`SELECT COUNT(*) AS c FROM wa_templates`).first();
+    return json({ ok:true, fetched, total: Number(countRow?.c || 0) });
+  }));
+
+  router.add("GET", "/api/admin/whatsapp/diag", guard(async (_req, env) => {
+    const token = await getSetting(env, "WA_TOKEN");
+    const waba  = await getSetting(env, "WA_BUSINESS_ID");
+    if (!token || !waba) return json({ ok:false, haveToken:!!token, haveWaba:!!waba });
+
+    const testUrl = "https://graph.facebook.com/v20.0/" + enc(waba)
+                  + "/message_templates?fields=name,language,status&limit=1&access_token=" + enc(token);
+    let res, data;
+    try { res = await fetch(testUrl); data = await res.json(); }
+    catch(e){ return json({ ok:false, error:"network "+(e?.message||e) }); }
+    if (!res.ok || data?.error) return json({ ok:false, metaError: data?.error || { status: res.status } });
+    return json({ ok:true, sample: (data.data && data.data[0]) || null });
+  }));
+
+  /* ---------------- WhatsApp Inbox (list/reply/delete) -------------------- */
+  const inboxList = guard(async (req, env) => {
+    const u = new URL(req.url);
+    const q = (u.searchParams.get("q") || "").trim();
+    const limit = Math.min(Math.max(Number(u.searchParams.get("limit") || 50), 1), 200);
+    const offset = Math.max(Number(u.searchParams.get("offset") || 0), 0);
+
+    const clauses = [];
+    const args = [];
+    if (q) {
+      clauses.push("(UPPER(from_msisdn) LIKE UPPER(?1) OR UPPER(body) LIKE UPPER(?1))");
+      args.push("%" + q + "%");
+    }
+    const whereSql = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+
+    const list = await env.DB.prepare(
+      "SELECT id, wa_id, from_msisdn, to_msisdn, direction, body, type, " +
+      "       received_at, replied_auto, replied_manual " +
+      "  FROM wa_inbox " + whereSql +
+      " ORDER BY received_at DESC, id DESC " +
+      " LIMIT " + limit + " OFFSET " + offset
+    ).bind(...args).all();
+
+    const cRow = await env.DB.prepare("SELECT COUNT(*) AS c FROM wa_inbox " + whereSql).bind(...args).first();
+
+    return json({
+      ok: true,
+      items: list.results || [],
+      total: Number(cRow?.c || 0),
+      limit, offset
+    });
+  });
+
+  router.add("GET", "/api/admin/whatsapp/inbox", inboxList);
+  router.add("GET", "/api/whatsapp/inbox", inboxList); // alias for UI that might call public path
+
+  router.add("POST", "/api/admin/whatsapp/inbox/:id/reply", guard(async (req, env, _ctx, { id }) => {
+    let b; try { b = await req.json(); } catch { return bad("bad json"); }
+    const text = String(b?.text || "").trim();
+    const explicitTo = (b?.to ? String(b.to).trim() : "");
+    if (!text) return bad("text required");
+
+    let msisdn = explicitTo;
+    if (!msisdn) {
+      const row = await env.DB.prepare(
+        `SELECT from_msisdn FROM wa_inbox WHERE id=?1 LIMIT 1`
+      ).bind(Number(id)||0).first();
+      if (!row) return bad("not found", 404);
+      msisdn = row.from_msisdn;
+    }
+
+    // Try service first, else fail silently here — send is handled by /routes/whatsapp.js normally
+    try {
+      const mod = await import("../services/whatsapp.js");
+      if (typeof mod.sendWhatsAppText === "function") {
+        try { await mod.sendWhatsAppText(env, msisdn, text); }
+        catch { await mod.sendWhatsAppText(env, { to: msisdn, text }); }
+      } else {
+        throw new Error("service missing");
+      }
+      await env.DB.prepare(`UPDATE wa_inbox SET replied_manual=1 WHERE id=?1`).bind(Number(id)||0).run();
+      return json({ ok: true });
+    } catch {
+      // fall back to log only (so UI doesn't block)
+      await env.DB.prepare(
+        `INSERT INTO wa_logs (to_msisdn, type, payload, status, created_at)
+         VALUES (?1,'manual_reply',?2,'queued',?3)`
+      ).bind(msisdn, text, Math.floor(Date.now()/1000)).run();
+      return json({ ok: true, queued: true });
+    }
+  }));
+
+  router.add("POST", "/api/admin/whatsapp/inbox/:id/delete", guard(async (_req, env, _ctx, { id }) => {
+    await env.DB.prepare(`DELETE FROM wa_inbox WHERE id=?1`).bind(Number(id)||0).run();
+    return json({ ok: true });
+  }));
+
+  /* ---------------- Template Mappings CRUD -------------------- */
+  router.add("GET", "/api/admin/whatsapp/mappings", guard(async (req, env) => {
+    const u = new URL(req.url);
+    const ctx = (u.searchParams.get("context") || "").trim();
+    const where = ctx ? "WHERE context=?1" : "";
+    const rows = await env.DB.prepare(
+      "SELECT id, template_key, context, mapping_json, updated_at " +
+      "FROM wa_template_mappings " + where +
+      " ORDER BY template_key ASC"
+    ).bind(ctx || undefined).all();
+    return json({ ok:true, mappings: rows.results || [] });
+  }));
+
+  router.add("POST", "/api/admin/whatsapp/mappings/save", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const key = String(b?.template_key || "").trim();
+    const context = String(b?.context || "").trim();
+    const mapping = b?.mapping || {};
+    if (!key || !context) return bad("template_key and context required");
+
+    await env.DB.prepare(
+      `INSERT INTO wa_template_mappings (template_key, context, mapping_json, updated_at)
+       VALUES (?1,?2,?3,?4)
+       ON CONFLICT(template_key, context)
+       DO UPDATE SET mapping_json=excluded.mapping_json, updated_at=excluded.updated_at`
+    ).bind(key, context, JSON.stringify(mapping), Math.floor(Date.now()/1000)).run();
+
+    return json({ ok: true });
+  }));
+
+  router.add("POST", "/api/admin/whatsapp/mappings/delete", guard(async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const key = String(b?.template_key || "").trim();
+    const ctx = String(b?.context || "").trim();
+    if (!key || !ctx) return bad("template_key/context required");
+    await env.DB.prepare(
+      `DELETE FROM wa_template_mappings WHERE template_key=?1 AND context=?2`
+    ).bind(key, ctx).run();
+    return json({ ok: true });
+  }));
+
+  /* ---------------- DB schema (for field picker) -------------------- */
   router.add("GET", "/api/admin/db/schema", guard(async (_req, env) => {
+    // Only allow ASCII table names with letters, digits, underscore
+    const isSafeIdent = (s) => /^[A-Za-z0-9_]+$/.test(s);
+
     const tablesRes = await env.DB.prepare(
-      `SELECT name
-         FROM sqlite_master
-        WHERE type='table'
-          AND name NOT LIKE 'sqlite_%'
-          AND name NOT LIKE '_cf_%'
-          AND name NOT LIKE 'd1_%'
-        ORDER BY name ASC`
+      `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`
     ).all();
 
     const schema = {};
-    for (const row of (tablesRes.results || [])) {
-      const tbl = String(row.name);
-      try {
-        const colsRes = await env.DB.prepare(\`PRAGMA table_info('\${tbl}')\`).all();
-        const cols = (colsRes.results || [])
-          .map(c => c.name)
-          .filter(n => typeof n === "string" && n.length > 0);
-        schema[tbl] = cols;
-      } catch {}
-    }
+    for (const r of (tablesRes.results || [])) {
+      const tbl = String(r.name || "");
+      if (!isSafeIdent(tbl)) continue;
 
+      // PRAGMA doesn't support bound parameters; assemble safely:
+      const pragmaSql = "PRAGMA table_info('" + tbl.replace(/'/g, "''") + "')";
+      const colsRes = await env.DB.prepare(pragmaSql).all();
+      const cols = (colsRes.results || []).map(c => c.name).filter(Boolean);
+      schema[tbl] = cols;
+    }
     return json({ ok: true, schema });
   }));
 
@@ -308,7 +505,10 @@ export function mountAdmin(router) {
         WHERE UPPER(short_code) = UPPER(?1)
         LIMIT 1`
     ).bind(c).first();
-    if (!o) return json({ ok: false, error: \`Kon nie bestelling vind met kode \${c} nie.\` }, 404);
+
+    if (!o) {
+      return json({ ok: false, error: "Kon nie bestelling vind met kode " + c + " nie." }, 404);
+    }
 
     const tickets = await env.DB.prepare(
       `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
@@ -411,4 +611,70 @@ export function mountAdmin(router) {
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8)`
       ).bind(
         event_id, fields.name, fields.contact_name, fields.phone, fields.email,
-        fields.stand_number,
+        fields.stand_number, fields.staff_quota, fields.vehicle_quota
+      ).run();
+      return json({ ok: true, id: r.meta.last_row_id });
+    }
+  }));
+
+  router.add("GET", "/api/admin/vendor/:id/passes", guard(async (_req, env, _ctx, { id }) => {
+    const v = await env.DB.prepare(
+      `SELECT id, event_id, name
+         FROM vendors
+        WHERE id = ?1
+        LIMIT 1`
+    ).bind(Number(id)).first();
+    if (!v) return bad("Vendor not found", 404);
+
+    const pQ = await env.DB.prepare(
+      `SELECT id, vendor_id, type, label, vehicle_reg, qr, state,
+              first_in_at, last_out_at, issued_at
+         FROM vendor_passes
+        WHERE vendor_id = ?1
+        ORDER BY id ASC`
+    ).bind(Number(id)).all();
+
+    return json({ ok: true, vendor: v, passes: pQ.results || [] });
+  }));
+
+  router.add("POST", "/api/admin/vendor/:id/pass/add", guard(async (req, env, _ctx, { id }) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const vendor_id = Number(id || 0);
+    if (!vendor_id) return bad("vendor_id required");
+
+    const type = (b.type || "").trim(); // 'staff' | 'vehicle'
+    if (!(type === "staff" || type === "vehicle")) return bad("Invalid type");
+
+    const label = (b.label || "").trim();
+    const vehicle_reg = type === "vehicle" ? (b.vehicle_reg || "").trim() : null;
+    const qr = ("VND-" + Math.random().toString(36).slice(2, 8)).toUpperCase();
+
+    await env.DB.prepare(
+      `INSERT INTO vendor_passes (vendor_id, type, label, vehicle_reg, qr)
+       VALUES (?1, ?2, ?3, ?4, ?5)`
+    ).bind(vendor_id, type, label || null, vehicle_reg, qr).run();
+
+    return json({ ok: true, qr });
+  }));
+
+  router.add("POST", "/api/admin/vendor/:id/pass/delete", guard(async (req, env, _ctx, { id }) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const pid = Number(b?.pass_id || 0);
+    if (!pid) return bad("pass_id required");
+    await env.DB.prepare(
+      `DELETE FROM vendor_passes
+        WHERE id = ?1 AND vendor_id = ?2`
+    ).bind(pid, Number(id || 0)).run();
+    return json({ ok: true });
+  }));
+
+  /* ---------------- Users ----------------------- */
+  router.add("GET", "/api/admin/users", guard(async (_req, env) => {
+    const q = await env.DB.prepare(
+      `SELECT id, username, role
+         FROM users
+        ORDER BY id ASC`
+    ).all();
+    return json({ ok: true, users: q.results || [] });
+  }));
+}
