@@ -278,6 +278,62 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
+// Close an open session
+router.add("POST", "/api/admin/pos/session/:id/close", guard(async (req, env, _ctx, { id }) => {
+  const sid = Number(id)||0;
+  const s = await env.DB.prepare(
+    `SELECT id, closed_at FROM pos_sessions WHERE id=?1 LIMIT 1`
+  ).bind(sid).first();
+  if (!s) return bad("Not found", 404);
+  if (s.closed_at) return json({ ok:true, already:true });
+
+  let body; try { body = await req.json(); } catch { body = {}; }
+  const who = (body?.closing_manager || "").trim() || null;
+  const now = Math.floor(Date.now()/1000);
+
+  await env.DB.prepare(
+    `UPDATE pos_sessions SET closed_at=?2, closing_manager=COALESCE(?3, closing_manager) WHERE id=?1`
+  ).bind(sid, now, who).run();
+
+  return json({ ok:true, closed_at: now, closing_manager: who });
+}));
+
+// Delete a session and its payments
+router.add("POST", "/api/admin/pos/session/:id/delete", guard(async (_req, env, _ctx, { id }) => {
+  const sid = Number(id)||0;
+  // optional: sanity — ensure exists
+  const row = await env.DB.prepare(`SELECT id FROM pos_sessions WHERE id=?1`).bind(sid).first();
+  if (!row) return bad("Not found", 404);
+
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM pos_payments WHERE session_id=?1`).bind(sid),
+    env.DB.prepare(`DELETE FROM pos_sessions WHERE id=?1`).bind(sid),
+  ]);
+  return json({ ok:true });
+}));
+
+// Details view: session + payments
+router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, _ctx, { id }) => {
+  const sid = Number(id)||0;
+  const s = await env.DB.prepare(
+    `SELECT ps.id, ps.cashier_name, ps.event_id, ps.gate_id, g.name AS gate_name,
+            ps.opened_at, ps.closed_at, ps.closing_manager, ps.opening_float_cents
+       FROM pos_sessions ps
+       LEFT JOIN gates g ON g.id = ps.gate_id
+      WHERE ps.id=?1 LIMIT 1`
+  ).bind(sid).first();
+  if (!s) return bad("Not found", 404);
+
+  const pays = await env.DB.prepare(
+    `SELECT id, session_id, method, amount_cents, reference, created_at
+       FROM pos_payments
+      WHERE session_id=?1
+      ORDER BY id DESC`
+  ).bind(sid).all();
+
+  return json({ ok:true, session: s, payments: pays.results || [] });
+}));
+  
   /* ---------------- Template Mappings CRUD -------------------- */
   router.add("GET", "/api/admin/whatsapp/mappings", guard(async (req, env) => {
     const u = new URL(req.url);
