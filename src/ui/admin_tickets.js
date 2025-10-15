@@ -1,8 +1,16 @@
-// /src/ui/admin_tickets.js
 export const adminTicketsJS = `
 window.AdminPanels.tickets = async function renderTickets(){
   const el = $("panel-tickets");
   el.innerHTML = "<h2>Tickets</h2><div class='muted'>Kies 'n event om opsomming te sien.</div>";
+
+  // one-off CSS for this panel
+  const style = document.createElement("style");
+  style.textContent = `
+    table.tickets-sum { width:100%; border-collapse:collapse }
+    table.tickets-sum th, table.tickets-sum td { padding:6px 8px; border-bottom:1px solid #eef1f3 }
+    table.tickets-sum th.num, table.tickets-sum td.num { text-align:center }
+  `;
+  el.appendChild(style);
 
   const evs = await fetch("/api/admin/events", { credentials:'include' })
     .then(r=>r.json()).catch(()=>({ok:false,events:[]}));
@@ -76,22 +84,21 @@ window.AdminPanels.tickets = async function renderTickets(){
     const arr = j.summary || [];
     let sold=0, unused=0, inside=0, outside=0, voided=0;
     arr.forEach(r=>{
-      const t = Number(r.total||0);
-      const u = Number(r.unused||0);
-      const i = Number(r.inside||0);
-      const o = Number(r.outside||0);
-      const v = Number(r.voided||0);
-      sold += t; unused += u; inside += i; outside += o; voided += v;
+      sold   += Number(r.total||0);
+      unused += Number(r.unused||0);
+      inside += Number(r.inside||0);
+      outside+= Number(r.outside||0);
+      voided += Number(r.voided||0);
     });
 
     const rows = arr.map(r=>(
       "<tr>"
-      +"<td>"+esc(r.name||"—")+"</td>"
-      +"<td>"+String(r.total||0)+"</td>"
-      +"<td>"+String(r.unused||0)+"</td>"
-      +"<td>"+String(r.inside||0)+"</td>"
-      +"<td>"+String(r.outside||0)+"</td>"
-      +"<td>"+String(r.voided||0)+"</td>"
+        +"<td>"+esc(r.name||"—")+"</td>"
+        +"<td class='num'>"+String(r.total||0)+"</td>"
+        +"<td class='num'>"+String(r.unused||0)+"</td>"
+        +"<td class='num'>"+String(r.inside||0)+"</td>"
+        +"<td class='num'>"+String(r.outside||0)+"</td>"
+        +"<td class='num'>"+String(r.voided||0)+"</td>"
       +"</tr>"
     )).join("");
 
@@ -103,9 +110,9 @@ window.AdminPanels.tickets = async function renderTickets(){
         "<span class='pill'>Out: "+outside+"</span>",
         "<span class='pill'>Void: "+voided+"</span>",
       "</div>",
-      "<table style='width:100%;border-collapse:collapse'>",
-      "<thead><tr><th>Ticket Type</th><th>Total</th><th>Unused</th><th>In</th><th>Out</th><th>Void</th></tr></thead>",
-      "<tbody>", rows || "<tr><td colspan='6' class='muted'>No data</td></tr>", "</tbody>",
+      "<table class='tickets-sum'>",
+        "<thead><tr><th>Ticket Type</th><th class='num'>Total</th><th class='num'>Unused</th><th class='num'>In</th><th class='num'>Out</th><th class='num'>Void</th></tr></thead>",
+        "<tbody>", rows || "<tr><td colspan='6' class='muted'>No data</td></tr>", "</tbody>",
       "</table>"
     ].join("");
   }
@@ -118,10 +125,7 @@ window.AdminPanels.tickets = async function renderTickets(){
     res.textContent = "Loading…";
     const j = await fetch("/api/admin/orders/by-code/"+encodeURIComponent(code), { credentials:'include' })
       .then(r=>r.json()).catch(()=>({ok:false}));
-    if (!j.ok){
-      res.textContent = "Nie gevind nie.";
-      return;
-    }
+    if (!j.ok){ res.textContent = "Nie gevind nie."; return; }
     const o = j.order || {};
     const t = j.tickets || [];
     res.innerHTML = [
@@ -141,7 +145,6 @@ window.AdminPanels.tickets = async function renderTickets(){
       "</tbody></table>"
     ].join("");
   }
-
   document.getElementById("tix-lookup-btn").onclick = doLookup;
 
   // ------- Tickets list logic -------
@@ -190,16 +193,13 @@ window.AdminPanels.tickets = async function renderTickets(){
       "</table>"
     ].join("");
 
-    // Paging UI
     const info = document.getElementById("tix-pageinfo");
     const start = listTotal ? (listOffset+1) : 0;
     const end = Math.min(listOffset + listLimit, listTotal);
     info.textContent = listTotal ? (start+"–"+end+" van "+listTotal) : "0";
 
-    const prevBtn = document.getElementById("tix-prev");
-    const nextBtn = document.getElementById("tix-next");
-    prevBtn.disabled = listOffset <= 0;
-    nextBtn.disabled = (listOffset + listLimit) >= listTotal;
+    document.getElementById("tix-prev").disabled = listOffset <= 0;
+    document.getElementById("tix-next").disabled = (listOffset + listLimit) >= listTotal;
   }
 
   document.getElementById("tix-refresh").onclick = ()=>loadList(0);
@@ -207,7 +207,6 @@ window.AdminPanels.tickets = async function renderTickets(){
   document.getElementById("tix-next").onclick    = ()=>loadList(listOffset + listLimit);
 
   sel.onchange = ()=>{ loadSum(); loadList(0); };
-  // initial load
   loadSum();
   loadList(0);
 };
