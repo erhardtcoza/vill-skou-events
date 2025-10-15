@@ -237,7 +237,7 @@ export function mountAdmin(router) {
   });
 
   router.add("GET", "/api/admin/whatsapp/inbox", inboxList);
-  router.add("GET", "/api/whatsapp/inbox", inboxList); // alias for UI that might call public path
+  router.add("GET", "/api/whatsapp/inbox", inboxList); // alias
 
   router.add("POST", "/api/admin/whatsapp/inbox/:id/reply", guard(async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad("bad json"); }
@@ -254,7 +254,6 @@ export function mountAdmin(router) {
       msisdn = row.from_msisdn;
     }
 
-    // Try service first, else fail silently here — send is handled by /routes/whatsapp.js normally
     try {
       const mod = await import("../services/whatsapp.js");
       if (typeof mod.sendWhatsAppText === "function") {
@@ -266,7 +265,6 @@ export function mountAdmin(router) {
       await env.DB.prepare(`UPDATE wa_inbox SET replied_manual=1 WHERE id=?1`).bind(Number(id)||0).run();
       return json({ ok: true });
     } catch {
-      // fall back to log only (so UI doesn't block)
       await env.DB.prepare(
         `INSERT INTO wa_logs (to_msisdn, type, payload, status, created_at)
          VALUES (?1,'manual_reply',?2,'queued',?3)`
@@ -285,11 +283,12 @@ export function mountAdmin(router) {
     const u = new URL(req.url);
     const ctx = (u.searchParams.get("context") || "").trim();
     const where = ctx ? "WHERE context=?1" : "";
-    const rows = await env.DB.prepare(
+    const stmt = env.DB.prepare(
       "SELECT id, template_key, context, mapping_json, updated_at " +
       "FROM wa_template_mappings " + where +
       " ORDER BY template_key ASC"
-    ).bind(ctx || undefined).all();
+    );
+    const rows = ctx ? await stmt.bind(ctx).all() : await stmt.all();
     return json({ ok:true, mappings: rows.results || [] });
   }));
 
@@ -321,26 +320,64 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
-  /* ---------------- DB schema (for field picker) -------------------- */
+  /* ---------------- DB schema (no PRAGMA; parse sqlite_master.sql) -------- */
   router.add("GET", "/api/admin/db/schema", guard(async (_req, env) => {
-    // Only allow ASCII table names with letters, digits, underscore
-    const isSafeIdent = (s) => /^[A-Za-z0-9_]+$/.test(s);
+    // Helper: parse CREATE TABLE DDL to column names
+    function columnsFromCreateSQL(sql) {
+      if (!sql) return [];
+      const open = sql.indexOf("(");
+      const close = sql.lastIndexOf(")");
+      if (open < 0 || close < 0 || close <= open) return [];
+      const body = sql.slice(open + 1, close);
 
+      // Split on commas not inside parentheses
+      const parts = [];
+      let buf = "", depth = 0, inQuote = null;
+      for (let i = 0; i < body.length; i++) {
+        const ch = body[i];
+        if (inQuote) {
+          buf += ch;
+          if (ch === inQuote && body[i - 1] !== "\\") inQuote = null;
+          continue;
+        }
+        if (ch === "'" || ch === '"' || ch === "`") { inQuote = ch; buf += ch; continue; }
+        if (ch === "(") { depth++; buf += ch; continue; }
+        if (ch === ")") { depth--; buf += ch; continue; }
+        if (ch === "," && depth === 0) { parts.push(buf.trim()); buf = ""; continue; }
+        buf += ch;
+      }
+      if (buf.trim()) parts.push(buf.trim());
+
+      // Keep only column definitions (skip constraints)
+      const cols = [];
+      for (const p of parts) {
+        const up = p.trim().toUpperCase();
+        if (up.startsWith("PRIMARY KEY") || up.startsWith("FOREIGN KEY") || up.startsWith("UNIQUE") || up.startsWith("CHECK") || up.startsWith("CONSTRAINT")) {
+          continue;
+        }
+        // Column name is first token (may be quoted)
+        const m = p.trim().match(/^(`([^`]+)`|"([^"]+)"|'([^']+)'|([A-Za-z0-9_]+))/);
+        const name = m ? (m[2] || m[3] || m[4] || m[5]) : null;
+        if (name) cols.push(name);
+      }
+      return cols;
+    }
+
+    // List tables
     const tablesRes = await env.DB.prepare(
-      `SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`
+      `SELECT name, sql
+         FROM sqlite_master
+        WHERE type='table' AND name NOT LIKE 'sqlite_%'
+        ORDER BY name`
     ).all();
 
     const schema = {};
     for (const r of (tablesRes.results || [])) {
       const tbl = String(r.name || "");
-      if (!isSafeIdent(tbl)) continue;
-
-      // PRAGMA doesn't support bound parameters; assemble safely:
-      const pragmaSql = "PRAGMA table_info('" + tbl.replace(/'/g, "''") + "')";
-      const colsRes = await env.DB.prepare(pragmaSql).all();
-      const cols = (colsRes.results || []).map(c => c.name).filter(Boolean);
-      schema[tbl] = cols;
+      const ddl = String(r.sql || "");
+      schema[tbl] = columnsFromCreateSQL(ddl);
     }
+
     return json({ ok: true, schema });
   }));
 
