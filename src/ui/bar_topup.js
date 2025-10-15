@@ -1,105 +1,134 @@
-// /src/ui/cashbar_cashier.js
-export function cashierHTML() {
-return `<!doctype html><html lang="af"><head>
+// /src/ui/bar_topup.js
+export const barTopupHTML = `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Cashier · Cashless Bar</title>
-<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/cashbar-sw.js')}</script>
+<title>Bar · Wallet Top-up</title>
 <style>
-  body{font-family:system-ui;margin:0;background:#0b1320;color:#fff}
-  header{padding:12px 16px;font-weight:600}
-  main{padding:16px;max-width:820px;margin:0 auto}
-  button{font-size:16px;padding:12px 14px;margin:6px;border-radius:10px;border:0;background:#1b2a59;color:#fff;cursor:pointer}
-  .row{display:flex;gap:8px;flex-wrap:wrap}
-  input,select{padding:10px;border-radius:8px;border:0;width:100%;margin:6px 0;background:#0d1630;color:#fff}
-  .quick button{min-width:96px}
-  .card{background:#111b33;border-radius:12px;padding:12px;margin:10px 0}
-</style></head><body>
-<header>Kasregister</header>
-<main>
-<div class="card">
-  <h3>Registrasie</h3>
-  <div class="row">
-    <button onclick="scanTicket()">Skandeer kaartjie</button>
-    <button onclick="showManual()">Nuwe gebruiker</button>
-  </div>
-  <div id="manual" style="display:none">
-    <input id="name" placeholder="Naam en Van"/>
-    <input id="mobile" placeholder="Selfoon (+27...)"/>
-    <button onclick="registerManual()">Skep Wallet</button>
-  </div>
-  <div id="reg_out" style="opacity:.9"></div>
-</div>
+  :root{ --ink:#0b1320; --muted:#667085; --bg:#f6f8f7; --card:#fff; --accent:#0a7d2b; --danger:#b42318; --border:#e5e7eb }
+  body{ margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif }
+  .wrap{ max-width:840px; margin:18px auto; padding:0 14px }
+  .card{ background:var(--card); border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
+  .row{ display:grid; grid-template-columns:1fr 1fr; gap:10px }
+  @media (max-width:720px){ .row{ grid-template-columns:1fr } }
+  label{ font-weight:700; font-size:14px; margin-top:8px; display:block }
+  input{ width:100%; padding:12px; border:1px solid var(--border); border-radius:12px; font:inherit; background:#fff }
+  .btn{ display:inline-block; background:var(--accent); color:#fff; padding:12px 16px; border-radius:10px; text-decoration:none; font-weight:800; border:0; cursor:pointer; margin-top:12px }
+  .btn.alt{ background:#111 }
+  .muted{ color:var(--muted) }
+  .pill{ display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid var(--border); }
+  .error{ color:var(--danger); font-weight:700; margin-top:8px }
+  .balance{ font-size:24px; font-weight:900 }
+  .qr{ width:200px; height:200px; border:1px solid var(--border); border-radius:12px; display:flex; align-items:center; justify-content:center; background:#fff }
+</style>
+</head><body>
+<div class="wrap">
+  <h1 style="margin:0 0 8px">Wallet top-up</h1>
+  <p class="muted" style="margin:0 0 14px">Create or find a wallet, then take a cash or card top-up.</p>
 
-<div class="card">
-  <h3>Top-up / Balans / Oordrag</h3>
-  <input id="wallet" placeholder="Wallet ID (of skandeer)"/>
-  <div class="row">
-    <button onclick="balance()">Balans</button>
+  <div class="card">
+    <div class="row">
+      <div>
+        <label>New wallet name</label>
+        <input id="newName" placeholder="Attendee name"/>
+        <button id="create" class="btn">Create wallet</button>
+      </div>
+      <div>
+        <label>Lookup wallet ID</label>
+        <input id="lookupId" placeholder="e.g. 123"/>
+        <button id="lookup" class="btn alt">Load wallet</button>
+      </div>
+    </div>
+
+    <hr style="border:0;border-top:1px solid var(--border); margin:16px 0"/>
+
+    <div class="row">
+      <div>
+        <div class="muted">Current wallet</div>
+        <div id="wname" style="font-weight:800; margin-top:6px">—</div>
+        <div class="balance" id="wbal">R0.00</div>
+        <div class="pill" id="wid" style="margin-top:6px">ID: —</div>
+        <div style="margin-top:10px"><a id="wlink" class="muted" target="_blank" rel="noopener">Open public wallet</a></div>
+      </div>
+      <div style="display:flex; gap:16px; align-items:center">
+        <div class="qr" id="wqr">QR</div>
+        <div>
+          <label>Amount (R)</label>
+          <input id="amt" type="number" min="0" step="0.01" placeholder="e.g. 100.00"/>
+          <div style="display:flex; gap:8px; margin-top:10px">
+            <button id="cash" class="btn">Cash top-up</button>
+            <button id="card" class="btn alt">Card top-up</button>
+          </div>
+          <div id="msg" class="error"></div>
+        </div>
+      </div>
+    </div>
   </div>
-  <div class="row quick">
-    <button onclick="topup(5000)">R50</button>
-    <button onclick="topup(10000)">R100</button>
-    <button onclick="topup(25000)">R250</button>
-    <button onclick="topup(50000)">R500</button>
-  </div>
-  <div class="row">
-    <button onclick="startTransfer()">Oordra krediet</button>
-  </div>
-  <div id="out"></div>
 </div>
 
 <script>
-async function scanTicket(){
-  const code = prompt('Voer kaartjie QR of bestelling se short_code in');
-  if(!code) return;
-  const r = await fetch('/api/wallets/register',{method:'POST',headers:{'content-type':'application/json'},
-    body: JSON.stringify({source:'ticket', ticket_code: code})});
-  const j = await r.json();
-  document.getElementById('reg_out').innerHTML = r.ok
-    ? ('Wallet: <b>'+j.wallet_id+'</b> · <a href="'+j.wallet_url+'">open</a>')
-    : (j.error || 'Misluk');
-  if (j.wallet_id) document.getElementById('wallet').value = j.wallet_id;
+const $ = (id)=>document.getElementById(id);
+const toCents = (v)=> Math.round(Number(String(v||'').replace(',','.'))*100);
+const rands = (c)=> 'R'+((c||0)/100).toFixed(2);
+
+let current = null;
+
+function show(w){
+  current = w;
+  $('wname').textContent = w?.name || '—';
+  $('wbal').textContent = rands(w?.balance_cents||0);
+  $('wid').textContent  = 'ID: ' + (w?.id ?? '—');
+  const link = '/w/' + (w?.id ?? '');
+  $('wlink').href = link; $('wlink').textContent = link;
+  $('wqr').innerHTML = '<img src="/api/qr/png?data=WALLET-'+encodeURIComponent(w.id)+'" width="200" height="200" alt="QR"/>';
 }
-function showManual(){ document.getElementById('manual').style.display='block'; }
-async function registerManual(){
-  const name=document.getElementById('name').value.trim();
-  const mobile=document.getElementById('mobile').value.trim();
-  const r=await fetch('/api/wallets/register',{method:'POST',headers:{'content-type':'application/json'},
-    body: JSON.stringify({source:'manual', name, mobile})});
-  const j= await r.json();
-  document.getElementById('reg_out').innerHTML = r.ok
-    ? ('Wallet: <b>'+j.wallet_id+'</b> · <a href="'+j.wallet_url+'">open</a>')
-    : (j.error || 'Misluk');
-  if (j.wallet_id) document.getElementById('wallet').value = j.wallet_id;
+
+async function load(id){
+  $('msg').textContent = '';
+  try{
+    const j = await fetch('/api/wallets/'+encodeURIComponent(id)).then(r=>r.json());
+    if (!j.ok) throw new Error(j.error||'not found');
+    show(j.wallet);
+  }catch(e){
+    $('msg').textContent = e.message||'load failed';
+  }
 }
-async function balance(){
-  const id = cur(); if(!id) return;
-  const r = await fetch('/api/wallets/'+id); const j=await r.json();
-  document.getElementById('out').textContent = r.ok ? ('Balans: R '+(j.balance_cents/100).toFixed(2)) : (j.error||'Misluk');
+
+$('create').onclick = async ()=>{
+  $('msg').textContent = '';
+  const name = ($('newName').value||'').trim();
+  if (!name){ $('msg').textContent='Enter a name'; return; }
+  try{
+    const j = await fetch('/api/wallets/create', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ name })
+    }).then(r=>r.json());
+    if (!j.ok) throw new Error(j.error||'create failed');
+    show(j.wallet);
+  }catch(e){ $('msg').textContent = e.message||'create failed'; }
+};
+
+$('lookup').onclick = ()=> {
+  const id = Number(($('lookupId').value||'').trim());
+  if (!id) { $('msg').textContent='Enter wallet ID'; return; }
+  load(id);
+};
+
+async function topup(method){
+  $('msg').textContent = '';
+  if (!current?.id){ $('msg').textContent='No wallet loaded.'; return; }
+  const cents = toCents($('amt').value);
+  if (!cents){ $('msg').textContent='Enter an amount'; return; }
+  try{
+    const j = await fetch('/api/wallets/topup', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ wallet_id: current.id, amount_cents: cents, method })
+    }).then(r=>r.json());
+    if (!j.ok) throw new Error(j.error||'topup failed');
+    show(j.wallet);
+    $('amt').value = '';
+  }catch(e){ $('msg').textContent = e.message||'topup failed'; }
 }
-async function topup(c){
-  const id = cur(); if(!id) return;
-  const ref = prompt('Yoco verwysing (opsioneel)') || '';
-  const r = await fetch('/api/wallets/'+id+'/topup',{method:'POST',headers:{'content-type':'application/json'},
-    body: JSON.stringify({ amount_cents:c, source:'yoco', ref })});
-  const j=await r.json();
-  document.getElementById('out').textContent = r.ok ? ('Nuwe balans: R '+(j.new_balance_cents/100).toFixed(2)) : (j.error||'Misluk');
-}
-function startTransfer(){
-  const from = prompt('Donor wallet ID:'); if(!from) return;
-  const to   = prompt('Ontvanger wallet ID:'); if(!to) return;
-  const amtR = prompt('Bedrag (R):'); const amount_cents = Math.round(parseFloat(amtR||'0')*100);
-  doTransfer(from,to,amount_cents);
-}
-async function doTransfer(from,to,amount_cents){
-  const r=await fetch('/api/wallets/transfer',{method:'POST',headers:{'content-type':'application/json'},
-    body: JSON.stringify({from,to,amount_cents})});
-  const j=await r.json();
-  document.getElementById('out').textContent = r.ok
-    ? ('Donor: R '+(j.from_balance_cents/100).toFixed(2)+' • Ontv: R '+(j.to_balance_cents/100).toFixed(2))
-    : (j.error||'Misluk');
-}
-function cur(){ const v=document.getElementById('wallet').value.trim(); if(!v) alert('Voer wallet ID in'); return v; }
+
+$('cash').onclick = ()=> topup('cash');
+$('card').onclick = ()=> topup('card');
 </script>
-</main></body></html>`;
-}
+</body></html>`;
