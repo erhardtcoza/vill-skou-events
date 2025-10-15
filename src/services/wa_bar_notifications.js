@@ -1,6 +1,6 @@
 // /src/services/wa_bar_notifications.js
-import { sendTemplateByKey } from "../routes/whatsapp.js"; // uses your existing sender
-import { getSetting } from "../utils/settings.js";         // tiny util shown below
+import { sendTemplateByKey } from "../services/whatsapp.js"; // <-- fixed import
+import { getSetting } from "../utils/settings.js";
 
 // Default threshold = R85 unless overridden in site_settings.BAR_LOW_BALANCE_THRESHOLD_CENTS
 async function lowThresholdCents(env) {
@@ -9,14 +9,14 @@ async function lowThresholdCents(env) {
   return Number.isFinite(n) && n > 0 ? n : 8500;
 }
 
-// record a "cooldown" so we don't spam low-balance
+// Cooldown = 15 minutes (matches your “only once, then only after next purchase/topup” intent)
 async function recentlyWarned(env, wallet_id) {
   const row = await env.DB.prepare(
     `SELECT last_low_warn_at FROM wallets WHERE id = ?1 LIMIT 1`
   ).bind(wallet_id).first();
   const now = Math.floor(Date.now()/1000);
-  const dayAgo = now - 24*3600;
-  return (row?.last_low_warn_at || 0) > dayAgo;
+  const fifteenMinAgo = now - 15*60;
+  return (Number(row?.last_low_warn_at || 0)) > fifteenMinAgo;
 }
 async function markWarned(env, wallet_id) {
   const now = Math.floor(Date.now()/1000);
@@ -25,7 +25,7 @@ async function markWarned(env, wallet_id) {
   ).bind(wallet_id, now).run();
 }
 
-// Compose “context objects” the mapper can read (wallets.*, wallet_movements.*)
+// Compose context objects for the mapper (wallets.*, wallet_movements.*)
 async function loadWallet(env, wallet_id) {
   return await env.DB.prepare(
     `SELECT id, attendee_id, name, mobile, status, balance_cents, created_at
@@ -34,37 +34,35 @@ async function loadWallet(env, wallet_id) {
 }
 async function loadMovement(env, movement_id) {
   return await env.DB.prepare(
-    `SELECT id, wallet_id, kind, ref, amount_cents, created_at
+    `SELECT id, wallet_id, kind, ref, amount_cents, created_at, meta_json
        FROM wallet_movements WHERE id = ?1 LIMIT 1`
   ).bind(movement_id).first();
 }
 
 // --- PUBLIC API -------------------------------------------------------------
 
-// Call this right after you INSERT a wallet row
+// Call this right after you INSERT a wallet row (if you prefer using this helper)
 export async function handleWalletCreated(env, wallet_id) {
   const w = await loadWallet(env, wallet_id);
-  if (!w || !w.mobile) return; // nothing to send
-  // Template key read from site_settings: WA_TMP_BAR_WELCOME => e.g. "bar_welcome:af"
-  const template_key = await getSetting(env, "WA_TMP_BAR_WELCOME");
+  if (!w || !w.mobile) return;
+  const template_key = await getSetting(env, "WA_TMP_BAR_WELCOME"); // e.g. "bar_welcome:af"
   if (!template_key) return;
 
   await sendTemplateByKey(env, {
     template_key,
     context: "visitor",
     msisdn: w.mobile,
-    data: { wallets: w },        // available to {{…}} mapping
+    data: { wallets: w },
   });
 }
 
-// Call this after you INSERT a wallet_movements row and after you UPDATE wallet balance
+// Call this after you INSERT a wallet_movements row and UPDATE the wallet
 export async function handleWalletMovement(env, movement_id) {
   const mv = await loadMovement(env, movement_id);
   if (!mv) return;
   const w  = await loadWallet(env, mv.wallet_id);
   if (!w || !w.mobile) return;
 
-  // Decide which template
   const isTopup    = mv.kind === "topup";
   const isPurchase = mv.kind === "purchase";
 
@@ -92,16 +90,23 @@ export async function handleWalletMovement(env, movement_id) {
     }
   }
 
-  // Low-balance after this movement
+  // Low-balance nudge (15-min cooldown here; your cashbar.js already handles
+  // the stricter “15 min after purchase & only once” flow with pending flags)
   const thr = await lowThresholdCents(env);
   if ((w.balance_cents || 0) < thr && !(await recentlyWarned(env, w.id))) {
-    const template_key = await getSetting(env, "WA_TMP_BAR_LOW_BALANCE") || "bar_low_balance:af";
+    const template_key =
+      (await getSetting(env, "WA_TMP_BAR_LOW_BALANCE")) || "bar_low_balance:af";
     await sendTemplateByKey(env, {
       template_key,
       context: "visitor",
       msisdn: w.mobile,
       data: { wallets: w },
-    }).catch(()=>{});
+    }).catch(() => {});
     await markWarned(env, w.id);
   }
 }
+
+export default {
+  handleWalletCreated,
+  handleWalletMovement,
+};
