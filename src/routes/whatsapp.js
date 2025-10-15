@@ -1,113 +1,69 @@
-// src/routes/whatsapp.js
-import { json } from "../utils/http.js";
+// Add inside /src/routes/whatsapp.js (or a new file mounted similarly)
+import { json, bad } from "../utils/http.js";
+import { requireRole } from "../utils/auth.js";
 
-// We’ll call the WA service. If it’s missing, we fail gracefully.
-async function svc() {
-  try { return await import("../services/whatsapp.js"); }
-  catch { return {}; }
-}
+function norm(msisdn){ return String(msisdn||'').replace(/\D+/g,''); }
 
-async function getSetting(env, key) {
-  const row = await env.DB.prepare(
-    `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
-  ).bind(key).first();
-  return row ? row.value : null;
-}
-function norm(msisdn) {
-  const s = String(msisdn || "").replace(/\D+/g, "");
-  if (!s) return "";
-  if (s.startsWith("27") && s.length >= 11) return s;
-  if (s.length === 10 && s.startsWith("0")) return "27" + s.slice(1);
-  return s;
-}
-async function tableExists(db, name){
-  try {
-    const r = await db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?1`).bind(name).first();
-    return !!r;
-  } catch { return false; }
-}
+export function mountWhatsAppAdminExtras(router){
+  const guard = (fn) => requireRole("admin", fn);
 
-export function mountWhatsApp(router) {
-  router.get("/api/whatsapp/diag", async (_req, env) => {
-    const token = (await getSetting(env, "WA_TOKEN")) || env.WA_TOKEN;
-    const pid =
-      (await getSetting(env, "WA_PHONE_ID")) ||
-      (await getSetting(env, "WA_PHONE_NUMBER_ID")) ||
-      env.WA_PHONE_ID || env.WA_PHONE_NUMBER_ID;
-    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
-    const lang = (await getSetting(env, "WA_DEFAULT_LANG")) || "en_US";
-    return json({ ok: true, cfg: { has_token: !!token, has_phone_id: !!pid, default_lang: lang, public_base: base } });
-  });
+  // Inbox list
+  router.add("GET", "/api/admin/whatsapp/inbox", guard(async (req, env)=>{
+    const u = new URL(req.url);
+    const limit = Math.min(Math.max(Number(u.searchParams.get("limit")||100),1),500);
+    const rows = await env.DB.prepare(
+      `SELECT id, wa_id, from_msisdn, to_msisdn, direction, body, type, received_at,
+              replied_auto, replied_manual
+         FROM wa_inbox
+        ORDER BY received_at DESC
+        LIMIT ?1`
+    ).bind(limit).all();
+    return json({ ok:true, inbox: rows.results||[] });
+  }));
 
-  // Explicit template test with vars[]
-  router.add("POST", "/api/whatsapp/test-template", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return json({ ok:false, error:"bad_json" }, 400); }
-    const to = norm(b?.to || "");
-    const template = String(b?.template || "").trim();
-    const lang = String(b?.lang || (await getSetting(env, "WA_DEFAULT_LANG")) || "en_US");
-    const vars = Array.isArray(b?.vars) ? b.vars.slice(0, 10).map(x => String(x ?? "")) : [];
-    if (!to || !template) return json({ ok:false, error:"to and template required" }, 400);
+  // Reply to one inbound message (plain text)
+  router.add("POST", "/api/admin/whatsapp/reply", guard(async (req, env)=>{
+    let b; try{ b = await req.json(); }catch{ return bad("Bad JSON"); }
+    const id = Number(b?.id||0); const text = String(b?.text||'').trim();
+    if(!id || !text) return bad("id and text required");
 
-    const WA = await svc();
-    if (!WA.sendWhatsAppTemplate) return json({ ok:false, error:"wa_service_missing" }, 500);
+    const row = await env.DB.prepare(`SELECT from_msisdn FROM wa_inbox WHERE id=?1`).bind(id).first();
+    if(!row?.from_msisdn) return bad("Message not found", 404);
 
-    const ok = await WA.sendWhatsAppTemplate(env, to, "", lang, template, vars);
-    return json({ ok });
-  });
+    // Try to send via service
+    let svc=null; try{ svc = await import("../services/whatsapp.js"); }catch{}
+    if(svc?.sendWhatsAppText){
+      await svc.sendWhatsAppText(env, norm(row.from_msisdn), text);
+    } else if(svc?.sendWhatsAppTextIfSession){
+      await svc.sendWhatsAppTextIfSession(env, norm(row.from_msisdn), text);
+    }
 
-  // High-level order-style test (uses name, code -> builds link via PUBLIC_BASE_URL)
-  router.add("POST", "/api/whatsapp/test-order-sample", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return json({ ok:false, error:"bad_json" }, 400); }
-    const to   = norm(b?.to || "");
-    const name = String(b?.name || "").trim() || "Klant";
-    const code = String(b?.code || "").replace(/[^A-Z0-9]/gi, "").toUpperCase() || "CABCDE1";
-    if (!to) return json({ ok:false, error:"to required" }, 400);
+    await env.DB.prepare(`UPDATE wa_inbox SET replied_manual=1 WHERE id=?1`).bind(id).run();
+    return json({ ok:true });
+  }));
 
-    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
-    const link = base ? `${base}/t/${encodeURIComponent(code)}` : "";
+  // Delete a message
+  router.add("POST", "/api/admin/whatsapp/delete", guard(async (req, env)=>{
+    let b; try{ b = await req.json(); }catch{ return bad("Bad JSON"); }
+    const id = Number(b?.id||0); if(!id) return bad("id required");
+    await env.DB.prepare(`DELETE FROM wa_inbox WHERE id=?1`).bind(id).run();
+    return json({ ok:true });
+  }));
 
-    const which = String(b?.which || "order").toLowerCase();
-    const key =
-      which === "payment" ? "WA_TMP_PAYMENT_CONFIRM" :
-      which === "ticket"  ? "WA_TMP_TICKET_DELIVERY" :
-                            "WA_TMP_ORDER_CONFIRM";
+  // Send plain text
+  router.add("POST", "/api/admin/whatsapp/send-text", guard(async (req, env)=>{
+    let b; try{ b = await req.json(); }catch{ return bad("Bad JSON"); }
+    const to = norm(b?.to||''); const text = String(b?.text||'').trim();
+    if(!to || !text) return bad("to and text required");
 
-    const sel = await getSetting(env, key); // name:lang
-    const [template, lang] = String(sel || "").split(":");
-    if (!template) return json({ ok:false, error:`template not set for ${key}` }, 400);
-
-    const WA = await svc();
-    if (!WA.sendWhatsAppTemplate) return json({ ok:false, error:"wa_service_missing" }, 500);
-
-    const vars = [name, code, link];
-    const ok = await WA.sendWhatsAppTemplate(env, to, "", lang || "en_US", template, vars);
-    return json({ ok, which, template, lang, vars });
-  });
-
-  // ---------- Inbox (best-effort; returns [] if no table) ----------
-  router.add("GET", "/api/whatsapp/inbox", async (_req, env) => {
-    const has = await tableExists(env.DB, "wa_messages");
-    if (!has) return json({ ok:true, messages: [] });
-    const q = await env.DB.prepare(
-      `SELECT id, direction, wa_from, wa_to, text, ts
-         FROM wa_messages
-        ORDER BY ts DESC
-        LIMIT 100`
-    ).all();
-    return json({ ok:true, messages: q.results || [] });
-  });
-
-  // ---------- Quick reply ----------
-  router.add("POST", "/api/whatsapp/reply", async (req, env) => {
-    let b; try { b = await req.json(); } catch { return json({ ok:false, error:"bad_json" }, 400); }
-    const to = norm(b?.to || "");
-    const text = String(b?.text || "").trim();
-    if (!to || !text) return json({ ok:false, error:"to and text required" }, 400);
-
-    const WA = await svc();
-    if (!WA.sendWhatsAppTextIfSession) return json({ ok:false, error:"wa_service_missing" }, 500);
-
-    const ok = await WA.sendWhatsAppTextIfSession(env, to, text);
-    return json({ ok });
-  });
+    let svc=null; try{ svc = await import("../services/whatsapp.js"); }catch{}
+    if(svc?.sendWhatsAppText){
+      await svc.sendWhatsAppText(env, to, text);
+    } else if(svc?.sendWhatsAppTextIfSession){
+      await svc.sendWhatsAppTextIfSession(env, to, text);
+    } else {
+      return bad("WhatsApp service not available", 500);
+    }
+    return json({ ok:true });
+  }));
 }
