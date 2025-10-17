@@ -3,147 +3,173 @@
 export const adminBarCashupJS = `
 (function(){
   if (!window.AdminBar) window.AdminBar = {};
-  const rands = c => 'R' + ((Number(c)||0)/100).toFixed(2);
-  const el = html => { const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; };
+  const rands=c=>'R'+((Number(c)||0)/100).toFixed(2);
 
-  function tdStyle(){ return 'padding:8px;border-bottom:1px solid #eef2f7' }
-
-  // Normalize possible backend shapes for wallet cashups
-  function normalizeWallet(res){
-    const arr = res?.days || res?.rows || res?.items || res?.data || [];
-    return (Array.isArray(arr) ? arr : []).map(d=>{
-      const day  = d.day || d.date || d.d || d.Day || d[0] || '';
-      const cash = d.cash_cents ?? d.cash ?? d.cash_total_cents ?? d.cashTotal_cents ?? 0;
-      const card = d.card_cents ?? d.card ?? d.card_total_cents ?? d.cardTotal_cents ?? 0;
-      let total  = d.total_cents ?? d.total ?? d.sum_cents ?? 0;
-      if (!total) total = Number(cash||0) + Number(card||0);
-      return { day, cash_cents:Number(cash||0), card_cents:Number(card||0), total_cents:Number(total||0) };
-    });
+  function el(html){
+    const d=document.createElement('div');
+    d.innerHTML = html.trim();
+    return d.firstElementChild;
   }
 
-  // Normalize possible backend shapes for item sales
-  function normalizeSales(res){
-    const arr = res?.items || res?.rows || res?.data || [];
-    return (Array.isArray(arr) ? arr : []).map(x=>{
-      const item_name = x.item_name || x.name || x.item || x[0] || '';
-      const qty = x.qty ?? x.quantity ?? x.count ?? x.units ?? 0;
-      const cents = x.cents ?? x.total_cents ?? x.total ?? x.sum_cents ?? 0;
-      return { item_name, qty:Number(qty||0), cents:Number(cents||0) };
-    });
-  }
-
-  async function safeJSON(url){
-    try {
-      const r = await fetch(url);
-      const j = await r.json().catch(()=>({ ok:false, error:'bad json' }));
-      if (!r.ok || j.ok === false) throw new Error(j.error || ('HTTP '+r.status));
-      return j;
-    } catch(e){
-      console.warn('[bar cashup] fetch failed', url, e);
-      return { __error: (e && e.message) || 'Request failed' };
-    }
+  function tableWrap(title, id){
+    return el(
+\`<div class="card" style="padding:12px">
+   <h3 style="margin:0 0 10px">\${title}</h3>
+   <div id="\${id}-err" class="muted" style="display:none;color:#b42318;margin-bottom:8px"></div>
+   <div id="\${id}-loading" class="muted" style="margin:6px 0">Loading…</div>
+   <table id="\${id}-tbl" style="width:100%;border-collapse:collapse;display:none">
+     <thead>
+       <tr>
+         <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Col 1</th>
+         <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Col 2</th>
+         <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Col 3</th>
+         <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Col 4</th>
+       </tr>
+     </thead>
+     <tbody></tbody>
+   </table>
+   <div id="\${id}-empty" class="muted" style="display:none">No data found for the selected period.</div>
+ </div>\`);
   }
 
   window.AdminBar.cashup = async function(container){
     container.innerHTML = '';
-    const grid = el(\`
-      <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-        <div class="card">
-          <h3 style="margin:0 0 10px">Wallet cashup (Top-ups)</h3>
-          <table id="bc-top" style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr>
-                <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Day</th>
-                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Cash</th>
-                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Card</th>
-                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Total</th>
-              </tr>
-            </thead>
-            <tbody><tr><td style="\${tdStyle()}" colspan="4" class="muted">Loading…</td></tr></tbody>
-          </table>
-        </div>
-        <div class="card">
-          <h3 style="margin:0 0 10px">Bar cashup (Sales by item)</h3>
-          <table id="bc-items" style="width:100%;border-collapse:collapse">
-            <thead>
-              <tr>
-                <th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Item</th>
-                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Qty</th>
-                <th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Total</th>
-              </tr>
-            </thead>
-            <tbody><tr><td style="\${tdStyle()}" colspan="3" class="muted">Loading…</td></tr></tbody>
-          </table>
-        </div>
-      </div>\`);
+
+    const grid = el(
+\`<div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px"></div>\`
+    );
     container.appendChild(grid);
 
-    const tb1 = grid.querySelector('#bc-top tbody');
-    const tb2 = grid.querySelector('#bc-items tbody');
+    // Wallet top-ups (cash/card/total) by day
+    const topupsBox = tableWrap("Wallet cashup (Top-ups by day)", "bcTop");
+    grid.appendChild(topupsBox);
+    topupsBox.querySelector('thead tr').innerHTML =
+      '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Day</th>'
+    + '<th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Cash</th>'
+    + '<th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Card</th>'
+    + '<th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Total</th>';
 
-    // Load both datasets in parallel
-    const [topRes, salesRes] = await Promise.all([
-      safeJSON('/api/admin/bar/cashup/wallet'),
-      safeJSON('/api/admin/bar/cashup/sales')
-    ]);
+    // Bar sales per item
+    const itemsBox  = tableWrap("Bar cashup (Sales by item)", "bcItems");
+    grid.appendChild(itemsBox);
+    itemsBox.querySelector('thead tr').innerHTML =
+      '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Item</th>'
+    + '<th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Qty</th>'
+    + '<th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb">Total</th>'
+    + '<th style="text-align:right;padding:8px;border-bottom:1px solid #e5e7eb"></th>';
 
-    // ---- Wallet cashups
-    tb1.innerHTML = '';
-    if (topRes.__error){
-      tb1.innerHTML = \`<tr><td style="\${tdStyle()}" colspan="4">Error: \${topRes.__error}</td></tr>\`;
-    } else {
-      const rows = normalizeWallet(topRes);
-      if (!rows.length){
-        tb1.innerHTML = \`<tr><td style="\${tdStyle()}" colspan="4" class="muted">No top-ups found.</td></tr>\`;
-      } else {
-        let cashSum=0, cardSum=0, totalSum=0;
-        rows.forEach(d=>{
-          cashSum += d.cash_cents; cardSum += d.card_cents; totalSum += d.total_cents;
+    // Helpers to show states
+    function showError(boxId, msg){
+      const err = document.getElementById(boxId+'-err');
+      const loading = document.getElementById(boxId+'-loading');
+      const tbl = document.getElementById(boxId+'-tbl');
+      const empty = document.getElementById(boxId+'-empty');
+      if (err){ err.style.display='block'; err.textContent = msg || 'Error loading data.'; }
+      if (loading) loading.style.display='none';
+      if (tbl) tbl.style.display='none';
+      if (empty) empty.style.display='none';
+    }
+    function showEmpty(boxId){
+      const err = document.getElementById(boxId+'-err');
+      const loading = document.getElementById(boxId+'-loading');
+      const tbl = document.getElementById(boxId+'-tbl');
+      const empty = document.getElementById(boxId+'-empty');
+      if (err) err.style.display='none';
+      if (loading) loading.style.display='none';
+      if (tbl) tbl.style.display='none';
+      if (empty) empty.style.display='block';
+    }
+    function showTable(boxId){
+      const err = document.getElementById(boxId+'-err');
+      const loading = document.getElementById(boxId+'-loading');
+      const tbl = document.getElementById(boxId+'-tbl');
+      const empty = document.getElementById(boxId+'-empty');
+      if (err) err.style.display='none';
+      if (loading) loading.style.display='none';
+      if (tbl) tbl.style.display='table';
+      if (empty) empty.style.display='none';
+    }
+
+    // Load Top-ups
+    async function loadTopups(){
+      const boxId = 'bcTop';
+      try{
+        const j = await fetch('/api/admin/bar/cashup/wallet').then(r=>r.json());
+        const days = (j && j.days) || [];
+        if (!days.length) return showEmpty(boxId);
+
+        const tb = document.querySelector('#'+boxId+'-tbl tbody');
+        tb.innerHTML = '';
+        let sc = 0, cc = 0, tc = 0;
+
+        days.forEach(d=>{
+          sc += Number(d.cash_cents||0);
+          cc += Number(d.card_cents||0);
+          tc += Number(d.total_cents||0);
           const tr = document.createElement('tr');
           tr.innerHTML =
-            \`<td style="\${tdStyle()}">\${esc(d.day)}</td>\`+
-            \`<td style="\${tdStyle()};text-align:right">\${rands(d.cash_cents)}</td>\`+
-            \`<td style="\${tdStyle()};text-align:right">\${rands(d.card_cents)}</td>\`+
-            \`<td style="\${tdStyle()};text-align:right;font-weight:600">\${rands(d.total_cents)}</td>\`;
-          tb1.appendChild(tr);
+            '<td style="padding:8px;border-bottom:1px solid #e5e7eb">'+(d.day||'')+'</td>'
+          + '<td style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">'+rands(d.cash_cents)+'</td>'
+          + '<td style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">'+rands(d.card_cents)+'</td>'
+          + '<td style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">'+rands(d.total_cents)+'</td>';
+          tb.appendChild(tr);
         });
+
+        // Totals row
         const trTot = document.createElement('tr');
         trTot.innerHTML =
-          \`<td style="\${tdStyle()};font-weight:700">Total</td>\`+
-          \`<td style="\${tdStyle()};text-align:right;font-weight:700">\${rands(cashSum)}</td>\`+
-          \`<td style="\${tdStyle()};text-align:right;font-weight:700">\${rands(cardSum)}</td>\`+
-          \`<td style="\${tdStyle()};text-align:right;font-weight:800">\${rands(totalSum)}</td>\`;
-        tb1.appendChild(trTot);
+          '<td style="padding:8px;border-top:2px solid #e5e7eb;font-weight:700">Total</td>'
+        + '<td style="padding:8px;text-align:right;border-top:2px solid #e5e7eb;font-weight:700">'+rands(sc)+'</td>'
+        + '<td style="padding:8px;text-align:right;border-top:2px solid #e5e7eb;font-weight:700">'+rands(cc)+'</td>'
+        + '<td style="padding:8px;text-align:right;border-top:2px solid #e5e7eb;font-weight:700">'+rands(tc)+'</td>';
+        tb.appendChild(trTot);
+
+        showTable(boxId);
+      } catch(e){
+        showError(boxId, (e && e.message) || 'Failed to load wallet cashup.');
       }
     }
 
-    // ---- Sales by item
-    tb2.innerHTML = '';
-    if (salesRes.__error){
-      tb2.innerHTML = \`<tr><td style="\${tdStyle()}" colspan="3">Error: \${salesRes.__error}</td></tr>\`;
-    } else {
-      const items = normalizeSales(salesRes);
-      if (!items.length){
-        tb2.innerHTML = \`<tr><td style="\${tdStyle()}" colspan="3" class="muted">No bar sales yet.</td></tr>\`;
-      } else {
-        let total=0;
+    // Load Sales
+    async function loadSales(){
+      const boxId = 'bcItems';
+      try{
+        const j = await fetch('/api/admin/bar/cashup/sales').then(r=>r.json());
+        const items = (j && j.items) || [];
+        if (!items.length) return showEmpty(boxId);
+
+        const tb = document.querySelector('#'+boxId+'-tbl tbody');
+        tb.innerHTML = '';
+        let total = 0;
         items.forEach(it=>{
-          total += it.cents||0;
-          const tr=document.createElement('tr');
+          total += Number(it.cents||0);
+          const tr = document.createElement('tr');
           tr.innerHTML =
-            \`<td style="\${tdStyle()}">\${esc(it.item_name||('Item '+(it.item_id||'')))}</td>\`+
-            \`<td style="\${tdStyle()};text-align:right">\${it.qty||0}</td>\`+
-            \`<td style="\${tdStyle()};text-align:right;font-weight:600">\${rands(it.cents||0)}</td>\`;
-          tb2.appendChild(tr);
+            '<td style="padding:8px;border-bottom:1px solid #e5e7eb">'+(it.item_name || ('Item '+(it.item_id||'')))+'</td>'
+          + '<td style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">'+(Number(it.qty||0))+'</td>'
+          + '<td style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">'+rands(it.cents||0)+'</td>'
+          + '<td style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb"></td>';
+          tb.appendChild(tr);
         });
+
+        // Totals row
         const trTot = document.createElement('tr');
         trTot.innerHTML =
-          \`<td style="\${tdStyle()};font-weight:700">Total</td>\`+
-          \`<td style="\${tdStyle()};text-align:right"></td>\`+
-          \`<td style="\${tdStyle()};text-align:right;font-weight:800">\${rands(total)}</td>\`;
-        tb2.appendChild(trTot);
+          '<td style="padding:8px;border-top:2px solid #e5e7eb;font-weight:700">Total</td>'
+        + '<td style="padding:8px;text-align:right;border-top:2px solid #e5e7eb;font-weight:700"></td>'
+        + '<td style="padding:8px;text-align:right;border-top:2px solid #e5e7eb;font-weight:700">'+rands(total)+'</td>'
+        + '<td style="padding:8px;text-align:right;border-top:2px solid #e5e7eb;font-weight:700"></td>';
+        tb.appendChild(trTot);
+
+        showTable(boxId);
+      } catch(e){
+        showError(boxId, (e && e.message) || 'Failed to load bar sales.');
       }
     }
+
+    // Kick off loads in parallel
+    loadTopups();
+    loadSales();
   };
 })();
 `;
