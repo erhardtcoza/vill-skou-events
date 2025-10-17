@@ -96,6 +96,23 @@ async function getWalletByMobile(env, mobileDigits) {
   ).bind(`%${mobileDigits}%`).first();
 }
 
+/* Quick list of movements for a wallet (paged) */
+async function listMovements(env, walletId, limit = 50, offset = 0) {
+  // prefer new wallet_movements; if table absent, return empty list gracefully
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT id, wallet_id, kind, amount_cents, meta_json, created_at, ref
+         FROM wallet_movements
+        WHERE wallet_id=?1
+        ORDER BY created_at DESC
+        LIMIT ?2 OFFSET ?3`
+    ).bind(walletId, limit, offset).all();
+    return rows.results || [];
+  } catch {
+    return [];
+  }
+}
+
 /* ----------------------------- routes ------------------------------ */
 export function mountWallet(router) {
 
@@ -113,6 +130,25 @@ export function mountWallet(router) {
     const w = await getWalletByMobile(env, s);
     if (!w) return bad(404, "not_found");
     return json({ ok: true, wallet: w });
+  });
+
+  // Movements (for audit / quick panel)
+  router.add("GET", "/api/wallets/:id/movements", async (req, env, _ctx, { id }) => {
+    const u = new URL(req.url);
+    const limit = Math.min(Math.max(Number(u.searchParams.get("limit") || 50), 1), 200);
+    const offset = Math.max(Number(u.searchParams.get("offset") || 0), 0);
+    const w = await getWalletById(env, id);
+    if (!w) return bad(404, "not_found");
+    const items = await listMovements(env, String(id), limit, offset);
+    return json({ ok: true, wallet: { id: w.id, name: w.name, balance_cents: w.balance_cents, version: w.version }, items, limit, offset });
+  });
+
+  // Summary (balance + last 10 movements)
+  router.add("GET", "/api/wallets/:id/summary", async (_req, env, _ctx, { id }) => {
+    const w = await getWalletById(env, id);
+    if (!w) return bad(404, "not_found");
+    const items = await listMovements(env, String(id), 10, 0);
+    return json({ ok: true, wallet: w, recent: items });
   });
 
   // Create/register wallet (accepts either endpoint)
@@ -163,7 +199,7 @@ export function mountWallet(router) {
   router.add("POST", "/api/wallets/create", handleCreate);
   router.add("POST", "/api/wallets/register", handleCreate); // legacy alias
 
-  // Top-up
+  // Top-up (original)
   router.add("POST", "/api/wallets/topup", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const id = String(b?.wallet_id || b?.walletId || "");
@@ -216,7 +252,20 @@ export function mountWallet(router) {
     return json({ ok: true, wallet: w2 });
   });
 
-  // Deduct at bar
+  // Top-up (alias with URL param: /api/wallets/:id/topup)
+  router.add("POST", "/api/wallets/:id/topup", async (req, env, _ctx, { id }) => {
+    let b; try { b = await req.json(); } catch { b = {}; }
+    const amount = Number(b?.amount_cents || b?.amount || 0) | 0;
+    const method = String(b?.method || "cash");
+    if (!id || !amount) return bad(400, "wallet_and_amount_required");
+
+    // Reuse existing handler logic
+    const body = JSON.stringify({ wallet_id: id, amount_cents: amount, method });
+    const proxied = new Request("/api/wallets/topup", { method: "POST", body, headers: { "content-type": "application/json" }});
+    return await router.handle(proxied, env);
+  });
+
+  // Deduct at bar (original)
   router.add("POST", "/api/wallets/:id/deduct", async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const items = Array.isArray(b?.items) ? b.items : [];
@@ -289,5 +338,15 @@ export function mountWallet(router) {
       new_balance_cents: newBal,
       version: newVersion
     });
+  });
+
+  // Purchase (alias: /api/wallets/:id/purchase)
+  router.add("POST", "/api/wallets/:id/purchase", async (req, env, _ctx, { id }) => {
+    let b; try { b = await req.json(); } catch { b = {}; }
+    const items = Array.isArray(b?.items) ? b.items : [];
+    const expected_version = Number(b?.expected_version ?? -1);
+    const body = JSON.stringify({ items, expected_version });
+    const proxied = new Request(`/api/wallets/${encodeURIComponent(id)}/deduct`, { method: "POST", body, headers: { "content-type": "application/json" }});
+    return await router.handle(proxied, env);
   });
 }
