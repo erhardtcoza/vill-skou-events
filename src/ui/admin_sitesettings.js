@@ -4,8 +4,8 @@ export const adminSiteSettingsJS = `
 (function (){
   if (!window.AdminPanels) window.AdminPanels = {};
 
-  function esc(s){ return String(s||"").replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])); }
-  function el(html){ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; }
+  const esc = (s)=>String(s||"").replace(/[&<>"]/g,c=>({ "&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;" }[c]||c));
+  const el  = (html)=>{ const d=document.createElement('div'); d.innerHTML=html.trim(); return d.firstElementChild; };
 
   async function api(url, opts){
     const r = await fetch(url, opts);
@@ -25,22 +25,11 @@ export const adminSiteSettingsJS = `
     }, 0);
   };
 
-  // Public switcher for deep-links: window.AdminPanels.settingsSwitch('yoco'|'whatsapp'|'general'|'visitors')
-  window.AdminPanels.settingsSwitch = function(name){
-    const root = document.getElementById('panel-settings');
-    if (!root) return;
-    const tab = root.querySelector('.tab[data-wa="'+name+'"]');
-    if (tab) tab.click();
-  };
-
-  // ------------------------------------------------------------
-  // Settings panel (outer) + sub-tabs
-  // ------------------------------------------------------------
+  // ---------------- OUTER: Settings subtabs ----------------
   window.AdminPanels.settings = async function(){
     const host = document.getElementById("panel-settings");
     host.innerHTML = "";
 
-    // Outer Settings subtabs
     const subtabs = el(
       '<div class="tabs" id="wa-subtabs" style="margin-bottom:10px">'
       + '<div class="tab active" data-wa="general">General</div>'
@@ -49,74 +38,85 @@ export const adminSiteSettingsJS = `
       + '<div class="tab" data-wa="visitors">Past Visitors</div>'
       + '</div>'
     );
-
     const wrap = el('<div id="wa-wrap"></div>');
     host.appendChild(subtabs);
     host.appendChild(wrap);
 
-    /* ---------------- General ---------------- */
+    // ---------- General ----------
     async function renderGeneral(){
-      // Load settings once
-      const j = await api('/api/admin/settings');
-      const s = j.settings || {};
-
       wrap.innerHTML =
-        '<div class="card">'
-        +  '<h2 style="margin:0 0 10px">General</h2>'
-        +  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end">'
-        +    '<label>Public Base URL<br><input id="gen_base" style="width:100%" placeholder="https://events.example.com" value="'+esc(s.PUBLIC_BASE_URL||'')+'"></label>'
-        +    '<div></div>'
-        +    '<label>Site Name<br><input id="gen_site_name" style="width:100%" value="'+esc(s.SITE_NAME||'')+'"></label>'
-        +    '<label>Site Logo URL<br><input id="gen_site_logo" style="width:100%" value="'+esc(s.SITE_LOGO_URL||'')+'"></label>'
-        +    '<div style="grid-column:1/-1"><button id="gen_save" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save</button></div>'
-        +  '</div>'
-        +'</div>';
+        '<div class="card" style="padding:16px">'
+        + '<h2 style="margin:0 0 12px">General</h2>'
+        + '<div id="gen-err" class="muted" style="display:none;color:#b42318;margin-bottom:8px"></div>'
+        + '<div id="gen-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end"></div>'
+        + '</div>';
 
-      document.getElementById('gen_save').onclick = async ()=>{
-        const updates = {
-          PUBLIC_BASE_URL: document.getElementById('gen_base').value.trim(),
-          SITE_NAME:       document.getElementById('gen_site_name').value.trim(),
-          SITE_LOGO_URL:   document.getElementById('gen_site_logo').value.trim()
+      const body = document.getElementById('gen-body');
+      const err  = document.getElementById('gen-err');
+
+      try{
+        const j = await api('/api/admin/settings');
+        const s = j.settings || {};
+        body.innerHTML =
+\`  <label>Site Name<br><input id="gen_site" style="width:100%" value="\${esc(s.SITE_NAME||'')}"></label>
+    <label>Logo URL<br><input id="gen_logo" style="width:100%" value="\${esc(s.SITE_LOGO_URL||'')}"></label>
+    <label style="grid-column:1/-1">Public Base URL<br><input id="gen_base" style="width:100%" placeholder="https://example.com" value="\${esc(s.PUBLIC_BASE_URL||'')}"></label>
+    <div style="grid-column:1/-1"><button id="gen_save" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save</button></div>\`;
+
+        document.getElementById('gen_save').onclick = async ()=>{
+          try{
+            await api('/api/admin/settings/update', {
+              method:'POST', headers:{'content-type':'application/json'},
+              body: JSON.stringify({
+                updates:{
+                  SITE_NAME: document.getElementById('gen_site').value.trim(),
+                  SITE_LOGO_URL: document.getElementById('gen_logo').value.trim(),
+                  PUBLIC_BASE_URL: document.getElementById('gen_base').value.trim(),
+                }
+              })
+            });
+            alert('Saved.');
+          }catch(e){
+            err.style.display='block'; err.textContent = e.message || 'Save failed';
+          }
         };
-        await api('/api/admin/settings/update', {
-          method:'POST', headers:{'content-type':'application/json'},
-          body: JSON.stringify({ updates })
-        });
-        alert('Saved.');
-      };
+      }catch(e){
+        err.style.display='block'; err.textContent = e.message || 'Failed to load settings';
+      }
     }
 
-    /* ---------------- WhatsApp (with inner subtabs) ---------------- */
+    // ---------- WhatsApp (lazy) ----------
     function renderWhatsApp(){
       wrap.innerHTML =
         '<div class="tabs" id="wa-in-tabs" style="margin:6px 0 10px">'
-        +  '<div class="tab wa-subtab active" data-wasub="wa_settings">Settings</div>'
-        +  '<div class="tab wa-subtab" data-wasub="wa_templates">Templates</div>'
-        +  '<div class="tab wa-subtab" data-wasub="wa_inbox">Inbox</div>'
-        +  '<div class="tab wa-subtab" data-wasub="wa_tpl_mappings">Template Mappings</div>'
-        +  '<div class="tab wa-subtab" data-wasub="wa_send">Send</div>'
-        +'</div>'
-        +'<div id="wa-inner"></div>';
+          + '<div class="tab wa-subtab active" data-wasub="wa_settings">Settings</div>'
+          + '<div class="tab wa-subtab" data-wasub="wa_templates">Templates</div>'
+          + '<div class="tab wa-subtab" data-wasub="wa_inbox">Inbox</div>'
+          + '<div class="tab wa-subtab" data-wasub="wa_tpl_mappings">Template Mappings</div>'
+          + '<div class="tab wa-subtab" data-wasub="wa_send">Send</div>'
+        + '</div>'
+        + '<div id="wa-inner"></div>';
 
       const inner = document.getElementById('wa-inner');
 
+      // ----- inner renderers (same behaviour as before) -----
       async function paintSettings(){
-        // Pre-fetch first to avoid a blank feel
         const j = await api('/api/admin/settings'); const s = j.settings || {};
         inner.innerHTML =
           '<div class="card">'
-          +  '<h2 style="margin:0 0 10px">WhatsApp · Settings</h2>'
-          +  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end">'
-          +    '<label>Access Token<br><input id="wa_token" style="width:100%" value="'+esc(s.WHATSAPP_TOKEN||s.WA_TOKEN||'')+'"></label>'
-          +    '<label>VERIFY_TOKEN (Webhook verify)<br><input id="verify_token" style="width:100%" value="'+esc(s.VERIFY_TOKEN||"")+'"></label>'
-          +    '<label>Phone Number ID<br><input id="wa_pnid" style="width:100%" value="'+esc(s.PHONE_NUMBER_ID||s.WA_PHONE_NUMBER_ID||"")+'"></label>'
-          +    '<label>Business (WABA) ID<br><input id="wa_waba" style="width:100%" value="'+esc(s.BUSINESS_ID||s.WA_BUSINESS_ID||"")+'"></label>'
-          +    '<label style="grid-column:1/-1"><input type="checkbox" id="wa_auto" '+((String(s.WA_AUTOREPLY_ENABLED||"0")==="1")?'checked':'')+'> Enable auto-reply</label>'
-          +    '<label style="grid-column:1/-1">Auto-reply text<br>'
-          +      '<textarea id="wa_auto_text" rows="3" style="width:100%">'+esc(s.WA_AUTOREPLY_TEXT||"")+'</textarea></label>'
-          +    '<div style="grid-column:1/-1"><button id="wa_save" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save</button></div>'
-          +  '</div>'
-          +'</div>';
+            + '<h2 style="margin:0 0 10px">WhatsApp · Settings</h2>'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end">'
+              + '<label>Access Token<br><input id="wa_token" style="width:100%" value="'+esc(s.WHATSAPP_TOKEN||s.WA_TOKEN||'')+'"></label>'
+              + '<label>VERIFY_TOKEN (Webhook verify)<br><input id="verify_token" style="width:100%" value="'+esc(s.VERIFY_TOKEN||"")+'"></label>'
+              + '<label>Phone Number ID<br><input id="wa_pnid" style="width:100%" value="'+esc(s.PHONE_NUMBER_ID||s.WA_PHONE_NUMBER_ID||"")+'"></label>'
+              + '<label>Business (WABA) ID<br><input id="wa_waba" style="width:100%" value="'+esc(s.BUSINESS_ID||s.WA_BUSINESS_ID||"")+'"></label>'
+              + '<label style="grid-column:1/-1"><input type="checkbox" id="wa_auto" '
+                  + ((String(s.WA_AUTOREPLY_ENABLED||"0")==="1")?'checked':'') + '> Enable auto-reply</label>'
+              + '<label style="grid-column:1/-1">Auto-reply text<br>'
+                  + '<textarea id="wa_auto_text" rows="3" style="width:100%">'+esc(s.WA_AUTOREPLY_TEXT||"")+'</textarea></label>'
+              + '<div style="grid-column:1/-1"><button id="wa_save" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save</button></div>'
+            + '</div>'
+          + '</div>';
 
         document.getElementById('wa_save').onclick = async ()=>{
           const updates = {
@@ -138,13 +138,13 @@ export const adminSiteSettingsJS = `
       async function paintTemplates(){
         inner.innerHTML =
           '<div class="card">'
-          +  '<h2 style="margin:0 0 10px">Templates</h2>'
-          +  '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
-          +    '<div class="muted">Synced from Meta into <code>wa_templates</code>.</div>'
-          +    '<button id="wa_sync_all" class="tab" style="font-weight:800">Sync Templates</button>'
-          +  '</div>'
-          +  '<div id="waTemplatesBox"><div class="muted">Loading…</div></div>'
-          +'</div>';
+            + '<h2 style="margin:0 0 10px">Templates</h2>'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">'
+              + '<div class="muted">Synced from Meta into <code>wa_templates</code>.</div>'
+              + '<button id="wa_sync_all" class="tab" style="font-weight:800">Sync Templates</button>'
+            + '</div>'
+            + '<div id="waTemplatesBox"></div>'
+          + '</div>';
 
         document.getElementById('wa_sync_all').onclick = async ()=>{
           await api('/api/admin/whatsapp/sync', { method:'POST' });
@@ -165,7 +165,7 @@ export const adminSiteSettingsJS = `
               const comps = JSON.parse(t.components_json||"[]");
               const body = (comps||[]).find(c=>c.type==="BODY");
               bodyText = body?.text||"";
-              const m = bodyText && bodyText.match(/\\{\\{\\d+\\}\\}/g);
+              const m = bodyText.match(/\\{\\{\\d+\\}\\}/g);
               vars = m ? m.length : 0;
             }catch{}
             const key = t.name + ':' + t.language;
@@ -174,13 +174,13 @@ export const adminSiteSettingsJS = `
             card.style = 'border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin:10px 0;background:#fff';
             card.innerHTML =
               '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">'
-              +  '<div><div style="font-weight:700">'+esc(t.name)+' <span style="opacity:.6">('+esc(t.language)+')</span></div>'
-              +  '<div style="font-size:12px;opacity:.75">Status: '+esc(t.status||"—")+' · Category: '+esc(t.category||"—")+' · Vars: '+vars+'</div></div>'
-              +  '<div style="display:flex;gap:8px;flex-wrap:wrap">'
-              +    '<button class="tab js-edit-map" style="font-weight:800">View / Edit Mapping</button>'
-              +    '<button class="tab js-resync" style="font-weight:800">Re-sync from Meta</button>'
-              +  '</div>'
-              +'</div>'
+                + '<div><div style="font-weight:700">'+esc(t.name)+' <span style="opacity:.6">('+esc(t.language)+')</span></div>'
+                + '<div style="font-size:12px;opacity:.75">Status: '+esc(t.status||"—")+' · Category: '+esc(t.category||"—")+' · Vars: '+vars+'</div></div>'
+                + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+                  + '<button class="tab js-edit-map" style="font-weight:800">View / Edit Mapping</button>'
+                  + '<button class="tab js-resync" style="font-weight:800">Re-sync from Meta</button>'
+                + '</div>'
+              + '</div>'
               + (bodyText ? '<pre style="white-space:pre-wrap;background:#f8fafc;border:1px solid #eef2f7;padding:8px;border-radius:8px;margin:10px 0 0">'+esc(bodyText)+'</pre>' : '');
 
             frag.appendChild(card);
@@ -206,21 +206,21 @@ export const adminSiteSettingsJS = `
       async function paintInbox(){
         inner.innerHTML =
           '<div class="card">'
-          +  '<h2 style="margin:0 0 10px">Inbox</h2>'
-          +  '<div id="wa-inbox"></div>'
-          +'</div>';
+            + '<h2 style="margin:0 0 10px">Inbox</h2>'
+            + '<div id="wa-inbox"></div>'
+          + '</div>';
 
         const box = document.getElementById('wa-inbox');
         box.innerHTML =
           '<div class="muted" style="margin-bottom:10px">Latest inbound messages.</div>'
           + '<table style="width:100%;border-collapse:collapse">'
           + '<thead><tr>'
-          +   '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">From</th>'
-          +   '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">To</th>'
-          +   '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Type</th>'
-          +   '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Text</th>'
-          +   '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">When</th>'
-          +   '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb"></th>'
+          + '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">From</th>'
+          + '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">To</th>'
+          + '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Type</th>'
+          + '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">Text</th>'
+          + '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb">When</th>'
+          + '<th style="text-align:left;padding:8px;border-bottom:1px solid #e5e7eb"></th>'
           + '</tr></thead><tbody id="wa_inbox_body"></tbody></table>';
 
         async function fill(){
@@ -236,8 +236,8 @@ export const adminSiteSettingsJS = `
               + '<td style="padding:8px;border-bottom:1px solid #e5e7eb">'+esc(m.body||'')+'</td>'
               + '<td style="padding:8px;border-bottom:1px solid #e5e7eb">'+(m.received_at? new Date(m.received_at*1000).toLocaleString():'')+'</td>'
               + '<td style="padding:8px;border-bottom:1px solid #e5e7eb">'
-              +   '<button class="tab" data-reply="'+esc(m.id)+'" data-msisdn="'+esc(m.from_msisdn||'')+'" style="font-weight:800">Reply</button> '
-              +   '<button class="tab" style="background:#b42318;color:#fff;border-color:#b42318;font-weight:800" data-del="'+esc(m.id)+'">Delete</button>'
+                + '<button class="tab" data-reply="'+esc(m.id)+'" data-msisdn="'+esc(m.from_msisdn||'')+'" style="font-weight:800">Reply</button> '
+                + '<button class="tab" style="background:#b42318;color:#fff;border-color:#b42318;font-weight:800" data-del="'+esc(m.id)+'">Delete</button>'
               + '</td>';
             tb.appendChild(tr);
           }
@@ -271,9 +271,9 @@ export const adminSiteSettingsJS = `
       async function paintMappings(){
         inner.innerHTML =
           '<div class="card">'
-          +  '<h2 style="margin:0 0 10px">Template Mappings</h2>'
-          +  '<div id="waTplMapList"><p>Loading…</p></div>'
-          +'</div>';
+            + '<h2 style="margin:0 0 10px">Template Mappings</h2>'
+            + '<div id="waTplMapList"><p>Loading…</p></div>'
+          + '</div>';
 
         const listEl = document.getElementById("waTplMapList");
         const [tplRes, mapRes, schemaRes] = await Promise.all([
@@ -290,7 +290,7 @@ export const adminSiteSettingsJS = `
         const mapByKeyCtx = {};
         for (const m of mappings) mapByKeyCtx[m.template_key + ":" + m.context] = m;
 
-        const idFromKey = function(k){ return 'tpl-' + String(k).replace(/[^a-z0-9]+/ig, '-'); };
+        const idFromKey = k => 'tpl-' + String(k).replace(/[^a-z0-9]+/ig, '-');
 
         const frag = document.createElement('div');
         const hdr  = document.createElement('div');
@@ -299,19 +299,19 @@ export const adminSiteSettingsJS = `
           + '<a href="#settings:whatsapp" class="tab" id="waBackToTemplates" style="font-weight:800">← Back to Templates</a>'
           + '</div>';
         frag.appendChild(hdr);
-        hdr.querySelector('#waBackToTemplates').onclick = function(e){ e.preventDefault(); switchInner('wa_templates'); };
+        hdr.querySelector('#waBackToTemplates').onclick = (e)=>{ e.preventDefault(); switchInner('wa_templates'); };
 
-        templates.forEach(function(tpl){
+        for (const tpl of templates){
           const key = tpl.name + ':' + tpl.language;
-          var text = "", vars = [];
+          let text = "", vars = [];
           try {
             const comps = JSON.parse(tpl.components_json||"[]");
-            const body  = (comps||[]).find(function(c){ return c.type==="BODY"; });
-            text = body && body.text || "";
-            vars = Array.from((text.match(/\\{\\{(\\d+)\\}\\}/g)||[])).map(function(v){ return v.replace(/[^0-9]/g,''); });
+            const body  = (comps||[]).find(c=>c.type==="BODY");
+            text = body?.text||"";
+            vars = [...text.matchAll(/\\{\\{(\\d+)\\}\\}/g)].map(m=>m[1]);
           } catch {}
 
-          const existed = ["order","ticket","visitor"].map(function(ctx){ return mapByKeyCtx[key+":"+ctx]; }).find(Boolean);
+          const existed = ["order","ticket","visitor"].map(ctx => mapByKeyCtx[key+":"+ctx]).find(Boolean);
           const currentCtx = existed ? existed.context : "";
           const mapObj = existed ? JSON.parse(existed.mapping_json) : { vars: [] };
 
@@ -345,24 +345,23 @@ export const adminSiteSettingsJS = `
           function buildFieldSelect(initial){
             const sel = document.createElement('select');
             sel.className = 'valueField';
-            Object.entries(dbSchema).forEach(function(pair){
-              const table = pair[0], cols = pair[1]||[];
+            for (const [table, cols] of Object.entries(dbSchema)){
               const og = document.createElement('optgroup');
               og.label = table;
-              cols.forEach(function(c){
+              (cols||[]).forEach(c=>{
                 const o = document.createElement('option');
                 o.value = table + '.' + c;
                 o.text  = table + '.' + c;
                 og.appendChild(o);
               });
               sel.appendChild(og);
-            });
+            }
             if (initial) sel.value = initial;
             return sel;
           }
 
-          vars.forEach(function(v){
-            const ev = (mapObj.vars||[]).find(function(x){ return String(x.variable)===String(v); }) || {};
+          for (const v of vars){
+            const ev = (mapObj.vars||[]).find(x=>String(x.variable)===String(v)) || {};
             const tr = document.createElement('tr');
 
             const srcSel = el(
@@ -377,6 +376,7 @@ export const adminSiteSettingsJS = `
             const fieldSel = buildFieldSelect(ev.source==='field' ? ev.value : '');
             const textInp  = el('<input class="valueText" placeholder="Value (literal) or expression">');
             if (ev.source!=='field') textInp.value = ev.value || '';
+
             const fallbackInp = el('<input class="fallback" placeholder="Fallback (optional)" value="'+esc(ev.fallback||'')+'">');
 
             const srcTd = document.createElement('td'); srcTd.appendChild(srcSel);
@@ -407,14 +407,14 @@ export const adminSiteSettingsJS = `
             tr.appendChild(fallbackInp);
 
             tb.appendChild(tr);
-          });
+          }
 
-          card.querySelector('.saveBtn').onclick = async function(){
+          card.querySelector('.saveBtn').onclick = async ()=>{
             const context = card.querySelector('.ctx').value.trim();
             if (!context) return alert('Please select context first');
-            const rows = Array.from(card.querySelectorAll('tbody tr'));
+            const rows = [...card.querySelectorAll('tbody tr')];
             const mapping = {
-              vars: rows.map(function(r){
+              vars: rows.map(r => {
                 const variable = r.children[0].innerText.replace(/[{}]/g,'');
                 const src = r.querySelector('.source').value;
                 const val = src === 'field'
@@ -430,8 +430,8 @@ export const adminSiteSettingsJS = `
             });
             alert('Mapping saved.');
           };
-          card.querySelector('.jumpBack').onclick = function(e){ e.preventDefault(); switchInner('wa_templates'); };
-        });
+          card.querySelector('.jumpBack').onclick = (e)=>{ e.preventDefault(); switchInner('wa_templates'); };
+        }
 
         listEl.innerHTML = '';
         listEl.appendChild(frag);
@@ -440,47 +440,47 @@ export const adminSiteSettingsJS = `
         if (focusKey){
           delete window.__WA_focusTemplateKey;
           const target = document.getElementById(idFromKey(focusKey));
-          if (target){ target.scrollIntoView({ behavior:'smooth', block:'start' }); target.style.outline='2px solid #0a7d2b'; setTimeout(function(){ target.style.outline='none'; }, 1500); }
+          if (target){ target.scrollIntoView({ behavior:'smooth', block:'start' }); target.style.outline='2px solid #0a7d2b'; setTimeout(()=>{ target.style.outline='none'; }, 1500); }
         }
       }
 
       function paintSend(){
         inner.innerHTML =
           '<div class="card">'
-          +  '<h2 style="margin:0 0 10px">Send</h2>'
-          +  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
-          +    '<div class="card" style="padding:12px">'
-          +      '<h3 style="margin:0 0 8px">Send text</h3>'
-          +      '<label>Phone (MSISDN)<br><input id="wa_txt_to" style="width:100%" placeholder="277xxxxxxxx"></label>'
-          +      '<label>Message<br><textarea id="wa_txt_body" rows="3" style="width:100%"></textarea></label>'
-          +      '<button id="wa_txt_send" class="tab" style="font-weight:800">Send text</button>'
-          +    '</div>'
-          +    '<div class="card" style="padding:12px">'
-          +      '<h3 style="margin:0 0 8px">Send template (quick test)</h3>'
-          +      '<label>Phone (MSISDN)<br><input id="wa_tmpl_to" style="width:100%" placeholder="277xxxxxxxx"></label>'
-          +      '<label>Template key (e.g. WA_TMP_ORDER_CONFIRM)<br><input id="wa_tmpl_key" style="width:100%" value="WA_TMP_ORDER_CONFIRM"></label>'
-          +      '<label>Variables (comma separated)<br><input id="wa_tmpl_vars" style="width:100%" placeholder="Piet, CXAHFG"></label>'
-          +      '<button id="wa_tmpl_send" class="tab" style="font-weight:800">Send template</button>'
-          +    '</div>'
-          +  '</div>'
-          +'</div>';
+            + '<h2 style="margin:0 0 10px">Send</h2>'
+            + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+              + '<div class="card" style="padding:12px">'
+                + '<h3 style="margin:0 0 8px">Send text</h3>'
+                + '<label>Phone (MSISDN)<br><input id="wa_txt_to" style="width:100%" placeholder="277xxxxxxxx"></label>'
+                + '<label>Message<br><textarea id="wa_txt_body" rows="3" style="width:100%"></textarea></label>'
+                + '<button id="wa_txt_send" class="tab" style="font-weight:800">Send text</button>'
+              + '</div>'
+              + '<div class="card" style="padding:12px">'
+                + '<h3 style="margin:0 0 8px">Send template (quick test)</h3>'
+                + '<label>Phone (MSISDN)<br><input id="wa_tmpl_to" style="width:100%" placeholder="277xxxxxxxx"></label>'
+                + '<label>Template key (e.g. WA_TMP_ORDER_CONFIRM)<br><input id="wa_tmpl_key" style="width:100%" value="WA_TMP_ORDER_CONFIRM"></label>'
+                + '<label>Variables (comma separated)<br><input id="wa_tmpl_vars" style="width:100%" placeholder="Piet, CXAHFG"></label>'
+                + '<button id="wa_tmpl_send" class="tab" style="font-weight:800">Send template</button>'
+              + '</div>'
+            + '</div>'
+          + '</div>';
 
-        document.getElementById('wa_txt_send').onclick = async function(){
+        document.getElementById('wa_txt_send').onclick = async ()=>{
           const to = document.getElementById('wa_txt_to').value.trim();
           const text = document.getElementById('wa_txt_body').value;
           if (!to || !text.trim()) return alert('Enter phone and message.');
           await api('/api/admin/whatsapp/inbox/0/reply', {
             method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ text, to })
-          }).catch(async function(){
+          }).catch(async ()=>{
             await api('/api/admin/whatsapp/send-text', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ to, text }) });
           });
           alert('Sent.');
         };
 
-        document.getElementById('wa_tmpl_send').onclick = async function(){
+        document.getElementById('wa_tmpl_send').onclick = async ()=>{
           const to = document.getElementById('wa_tmpl_to').value.trim();
           const template_key = document.getElementById('wa_tmpl_key').value.trim();
-          const vars = (document.getElementById('wa_tmpl_vars').value||'').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+          const vars = (document.getElementById('wa_tmpl_vars').value||'').split(',').map(s=>s.trim()).filter(Boolean);
           if (!to || !template_key) return alert('Enter phone and template key.');
           await api('/api/admin/whatsapp/test', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ to, template_key, vars }) });
           alert('Sent.');
@@ -488,7 +488,7 @@ export const adminSiteSettingsJS = `
       }
 
       function switchInner(name){
-        document.querySelectorAll('#wa-in-tabs .wa-subtab').forEach(function(x){ x.classList.toggle('active', x.dataset.wasub===name); });
+        document.querySelectorAll('#wa-in-tabs .wa-subtab').forEach(x=>x.classList.toggle('active', x.dataset.wasub===name));
         if (name==='wa_settings')       paintSettings();
         else if (name==='wa_templates') paintTemplates();
         else if (name==='wa_inbox')     paintInbox();
@@ -496,90 +496,96 @@ export const adminSiteSettingsJS = `
         else if (name==='wa_send')      paintSend();
       }
 
-      document.querySelectorAll('#wa-in-tabs .wa-subtab').forEach(function(t){ t.onclick = function(){ switchInner(t.dataset.wasub); }; });
-      switchInner('wa_settings');
+      document.querySelectorAll('#wa-in-tabs .wa-subtab').forEach(t=>{
+        t.onclick = ()=> switchInner(t.dataset.wasub);
+      });
+
+      switchInner('wa_settings'); // default inner tab
     }
 
-    /* ---------------- Yoco ---------------- */
+    // ---------- Yoco ----------
     async function renderYoco(){
-      const j = await api('/api/admin/settings'); const s = j.settings || {};
       wrap.innerHTML =
-        '<div class="card">'
-        +  '<h2 style="margin:0 0 10px">Yoco</h2>'
-        +  '<div class="muted" style="margin-bottom:8px">Configure API keys and OAuth details.</div>'
-        +  '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end">'
-        +    '<label>Mode<br><select id="y_mode" style="width:100%">'
-        +      '<option value="test" '+((s.YOCO_MODE||'test')==='test'?'selected':'')+'>test</option>'
-        +      '<option value="live" '+((s.YOCO_MODE||'test')==='live'?'selected':'')+'>live</option>'
-        +    '</select></label>'
-        +    '<div></div>'
+        '<div class="card" style="padding:16px">'
+        + '<h2 style="margin:0 0 12px">Yoco</h2>'
+        + '<div id="yoco-err" class="muted" style="display:none;color:#b42318;margin-bottom:8px"></div>'
+        + '<div id="yoco-body" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:end"></div>'
+        + '</div>';
+      const body = document.getElementById('yoco-body');
+      const err  = document.getElementById('yoco-err');
 
-        +    '<label>Test Public Key<br><input id="y_test_pub" style="width:100%" value="'+esc(s.YOCO_TEST_PUBLIC_KEY||'')+'"></label>'
-        +    '<label>Test Secret Key<br><input id="y_test_sec" style="width:100%" value="'+esc(s.YOCO_TEST_SECRET_KEY||'')+'"></label>'
+      try{
+        const j = await api('/api/admin/settings');
+        const s = j.settings || {};
+        body.innerHTML =
+\`<label>Mode (test|live)<br><input id="yo_mode" style="width:100%" value="\${esc(s.YOCO_MODE||'')}"></label>
+  <label>Client ID<br><input id="yo_cid" style="width:100%" value="\${esc(s.YOCO_CLIENT_ID||'')}"></label>
+  <label>Redirect URI<br><input id="yo_redirect" style="width:100%" value="\${esc(s.YOCO_REDIRECT_URI||'')}"></label>
+  <label>Required Scopes<br><input id="yo_scopes" style="width:100%" value="\${esc(s.YOCO_REQUIRED_SCOPES||'')}"></label>
+  <label>State<br><input id="yo_state" style="width:100%" value="\${esc(s.YOCO_STATE||'')}"></label>
+  <label>Test Public Key<br><input id="yo_test_pub" style="width:100%" value="\${esc(s.YOCO_TEST_PUBLIC_KEY||'')}"></label>
+  <label>Test Secret Key<br><input id="yo_test_sec" style="width:100%" value="\${esc(s.YOCO_TEST_SECRET_KEY||'')}"></label>
+  <label>Live Public Key<br><input id="yo_live_pub" style="width:100%" value="\${esc(s.YOCO_LIVE_PUBLIC_KEY||'')}"></label>
+  <label>Live Secret Key<br><input id="yo_live_sec" style="width:100%" value="\${esc(s.YOCO_LIVE_SECRET_KEY||'')}"></label>
+  <div style="grid-column:1/-1"><button id="yo_save" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save</button></div>\`;
 
-        +    '<label>Live Public Key<br><input id="y_live_pub" style="width:100%" value="'+esc(s.YOCO_LIVE_PUBLIC_KEY||'')+'"></label>'
-        +    '<label>Live Secret Key<br><input id="y_live_sec" style="width:100%" value="'+esc(s.YOCO_LIVE_SECRET_KEY||'')+'"></label>'
-
-        +    '<label>Client ID<br><input id="y_client" style="width:100%" value="'+esc(s.YOCO_CLIENT_ID||'')+'"></label>'
-        +    '<label>Redirect URI<br><input id="y_redirect" style="width:100%" value="'+esc(s.YOCO_REDIRECT_URI||'')+'"></label>'
-
-        +    '<label>Required Scopes (comma-separated)<br><input id="y_scopes" style="width:100%" value="'+esc(s.YOCO_REQUIRED_SCOPES||'')+'"></label>'
-        +    '<label>State<br><input id="y_state" style="width:100%" value="'+esc(s.YOCO_STATE||'')+'"></label>'
-
-        +    '<div style="grid-column:1/-1"><button id="y_save" class="tab" style="font-weight:800;background:#0a7d2b;color:#fff;border-color:#0a7d2b">Save</button></div>'
-        +  '</div>'
-        +'</div>';
-
-      document.getElementById('y_save').onclick = async function(){
-        const updates = {
-          YOCO_MODE: document.getElementById('y_mode').value,
-          YOCO_TEST_PUBLIC_KEY: document.getElementById('y_test_pub').value.trim(),
-          YOCO_TEST_SECRET_KEY: document.getElementById('y_test_sec').value.trim(),
-          YOCO_LIVE_PUBLIC_KEY: document.getElementById('y_live_pub').value.trim(),
-          YOCO_LIVE_SECRET_KEY: document.getElementById('y_live_sec').value.trim(),
-          YOCO_CLIENT_ID: document.getElementById('y_client').value.trim(),
-          YOCO_REDIRECT_URI: document.getElementById('y_redirect').value.trim(),
-          YOCO_REQUIRED_SCOPES: document.getElementById('y_scopes').value.trim(),
-          YOCO_STATE: document.getElementById('y_state').value.trim()
+        document.getElementById('yo_save').onclick = async ()=>{
+          try{
+            await api('/api/admin/settings/update', {
+              method:'POST', headers:{'content-type':'application/json'},
+              body: JSON.stringify({ updates:{
+                YOCO_MODE: document.getElementById('yo_mode').value.trim(),
+                YOCO_CLIENT_ID: document.getElementById('yo_cid').value.trim(),
+                YOCO_REDIRECT_URI: document.getElementById('yo_redirect').value.trim(),
+                YOCO_REQUIRED_SCOPES: document.getElementById('yo_scopes').value.trim(),
+                YOCO_STATE: document.getElementById('yo_state').value.trim(),
+                YOCO_TEST_PUBLIC_KEY: document.getElementById('yo_test_pub').value.trim(),
+                YOCO_TEST_SECRET_KEY: document.getElementById('yo_test_sec').value.trim(),
+                YOCO_LIVE_PUBLIC_KEY: document.getElementById('yo_live_pub').value.trim(),
+                YOCO_LIVE_SECRET_KEY: document.getElementById('yo_live_sec').value.trim(),
+              }})
+            });
+            alert('Saved.');
+          }catch(e){
+            err.style.display='block'; err.textContent = e.message || 'Save failed';
+          }
         };
-        await api('/api/admin/settings/update', {
-          method:'POST', headers:{'content-type':'application/json'},
-          body: JSON.stringify({ updates })
-        });
-        alert('Saved.');
-      };
+      }catch(e){
+        err.style.display='block'; err.textContent = e.message || 'Failed to load Yoco settings';
+      }
     }
 
-    /* ---------------- Past Visitors ---------------- */
+    // ---------- Past Visitors (placeholder UI) ----------
     async function renderVisitors(){
-      // Minimal stub: you can wire to a real endpoint when ready
       wrap.innerHTML =
-        '<div class="card">'
-        +  '<h2 style="margin:0 0 10px">Past Visitors</h2>'
-        +  '<div class="muted">This section can list historical WhatsApp send-outs or onsite ticket scans per visitor when the endpoint is available.</div>'
-        +'</div>';
+        '<div class="card" style="padding:16px">'
+        + '<h2 style="margin:0 0 12px">Past Visitors</h2>'
+        + '<p class="muted" style="margin:0">Data source not wired yet. If you have an API for visitors, I can plug it in here (table + filters).</p>'
+        + '</div>';
     }
 
-    // Outer tabs switch
-    host.querySelectorAll('#wa-subtabs .tab').forEach(function(t){
-      t.onclick = function(){
-        host.querySelectorAll('#wa-subtabs .tab').forEach(function(x){ x.classList.remove('active'); });
+    // Wire outer tabs
+    host.querySelectorAll('#wa-subtabs .tab').forEach(t=>{
+      t.onclick = ()=>{
+        host.querySelectorAll('#wa-subtabs .tab').forEach(x=>x.classList.remove('active'));
         t.classList.add('active');
         const sec = t.dataset.wa;
-        if      (sec === 'general')  renderGeneral();
+        if (sec === 'general')  renderGeneral();
         else if (sec === 'whatsapp') renderWhatsApp();
-        else if (sec === 'yoco')     renderYoco();
+        else if (sec === 'yoco') renderYoco();
         else if (sec === 'visitors') renderVisitors();
       };
     });
 
-    // Default subtab: honor deep-link if provided
+    // Default: General (fast), but preserve deep-link if present
     const hash = (location.hash||'');
-    if (hash.startsWith('#settings:')){
-      const sub = (hash.split(':')[1]||'whatsapp').toLowerCase();
-      window.AdminPanels.settingsSwitch(sub);
+    if (hash.startsWith('#settings:whatsapp')) {
+      host.querySelector('[data-wa="whatsapp"]').click();
+    } else if (hash.startsWith('#settings:yoco')) {
+      host.querySelector('[data-wa="yoco"]').click();
+    } else if (hash.startsWith('#settings:visitors')) {
+      host.querySelector('[data-wa="visitors"]').click();
     } else {
-      // Start on General (quick), user can switch to WhatsApp
       host.querySelector('[data-wa="general"]').click();
     }
   };
