@@ -49,6 +49,10 @@ export function mountAdmin(router) {
       WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
       WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
       WA_TMP_SKOU_SALES:       "WA_TMP_SKOU_SALES",
+      // new vendor templates (aliases)
+      WA_TMP_VENDOR_WELCOME:   "WA_TMP_VENDOR_WELCOME",
+      WA_TMP_VENDOR_ASSIGNED:  "WA_TMP_VENDOR_ASSIGNED",
+      PUBLIC_BASE_URL:         "PUBLIC_BASE_URL",
     };
     return map[k] || k;
   }
@@ -61,6 +65,10 @@ export function mountAdmin(router) {
       WA_TMP_PAYMENT_CONFIRM: "WA_TMP_PAYMENT_CONFIRM",
       WA_TMP_TICKET_DELIVERY: "WA_TMP_TICKET_DELIVERY",
       WA_TMP_SKOU_SALES:      "WA_TMP_SKOU_SALES",
+      // vendor
+      WA_TMP_VENDOR_WELCOME:  "WA_TMP_VENDOR_WELCOME",
+      WA_TMP_VENDOR_ASSIGNED: "WA_TMP_VENDOR_ASSIGNED",
+      PUBLIC_BASE_URL:        "PUBLIC_BASE_URL",
     };
     return map[k] || k;
   }
@@ -89,6 +97,9 @@ export function mountAdmin(router) {
       "WA_TMP_PAYMENT_CONFIRM",
       "WA_TMP_TICKET_DELIVERY",
       "WA_TMP_SKOU_SALES",
+      // Vendor templates (new)
+      "WA_TMP_VENDOR_WELCOME",
+      "WA_TMP_VENDOR_ASSIGNED",
       "WA_AUTOREPLY_ENABLED",
       "WA_AUTOREPLY_TEXT",
       "WA_MAP_VAR1","WA_MAP_VAR2","WA_MAP_VAR3",
@@ -278,62 +289,6 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
-// Close an open session
-router.add("POST", "/api/admin/pos/session/:id/close", guard(async (req, env, _ctx, { id }) => {
-  const sid = Number(id)||0;
-  const s = await env.DB.prepare(
-    `SELECT id, closed_at FROM pos_sessions WHERE id=?1 LIMIT 1`
-  ).bind(sid).first();
-  if (!s) return bad("Not found", 404);
-  if (s.closed_at) return json({ ok:true, already:true });
-
-  let body; try { body = await req.json(); } catch { body = {}; }
-  const who = (body?.closing_manager || "").trim() || null;
-  const now = Math.floor(Date.now()/1000);
-
-  await env.DB.prepare(
-    `UPDATE pos_sessions SET closed_at=?2, closing_manager=COALESCE(?3, closing_manager) WHERE id=?1`
-  ).bind(sid, now, who).run();
-
-  return json({ ok:true, closed_at: now, closing_manager: who });
-}));
-
-// Delete a session and its payments
-router.add("POST", "/api/admin/pos/session/:id/delete", guard(async (_req, env, _ctx, { id }) => {
-  const sid = Number(id)||0;
-  // optional: sanity — ensure exists
-  const row = await env.DB.prepare(`SELECT id FROM pos_sessions WHERE id=?1`).bind(sid).first();
-  if (!row) return bad("Not found", 404);
-
-  await env.DB.batch([
-    env.DB.prepare(`DELETE FROM pos_payments WHERE session_id=?1`).bind(sid),
-    env.DB.prepare(`DELETE FROM pos_sessions WHERE id=?1`).bind(sid),
-  ]);
-  return json({ ok:true });
-}));
-
-// Details view: session + payments
-router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, _ctx, { id }) => {
-  const sid = Number(id)||0;
-  const s = await env.DB.prepare(
-    `SELECT ps.id, ps.cashier_name, ps.event_id, ps.gate_id, g.name AS gate_name,
-            ps.opened_at, ps.closed_at, ps.closing_manager, ps.opening_float_cents
-       FROM pos_sessions ps
-       LEFT JOIN gates g ON g.id = ps.gate_id
-      WHERE ps.id=?1 LIMIT 1`
-  ).bind(sid).first();
-  if (!s) return bad("Not found", 404);
-
-  const pays = await env.DB.prepare(
-    `SELECT id, session_id, method, amount_cents, reference, created_at
-       FROM pos_payments
-      WHERE session_id=?1
-      ORDER BY id DESC`
-  ).bind(sid).all();
-
-  return json({ ok:true, session: s, payments: pays.results || [] });
-}));
-  
   /* ---------------- Template Mappings CRUD -------------------- */
   router.add("GET", "/api/admin/whatsapp/mappings", guard(async (req, env) => {
     const u = new URL(req.url);
@@ -378,7 +333,6 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
 
   /* ---------------- DB schema (no PRAGMA; parse sqlite_master.sql) -------- */
   router.add("GET", "/api/admin/db/schema", guard(async (_req, env) => {
-    // Helper: parse CREATE TABLE DDL to column names
     function columnsFromCreateSQL(sql) {
       if (!sql) return [];
       const open = sql.indexOf("(");
@@ -386,7 +340,6 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
       if (open < 0 || close < 0 || close <= open) return [];
       const body = sql.slice(open + 1, close);
 
-      // Split on commas not inside parentheses
       const parts = [];
       let buf = "", depth = 0, inQuote = null;
       for (let i = 0; i < body.length; i++) {
@@ -404,14 +357,12 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
       }
       if (buf.trim()) parts.push(buf.trim());
 
-      // Keep only column definitions (skip constraints)
       const cols = [];
       for (const p of parts) {
         const up = p.trim().toUpperCase();
         if (up.startsWith("PRIMARY KEY") || up.startsWith("FOREIGN KEY") || up.startsWith("UNIQUE") || up.startsWith("CHECK") || up.startsWith("CONSTRAINT")) {
           continue;
         }
-        // Column name is first token (may be quoted)
         const m = p.trim().match(/^(`([^`]+)`|"([^"]+)"|'([^']+)'|([A-Za-z0-9_]+))/);
         const name = m ? (m[2] || m[3] || m[4] || m[5]) : null;
         if (name) cols.push(name);
@@ -419,7 +370,6 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
       return cols;
     }
 
-    // List tables
     const tablesRes = await env.DB.prepare(
       `SELECT name, sql
          FROM sqlite_master
@@ -587,75 +537,6 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
     return json({ ok: true, summary: rows.results || [] });
   }));
 
-  // NEW: Tickets list for the UI "All tickets" panel
-  router.add("GET", "/api/admin/tickets/list", guard(async (req, env) => {
-    const u = new URL(req.url);
-    const event_id = Number(u.searchParams.get("event_id") || 0);
-    if (!event_id) return bad("event_id required");
-
-    const q = (u.searchParams.get("q") || "").trim();
-    const state = (u.searchParams.get("state") || "").trim(); // '', 'unused', 'in', 'out', 'void'
-    const limit  = Math.min(Math.max(Number(u.searchParams.get("limit")  || 50), 1), 200);
-    const offset = Math.max(Number(u.searchParams.get("offset") || 0), 0);
-
-    const where = ["tt.event_id = ?1"];
-    const args = [event_id];
-
-    if (state) {
-      where.push("t.state = ?" + (args.length + 1));
-      args.push(state);
-    }
-    if (q) {
-      // match QR, attendee name, phone, order code, buyer name/phone
-      where.push(`(
-        UPPER(t.qr) LIKE UPPER(?${args.length + 1}) OR
-        UPPER(COALESCE(t.attendee_first,'') || ' ' || COALESCE(t.attendee_last,'')) LIKE UPPER(?${args.length + 1}) OR
-        UPPER(COALESCE(t.phone,'')) LIKE UPPER(?${args.length + 1}) OR
-        UPPER(COALESCE(o.short_code,'')) LIKE UPPER(?${args.length + 1}) OR
-        UPPER(COALESCE(o.buyer_name,'')) LIKE UPPER(?${args.length + 1}) OR
-        UPPER(COALESCE(o.buyer_phone,'')) LIKE UPPER(?${args.length + 1})
-      )`);
-      args.push("%" + q + "%");
-    }
-
-    const whereSql = "WHERE " + where.join(" AND ");
-
-    const countRow = await env.DB.prepare(
-      `SELECT COUNT(*) AS c
-         FROM tickets t
-         JOIN ticket_types tt ON tt.id = t.ticket_type_id
-         LEFT JOIN orders o   ON o.id = t.order_id
-        ${whereSql}`
-    ).bind(...args).first();
-
-    const rows = await env.DB.prepare(
-      `SELECT
-          t.id,
-          t.qr,
-          t.state,
-          t.attendee_first,
-          t.attendee_last,
-          t.phone,
-          tt.name AS type_name,
-          o.short_code,
-          o.buyer_name
-         FROM tickets t
-         JOIN ticket_types tt ON tt.id = t.ticket_type_id
-         LEFT JOIN orders o   ON o.id = t.order_id
-        ${whereSql}
-        ORDER BY t.id DESC
-        LIMIT ${limit} OFFSET ${offset}`
-    ).bind(...args).all();
-
-    return json({
-      ok: true,
-      tickets: rows.results || [],
-      total: Number(countRow?.c || 0),
-      limit,
-      offset
-    });
-  }));
-
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim();
     if (!c) return bad("code required");
@@ -729,7 +610,8 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
 
     const vQ = await env.DB.prepare(
       `SELECT id, event_id, name, contact_name, phone, email,
-              stand_number, staff_quota, vehicle_quota
+              stand_number, staff_quota, vehicle_quota,
+              portal_token, portal_status, welcome_sent_at, assigned_sent_at
          FROM vendors
         WHERE event_id = ?1
         ORDER BY name ASC`
@@ -828,6 +710,127 @@ router.add("GET", "/api/admin/pos/session/:id/details", guard(async (_req, env, 
         WHERE id = ?1 AND vendor_id = ?2`
     ).bind(pid, Number(id || 0)).run();
     return json({ ok: true });
+  }));
+
+  /* ---------------- Vendors (extras: portal + WhatsApp) ------------------- */
+  function randToken(len = 22) {
+    const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let s = "";
+    for (let i = 0; i < len; i++) s += A[Math.floor(Math.random() * A.length)];
+    return s;
+  }
+  async function ensureVendorToken(env, id) {
+    const row = await env.DB.prepare(`SELECT portal_token FROM vendors WHERE id=?1`).bind(id).first();
+    let tok = row?.portal_token;
+    if (!tok) {
+      tok = randToken(24);
+      try {
+        await env.DB.prepare(`UPDATE vendors SET portal_token=?1, portal_status=COALESCE(portal_status,'invited') WHERE id=?2`).bind(tok, id).run();
+      } catch {}
+    }
+    return tok;
+  }
+  async function sendWA(env, to, text, tplKey, fallbackName, vars) {
+    if (!to) return;
+    try {
+      const mod = await import("../services/whatsapp.js");
+      // try template via site setting "name:lang"
+      const sel = await getSetting(env, tplKey);
+      if (sel && mod.sendWhatsAppTemplate) {
+        const [name, language='af'] = String(sel).split(":");
+        try {
+          await mod.sendWhatsAppTemplate(env, { to, name, language, variables: (vars||{}) });
+          return true;
+        } catch {}
+      }
+      if (text && mod.sendWhatsAppTextIfSession) {
+        await mod.sendWhatsAppTextIfSession(env, to, text);
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  // Get (or create) vendor portal link
+  router.add("GET", "/api/admin/vendor/:id/portal-link", guard(async (_req, env, _ctx, { id }) => {
+    const v = await env.DB.prepare(`SELECT id, phone FROM vendors WHERE id=?1`).bind(Number(id)).first();
+    if (!v) return bad("not found", 404);
+    const tok = await ensureVendorToken(env, v.id);
+    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+    const link = base ? `${base}/vendor/${tok}` : `/vendor/${tok}`;
+    return json({ ok:true, link, token: tok });
+  }));
+
+  // Send welcome WA
+  router.add("POST", "/api/admin/vendors/:id/send-welcome", guard(async (_req, env, _ctx, { id }) => {
+    const v = await env.DB.prepare(`SELECT id, name, phone FROM vendors WHERE id=?1`).bind(Number(id)).first();
+    if (!v) return bad("not found", 404);
+    const tok = await ensureVendorToken(env, v.id);
+    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+    const link = base ? `${base}/vendor/${tok}` : `/vendor/${tok}`;
+
+    const ok = await sendWA(
+      env,
+      v.phone,
+      `Welkom by die Villiersdorp Skou!\nVoltooi asseblief jou verkoper-profiel:\n${link}\nDankie 🌾`,
+      "WA_TMP_VENDOR_WELCOME",
+      "vendor_welcome",
+      { name: v.name || "", link }
+    );
+
+    try {
+      await env.DB.prepare(
+        `UPDATE vendors SET portal_status=COALESCE(portal_status,'invited'), welcome_sent_at=?1 WHERE id=?2`
+      ).bind(Math.floor(Date.now()/1000), v.id).run();
+    } catch {}
+    return json({ ok:true, sent: ok === true });
+  }));
+
+  // Load submitted profile for review
+  router.add("GET", "/api/admin/vendor/:id/profile", guard(async (_req, env, _ctx, { id }) => {
+    const v = await env.DB.prepare(
+      `SELECT id, name, phone, email, profile_json, portal_status
+         FROM vendors WHERE id=?1 LIMIT 1`
+    ).bind(Number(id)).first();
+    if (!v) return bad("not found", 404);
+    let profile = null;
+    try { profile = v.profile_json ? JSON.parse(v.profile_json) : null; } catch {}
+    return json({ ok:true, vendor: { id:v.id, name:v.name, phone:v.phone, email:v.email, portal_status:v.portal_status }, profile });
+  }));
+
+  // Assign stand info (admin)
+  router.add("POST", "/api/admin/vendor/:id/assign", guard(async (req, env, _ctx, { id }) => {
+    let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
+    const assigned = b?.assigned || {};
+    await env.DB.prepare(
+      `UPDATE vendors SET assigned_json=?1, portal_status='approved' WHERE id=?2`
+    ).bind(JSON.stringify(assigned), Number(id)).run();
+    return json({ ok:true });
+  }));
+
+  // Send assigned pack WA
+  router.add("POST", "/api/admin/vendors/:id/send-assigned", guard(async (_req, env, _ctx, { id }) => {
+    const v = await env.DB.prepare(`SELECT id, name, phone, portal_token FROM vendors WHERE id=?1`).bind(Number(id)).first();
+    if (!v) return bad("not found", 404);
+    const tok = v.portal_token || await ensureVendorToken(env, v.id);
+    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+    const link = base ? `${base}/vendor/${tok}/pack` : `/vendor/${tok}/pack`;
+
+    const ok = await sendWA(
+      env,
+      v.phone,
+      `Jou stalletjie is bevestig ✅\nAlle info & toegangspasse:\n${link}\nSien jou by die Skou!`,
+      "WA_TMP_VENDOR_ASSIGNED",
+      "vendor_assigned",
+      { name: v.name || "", link }
+    );
+
+    try {
+      await env.DB.prepare(
+        `UPDATE vendors SET assigned_sent_at=?1 WHERE id=?2`
+      ).bind(Math.floor(Date.now()/1000), v.id).run();
+    } catch {}
+    return json({ ok:true, sent: ok === true });
   }));
 
   /* ---------------- Users ----------------------- */
