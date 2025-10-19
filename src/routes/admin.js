@@ -331,7 +331,7 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
-  /* ---------------- DB schema (no PRAGMA; parse sqlite_master.sql) -------- */
+  /* ---------------- DB schema (parse sqlite_master.sql) ------------------- */
   router.add("GET", "/api/admin/db/schema", guard(async (_req, env) => {
     function columnsFromCreateSQL(sql) {
       if (!sql) return [];
@@ -738,8 +738,13 @@ export function mountAdmin(router) {
       const sel = await getSetting(env, tplKey);
       if (sel && mod.sendWhatsAppTemplate) {
         const [name, language='af'] = String(sel).split(":");
+        // only include variables if there are any placeholders to fill
+        const hasVars = vars && Object.keys(vars).length > 0;
         try {
-          await mod.sendWhatsAppTemplate(env, { to, name, language, variables: (vars||{}) });
+          const payload = hasVars
+            ? { to, name, language, variables: vars }
+            : { to, name, language };
+          await mod.sendWhatsAppTemplate(env, payload);
           return true;
         } catch {}
       }
