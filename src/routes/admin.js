@@ -2,6 +2,9 @@
 import { json, bad } from "../utils/http.js";
 import { requireRole } from "../utils/auth.js";
 
+function i(n){ return Number(n||0)|0; }
+function s(v){ return v==null ? null : String(v); }
+
 export function mountAdmin(router) {
   const guard = (fn) => requireRole("admin", fn);
 
@@ -49,7 +52,7 @@ export function mountAdmin(router) {
       WA_TMP_PAYMENT_CONFIRM:  "WA_TMP_PAYMENT_CONFIRM",
       WA_TMP_TICKET_DELIVERY:  "WA_TMP_TICKET_DELIVERY",
       WA_TMP_SKOU_SALES:       "WA_TMP_SKOU_SALES",
-      // new vendor templates (aliases)
+      // vendor templates
       WA_TMP_VENDOR_WELCOME:   "WA_TMP_VENDOR_WELCOME",
       WA_TMP_VENDOR_ASSIGNED:  "WA_TMP_VENDOR_ASSIGNED",
       PUBLIC_BASE_URL:         "PUBLIC_BASE_URL",
@@ -65,7 +68,6 @@ export function mountAdmin(router) {
       WA_TMP_PAYMENT_CONFIRM: "WA_TMP_PAYMENT_CONFIRM",
       WA_TMP_TICKET_DELIVERY: "WA_TMP_TICKET_DELIVERY",
       WA_TMP_SKOU_SALES:      "WA_TMP_SKOU_SALES",
-      // vendor
       WA_TMP_VENDOR_WELCOME:  "WA_TMP_VENDOR_WELCOME",
       WA_TMP_VENDOR_ASSIGNED: "WA_TMP_VENDOR_ASSIGNED",
       PUBLIC_BASE_URL:        "PUBLIC_BASE_URL",
@@ -97,7 +99,6 @@ export function mountAdmin(router) {
       "WA_TMP_PAYMENT_CONFIRM",
       "WA_TMP_TICKET_DELIVERY",
       "WA_TMP_SKOU_SALES",
-      // Vendor templates (new)
       "WA_TMP_VENDOR_WELCOME",
       "WA_TMP_VENDOR_ASSIGNED",
       "WA_AUTOREPLY_ENABLED",
@@ -108,7 +109,7 @@ export function mountAdmin(router) {
       "YOCO_REDIRECT_URI","YOCO_REQUIRED_SCOPES","YOCO_STATE",
       "YOCO_TEST_PUBLIC_KEY","YOCO_TEST_SECRET_KEY",
       "YOCO_LIVE_PUBLIC_KEY","YOCO_LIVE_SECRET_KEY",
-      // Site branding
+      // Branding
       "SITE_NAME","SITE_LOGO_URL",
     ];
     const out = {};
@@ -331,7 +332,7 @@ export function mountAdmin(router) {
     return json({ ok: true });
   }));
 
-  /* ---------------- DB schema (parse sqlite_master.sql) ------------------- */
+  /* ---------------- DB schema (no PRAGMA; parse sqlite_master.sql) -------- */
   router.add("GET", "/api/admin/db/schema", guard(async (_req, env) => {
     function columnsFromCreateSQL(sql) {
       if (!sql) return [];
@@ -537,6 +538,65 @@ export function mountAdmin(router) {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
+  // NEW: Tickets list for admin UI ("All tickets")
+  router.add("GET", "/api/admin/tickets/list", guard(async (req, env) => {
+    const u = new URL(req.url);
+    const event_id = Number(u.searchParams.get("event_id") || 0);
+    if (!event_id) return bad("event_id required");
+
+    const q = (u.searchParams.get("q") || "").trim();
+    const state = (u.searchParams.get("state") || "").trim();
+    const limit  = Math.min(Math.max(i(u.searchParams.get("limit")||50),1),200);
+    const offset = Math.max(i(u.searchParams.get("offset")||0),0);
+
+    const where = ["tt.event_id = ?1"];
+    const args  = [event_id];
+
+    if (state) { where.push("t.state = ?"+(args.length+1)); args.push(state); }
+    if (q) {
+      where.push(`(
+        UPPER(t.qr) LIKE UPPER(?${args.length+1}) OR
+        UPPER(t.attendee_first) LIKE UPPER(?${args.length+1}) OR
+        UPPER(t.attendee_last)  LIKE UPPER(?${args.length+1}) OR
+        REPLACE(t.phone,' ','') LIKE ?${args.length+1} OR
+        UPPER(o.short_code) LIKE UPPER(?${args.length+1}) OR
+        UPPER(o.buyer_name) LIKE UPPER(?${args.length+1}) OR
+        REPLACE(o.buyer_phone,' ','') LIKE ?${args.length+1}
+      )`);
+      args.push('%'+q.replace(/\s+/g,'')+'%'); // same value reused by LIKEs above
+    }
+
+    const whereSql = "WHERE " + where.join(" AND ");
+
+    const list = await env.DB.prepare(
+      `SELECT
+         t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
+         tt.name AS type_name,
+         o.short_code, o.buyer_name
+       FROM tickets t
+       JOIN ticket_types tt ON tt.id = t.ticket_type_id
+       JOIN orders o        ON o.id = t.order_id
+       ${whereSql}
+       ORDER BY t.id DESC
+       LIMIT ${limit} OFFSET ${offset}`
+    ).bind(...args).all();
+
+    const cRow = await env.DB.prepare(
+      `SELECT COUNT(*) AS c
+         FROM tickets t
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+         JOIN orders o        ON o.id = t.order_id
+        ${whereSql}`
+    ).bind(...args).first();
+
+    return json({
+      ok:true,
+      tickets: list.results || [],
+      total: Number(cRow?.c || 0),
+      limit, offset
+    });
+  }));
+
   router.add("GET", "/api/admin/orders/by-code/:code", guard(async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim();
     if (!c) return bad("code required");
@@ -730,21 +790,15 @@ export function mountAdmin(router) {
     }
     return tok;
   }
-  async function sendWA(env, to, text, tplKey, fallbackName, vars) {
-    if (!to) return;
+  async function sendWA(env, to, text, tplKey, _fallbackName, vars) {
+    if (!to) return false;
     try {
       const mod = await import("../services/whatsapp.js");
-      // try template via site setting "name:lang"
-      const sel = await getSetting(env, tplKey);
+      const sel = await getSetting(env, tplKey); // "name:lang"
       if (sel && mod.sendWhatsAppTemplate) {
         const [name, language='af'] = String(sel).split(":");
-        // only include variables if there are any placeholders to fill
-        const hasVars = vars && Object.keys(vars).length > 0;
         try {
-          const payload = hasVars
-            ? { to, name, language, variables: vars }
-            : { to, name, language };
-          await mod.sendWhatsAppTemplate(env, payload);
+          await mod.sendWhatsAppTemplate(env, { to, name, language, variables: (vars||{}) });
           return true;
         } catch {}
       }
@@ -756,7 +810,6 @@ export function mountAdmin(router) {
     return false;
   }
 
-  // Get (or create) vendor portal link
   router.add("GET", "/api/admin/vendor/:id/portal-link", guard(async (_req, env, _ctx, { id }) => {
     const v = await env.DB.prepare(`SELECT id, phone FROM vendors WHERE id=?1`).bind(Number(id)).first();
     if (!v) return bad("not found", 404);
@@ -766,7 +819,6 @@ export function mountAdmin(router) {
     return json({ ok:true, link, token: tok });
   }));
 
-  // Send welcome WA
   router.add("POST", "/api/admin/vendors/:id/send-welcome", guard(async (_req, env, _ctx, { id }) => {
     const v = await env.DB.prepare(`SELECT id, name, phone FROM vendors WHERE id=?1`).bind(Number(id)).first();
     if (!v) return bad("not found", 404);
@@ -791,7 +843,6 @@ export function mountAdmin(router) {
     return json({ ok:true, sent: ok === true });
   }));
 
-  // Load submitted profile for review
   router.add("GET", "/api/admin/vendor/:id/profile", guard(async (_req, env, _ctx, { id }) => {
     const v = await env.DB.prepare(
       `SELECT id, name, phone, email, profile_json, portal_status
@@ -803,7 +854,6 @@ export function mountAdmin(router) {
     return json({ ok:true, vendor: { id:v.id, name:v.name, phone:v.phone, email:v.email, portal_status:v.portal_status }, profile });
   }));
 
-  // Assign stand info (admin)
   router.add("POST", "/api/admin/vendor/:id/assign", guard(async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const assigned = b?.assigned || {};
@@ -813,7 +863,6 @@ export function mountAdmin(router) {
     return json({ ok:true });
   }));
 
-  // Send assigned pack WA
   router.add("POST", "/api/admin/vendors/:id/send-assigned", guard(async (_req, env, _ctx, { id }) => {
     const v = await env.DB.prepare(`SELECT id, name, phone, portal_token FROM vendors WHERE id=?1`).bind(Number(id)).first();
     if (!v) return bad("not found", 404);
