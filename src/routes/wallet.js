@@ -25,56 +25,66 @@ async function getSetting(env, key) {
 }
 
 function parseTplSel(sel, fallbackName, fallbackLang = "af") {
-  // site_settings style: "name:lang"
   if (!sel) return { name: fallbackName, lang: fallbackLang };
   const [n, l] = String(sel).split(":");
-  return {
-    name: (n || fallbackName || "").trim(),
-    lang: (l || fallbackLang || "af").trim()
-  };
+  return { name: (n || fallbackName || "").trim(), lang: (l || fallbackLang || "af").trim() };
 }
 
 async function waSvc() {
   try { return await import("../services/whatsapp.js"); } catch { return null; }
 }
 
-// Best-effort sender: tries template first (multiple signatures), then session text.
+/* ----------------------------- logging ----------------------------- */
+async function waLog(env, { to, type, payload, status }) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO wa_logs (to_msisdn, type, payload, status, created_at)
+       VALUES (?1,?2,?3,?4,?5)`
+    ).bind(
+      String(to || ""),
+      String(type || "wallet_wa"),
+      JSON.stringify(payload || {}),
+      String(status || "info"),
+      Math.floor(Date.now()/1000)
+    ).run();
+  } catch {}
+}
+
+/* ----------------------------- WA sender ----------------------------- */
 async function sendBarWhatsApp(env, {
-  to,                                  // msisdn (E.164)
-  tplKey,                              // site_settings key (e.g. WA_TMP_BAR_WELCOME)
-  fallbackName,                        // e.g. "bar_welcome"
-  variables = {},                      // map for template or text
-  fallbackText                         // plain text if templates not configured
+  to, tplKey, fallbackName, variables = {}, fallbackText
 }) {
   const msisdn = normPhone(to);
-  if (!msisdn) return;
+  if (!msisdn) { await waLog(env, { to, type: tplKey, payload:{ variables, note:"no_msisdn" }, status:"skip" }); return; }
 
   const svc = await waSvc();
-  if (!svc) return;
+  if (!svc) { await waLog(env, { to: msisdn, type: tplKey, payload:{ variables, note:"no_wa_service" }, status:"error" }); return; }
 
   const sel = await getSetting(env, tplKey);
   const { name, lang } = parseTplSel(sel, fallbackName, "af");
 
   try {
     if (name && svc.sendWhatsAppTemplate) {
-      // Signature variant A: (env, to, body, lang, name)
       try {
         await svc.sendWhatsAppTemplate(env, msisdn, variables, lang, name);
+        await waLog(env, { to: msisdn, type: tplKey, payload:{ name, lang, variables }, status:"sent_template" });
         return;
-      } catch {}
-      // Signature variant B: (env, {to, name, language, variables})
-      try {
-        await svc.sendWhatsAppTemplate(env, {
-          to: msisdn, name, language: lang, variables
-        });
-        return;
-      } catch {}
+      } catch (e1) {
+        try {
+          await svc.sendWhatsAppTemplate(env, { to: msisdn, name, language: lang, variables });
+          await waLog(env, { to: msisdn, type: tplKey, payload:{ name, lang, variables }, status:"sent_template_obj" });
+          return;
+        } catch (e2) {
+          await waLog(env, { to: msisdn, type: tplKey, payload:{ e1:String(e1), e2:String(e2) }, status:"template_fail" });
+        }
+      }
     }
     if (fallbackText && svc.sendWhatsAppTextIfSession) {
       await svc.sendWhatsAppTextIfSession(env, msisdn, fallbackText);
+      await waLog(env, { to: msisdn, type: tplKey, payload:{ text:fallbackText }, status:"sent_text" });
     }
-  } catch {
-    /* non-blocking */
+  } catch (e) {
+    await waLog(env, { to: msisdn, type: tplKey, payload:{ e:String(e) }, status:"send_error" });
   }
 }
 
@@ -85,7 +95,6 @@ async function getWalletById(env, id) {
        FROM wallets WHERE id=?1 LIMIT 1`
   ).bind(String(id)).first();
 }
-
 async function getWalletByMobile(env, mobileDigits) {
   return await env.DB.prepare(
     `SELECT id,name,mobile,status,version,balance_cents,created_at
@@ -95,10 +104,7 @@ async function getWalletByMobile(env, mobileDigits) {
       LIMIT 1`
   ).bind(`%${mobileDigits}%`).first();
 }
-
-/* Quick list of movements for a wallet (paged) */
 async function listMovements(env, walletId, limit = 50, offset = 0) {
-  // prefer new wallet_movements; if table absent, return empty list gracefully
   try {
     const rows = await env.DB.prepare(
       `SELECT id, wallet_id, kind, amount_cents, meta_json, created_at, ref
@@ -108,22 +114,20 @@ async function listMovements(env, walletId, limit = 50, offset = 0) {
         LIMIT ?2 OFFSET ?3`
     ).bind(walletId, limit, offset).all();
     return rows.results || [];
-  } catch {
-    return [];
-  }
+  } catch { return []; }
 }
 
 /* ----------------------------- routes ------------------------------ */
 export function mountWallet(router) {
 
-  // Get wallet by id
+  // GET wallet by id
   router.add("GET", "/api/wallets/:id", async (_req, env, _ctx, { id }) => {
     const w = await getWalletById(env, id);
     if (!w) return bad(404, "not_found");
     return json({ ok: true, wallet: w });
   });
 
-  // Get wallet by mobile digits (new)
+  // GET wallet by mobile
   router.add("GET", "/api/wallets/by-mobile/:num", async (_req, env, _ctx, { num }) => {
     const s = String(num || "").replace(/\D+/g, "");
     if (!s) return bad(400, "bad_mobile");
@@ -132,7 +136,7 @@ export function mountWallet(router) {
     return json({ ok: true, wallet: w });
   });
 
-  // Movements (for audit / quick panel)
+  // Movements
   router.add("GET", "/api/wallets/:id/movements", async (req, env, _ctx, { id }) => {
     const u = new URL(req.url);
     const limit = Math.min(Math.max(Number(u.searchParams.get("limit") || 50), 1), 200);
@@ -143,23 +147,14 @@ export function mountWallet(router) {
     return json({ ok: true, wallet: { id: w.id, name: w.name, balance_cents: w.balance_cents, version: w.version }, items, limit, offset });
   });
 
-  // Summary (balance + last 10 movements)
-  router.add("GET", "/api/wallets/:id/summary", async (_req, env, _ctx, { id }) => {
-    const w = await getWalletById(env, id);
-    if (!w) return bad(404, "not_found");
-    const items = await listMovements(env, String(id), 10, 0);
-    return json({ ok: true, wallet: w, recent: items });
-  });
-
-  // Create/register wallet (accepts either endpoint)
+  // Create wallet
   async function handleCreate(req, env) {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const name = String(b?.name || "").trim();
     const mobile = normPhone(b?.mobile || b?.msisdn || "");
-
     if (!name) return bad(400, "name_required");
 
-    // create unique id
+    // unique id
     let id = shortId();
     for (let i = 0; i < 3; i++) {
       const exists = await getWalletById(env, id);
@@ -176,20 +171,14 @@ export function mountWallet(router) {
     const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
     const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
 
-    // WhatsApp: bar_welcome
+    // WA: Welcome
     await sendBarWhatsApp(env, {
       to: mobile,
       tplKey: "WA_TMP_BAR_WELCOME",
       fallbackName: "bar_welcome",
       variables: { name, link },
       fallbackText:
-        `Kroeg Beursie\n` +
-        `Hi ${name || "vriend"},\n\n` +
-        `Jou kroeg beursie is suksesvol geskep.\n\n` +
-        `${link}\n\n` +
-        `Maak hierdie skakel oop en wys dit by die kroeg voor jy jou bestelling plaas.\n` +
-        `As jy wil kyk wat jou balans is kan jy ook hierdie skakel gebruik 🍻🍹🥳\n` +
-        `Villiersdorp Landbou Skou`
+        `Kroeg Beursie\nHi ${name || "vriend"},\n\nJou kroeg beursie is suksesvol geskep.\n${link}\n\nVilliersdorp Landbou Skou`
     });
 
     const w = await getWalletById(env, id);
@@ -197,15 +186,14 @@ export function mountWallet(router) {
   }
 
   router.add("POST", "/api/wallets/create", handleCreate);
-  router.add("POST", "/api/wallets/register", handleCreate); // legacy alias
+  router.add("POST", "/api/wallets/register", handleCreate);
 
-  // Top-up (original)
+  // Top-up
   router.add("POST", "/api/wallets/topup", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const id = String(b?.wallet_id || b?.walletId || "");
     const amount = Number(b?.amount_cents || 0) | 0;
     const method = String(b?.method || "cash");
-
     if (!id || !amount) return bad(400, "wallet_and_amount_required");
 
     const w = await getWalletById(env, id);
@@ -217,55 +205,36 @@ export function mountWallet(router) {
       `UPDATE wallets SET balance_cents=?1, version=version+1 WHERE id=?2`
     ).bind(newBal, id).run();
 
-    // Optional: log movement
+    // Log + optional notify
     try {
-      await env.DB.prepare(
+      const r = await env.DB.prepare(
         `INSERT INTO wallet_movements (wallet_id, kind, amount_cents, meta_json, created_at)
          VALUES (?1,'topup',?2,?3,?4)`
       ).bind(id, amount, JSON.stringify({ method }), nowSec()).run();
-    } catch { /* ignore if table absent */ }
+      const mvId = r?.meta?.last_row_id || null;
+      if (mvId) {
+        const mod = await import("../services/wa_bar_notifications.js");
+        if (mod?.handleWalletMovement) await mod.handleWalletMovement(env, mvId);
+      }
+    } catch {}
 
     const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
     const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
 
-    // WhatsApp: bar_topup
     await sendBarWhatsApp(env, {
       to: w.mobile,
       tplKey: "WA_TMP_BAR_TOPUP",
       fallbackName: "bar_topup",
-      variables: {
-        amount: rands(amount),
-        link,
-        new_balance: rands(newBal)
-      },
+      variables: { amount: rands(amount), link, new_balance: rands(newBal) },
       fallbackText:
-        `Kroeg Beursie Aanvulling\n` +
-        `Jou kroeg beursie is suksesvol aangevul met ${rands(amount)} - Baie Dankie!\n\n` +
-        `${link}\n\n` +
-        `Die balans in jou beursie is nou ${rands(newBal)}\n` +
-        `Maak hierdie skakel oop en wys dit by die kroeg voor jy jou bestelling plaas.\n` +
-        `As jy wil kyk wat jou balans is kan jy ook hierdie skakel gebruik 🍻🍹🥳\n` +
-        `Villiersdorp Landbou Skou`
+        `Kroeg Beursie Aanvulling\nJou kroeg beursie is aangevul met ${rands(amount)}.\n${link}\nBalans: ${rands(newBal)}\nVilliersdorp Landbou Skou`
     });
 
     const w2 = await getWalletById(env, id);
     return json({ ok: true, wallet: w2 });
   });
 
-  // Top-up (alias with URL param: /api/wallets/:id/topup)
-  router.add("POST", "/api/wallets/:id/topup", async (req, env, _ctx, { id }) => {
-    let b; try { b = await req.json(); } catch { b = {}; }
-    const amount = Number(b?.amount_cents || b?.amount || 0) | 0;
-    const method = String(b?.method || "cash");
-    if (!id || !amount) return bad(400, "wallet_and_amount_required");
-
-    // Reuse existing handler logic
-    const body = JSON.stringify({ wallet_id: id, amount_cents: amount, method });
-    const proxied = new Request("/api/wallets/topup", { method: "POST", body, headers: { "content-type": "application/json" }});
-    return await router.handle(proxied, env);
-  });
-
-  // Deduct at bar (original)
+  // Deduct / purchase
   router.add("POST", "/api/wallets/:id/deduct", async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const items = Array.isArray(b?.items) ? b.items : [];
@@ -284,37 +253,36 @@ export function mountWallet(router) {
       `UPDATE wallets SET balance_cents=?1, version=version+1 WHERE id=?2`
     ).bind(newBal, id).run();
 
-    // Log purchase line-items if table exists
+    // Log + optional notify
     try {
       const t = nowSec();
       const txId = shortId(8);
-      await env.DB.prepare(
+      const r = await env.DB.prepare(
         `INSERT INTO wallet_movements (wallet_id, kind, amount_cents, meta_json, created_at, ref)
          VALUES (?1,'purchase',?2,?3,?4,?5)`
       ).bind(id, -total, JSON.stringify({ items }), t, txId).run();
+      const mvId = r?.meta?.last_row_id || null;
+      if (mvId) {
+        const mod = await import("../services/wa_bar_notifications.js");
+        if (mod?.handleWalletMovement) await mod.handleWalletMovement(env, mvId);
+      }
     } catch {}
 
     const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
     const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
 
-    // WhatsApp: purchase
+    // WA: purchase
     await sendBarWhatsApp(env, {
       to: w.mobile,
       tplKey: "WA_TMP_BAR_PURCHASE",
       fallbackName: "bar_purchase",
       variables: { total: rands(total), new_balance: rands(newBal), link },
       fallbackText:
-        `Kroeg Bestelling\n` +
-        `Dankie vir jou ondersteuning\n\n` +
-        `Die totale aankope vir die rondte was ${rands(total)}\n` +
-        `Die huidige balans in jou kroeg-beursie is tans ${rands(newBal)}\n\n` +
-        `Skakel: ${link}\n` +
-        `Onthou om betyds aan te vul vir die volgende rondte.🍺🥂\n` +
-        `Villiersdorp Landbou Skou`
+        `Kroeg Bestelling\nTotale aankope: ${rands(total)}\nBalans: ${rands(newBal)}\n${link}\nVilliersdorp Landbou Skou`
     });
 
-    // WhatsApp: low balance if below threshold
-    const lim = Number((await getSetting(env, "BAR_LOW_BALANCE_CENTS")) || 5000); // default R50
+    // WA: low balance (preferred key only)
+    const lim = Number((await getSetting(env, "BAR_LOW_BALANCE_CENTS")) || 5000);
     if (newBal >= 0 && newBal < lim) {
       await sendBarWhatsApp(env, {
         to: w.mobile,
@@ -322,31 +290,11 @@ export function mountWallet(router) {
         fallbackName: "bar_low_balance",
         variables: { balance: rands(newBal) },
         fallbackText:
-          `Jou Kroeg Beursie Is Laag\n` +
-          `Hi ${w.name || "vriend"},\n\n` +
-          `Jou kroeg beursie is amper leeg.\n` +
-          `Onthou om dit te gaan aanvul voor jou volgende rondte 😉\n` +
-          `Villiersdorp Landbou Skou`
+          `Jou Kroeg Beursie Is Laag\nHi ${w.name || "vriend"},\nJou kroeg beursie is amper leeg.\nOnthou om dit aan te vul 😉\nVilliersdorp Landbou Skou`
       });
     }
 
-    // respond
     const newVersion = Number(w.version || 0) + 1;
-    return json({
-      ok: true,
-      wallet_id: id,
-      new_balance_cents: newBal,
-      version: newVersion
-    });
-  });
-
-  // Purchase (alias: /api/wallets/:id/purchase)
-  router.add("POST", "/api/wallets/:id/purchase", async (req, env, _ctx, { id }) => {
-    let b; try { b = await req.json(); } catch { b = {}; }
-    const items = Array.isArray(b?.items) ? b.items : [];
-    const expected_version = Number(b?.expected_version ?? -1);
-    const body = JSON.stringify({ items, expected_version });
-    const proxied = new Request(`/api/wallets/${encodeURIComponent(id)}/deduct`, { method: "POST", body, headers: { "content-type": "application/json" }});
-    return await router.handle(proxied, env);
+    return json({ ok: true, wallet_id: id, new_balance_cents: newBal, version: newVersion });
   });
 }
