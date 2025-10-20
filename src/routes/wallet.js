@@ -87,11 +87,9 @@ async function sendTemplateOnly(env, { to, settingKey, variables = [] }) {
       return { ok: false, reason: "service_missing" };
     }
 
-    // Preferred signature: (env, { to, name, language, variables })
     try {
       await mod.sendWhatsAppTemplate(env, { to: msisdn, name, language, variables });
     } catch {
-      // Legacy signature fallback: (env, to, variables, language, name)
       await mod.sendWhatsAppTemplate(env, msisdn, variables, language, name);
     }
     await logWA(env, { to: msisdn, payload: { template: name, language, variables }, status: "sent" });
@@ -132,7 +130,7 @@ export function mountWallet(router) {
     return json({ ok: true, wallet: { id: w.id, name: w.name, balance_cents: w.balance_cents, version: w.version }, items, limit, offset });
   });
 
-  // Summary (balance + last 10 movements)
+  // Summary
   router.add("GET", "/api/wallets/:id/summary", async (_req, env, _ctx, { id }) => {
     const w = await getWalletById(env, id);
     if (!w) return bad(404, "not_found");
@@ -147,7 +145,6 @@ export function mountWallet(router) {
     const mobile = normPhone(b?.mobile || b?.msisdn || "");
     if (!name) return bad(400, "name_required");
 
-    // unique short id
     let id = shortId();
     for (let i = 0; i < 3; i++) {
       const exists = await getWalletById(env, id);
@@ -161,11 +158,9 @@ export function mountWallet(router) {
        VALUES (?1, ?2, ?3, ?4, 'active', 0, 0)`
     ).bind(id, name, mobile || null, t).run();
 
-    // Build public link
     const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
     const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
 
-    // Template: bar_welcome — {{1}}=name, {{2}}=link
     await sendTemplateOnly(env, {
       to: mobile,
       settingKey: "WA_TMP_BAR_WELCOME",
@@ -176,7 +171,7 @@ export function mountWallet(router) {
     return json({ ok: true, wallet: w });
   }
   router.add("POST", "/api/wallets/create", handleCreate);
-  router.add("POST", "/api/wallets/register", handleCreate); // legacy alias
+  router.add("POST", "/api/wallets/register", handleCreate);
 
   // Top-up
   router.add("POST", "/api/wallets/topup", async (req, env) => {
@@ -191,13 +186,10 @@ export function mountWallet(router) {
     if (String(w.status) !== "active") return bad(409, "wallet_not_active");
 
     const newBal = Number(w.balance_cents || 0) + amount;
-
-    // Update wallet
     await env.DB.prepare(
       `UPDATE wallets SET balance_cents=?1, version=version+1 WHERE id=?2`
     ).bind(newBal, id).run();
 
-    // Log movement
     try {
       await env.DB.prepare(
         `INSERT INTO wallet_movements (wallet_id, kind, amount_cents, meta_json, created_at)
@@ -205,11 +197,9 @@ export function mountWallet(router) {
       ).bind(id, amount, JSON.stringify({ method }), nowSec()).run();
     } catch {}
 
-    // Link
     const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
     const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
 
-    // Template: bar_topup — {{1}}=amount, {{2}}=link, {{3}}=new_balance
     await sendTemplateOnly(env, {
       to: w.mobile,
       settingKey: "WA_TMP_BAR_TOPUP",
@@ -220,18 +210,7 @@ export function mountWallet(router) {
     return json({ ok: true, wallet: w2 });
   });
 
-  // Top-up alias with URL param
-  router.add("POST", "/api/wallets/:id/topup", async (req, env, _ctx, { id }) => {
-    let b; try { b = await req.json(); } catch { b = {}; }
-    const amount = Number(b?.amount_cents || b?.amount || 0) | 0;
-    const method = String(b?.method || "cash");
-    if (!id || !amount) return bad(400, "wallet_and_amount_required");
-    const body = JSON.stringify({ wallet_id: id, amount_cents: amount, method });
-    const proxied = new Request("/api/wallets/topup", { method: "POST", body, headers: { "content-type": "application/json" }});
-    return await router.handle(proxied, env);
-  });
-
-  // Deduct at bar (purchase)
+  // Deduct (purchase)
   router.add("POST", "/api/wallets/:id/deduct", async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const items = Array.isArray(b?.items) ? b.items : [];
@@ -245,13 +224,12 @@ export function mountWallet(router) {
     if (total <= 0) return bad(400, "empty_cart");
 
     const newBal = Number(w.balance_cents || 0) - total;
+    if (newBal < 0) return bad(400, "insufficient_balance");
 
-    // Update wallet
     await env.DB.prepare(
       `UPDATE wallets SET balance_cents=?1, version=version+1 WHERE id=?2`
     ).bind(newBal, id).run();
 
-    // Log purchase with line-items
     try {
       const t = nowSec();
       const txId = shortId(8);
@@ -264,15 +242,13 @@ export function mountWallet(router) {
     const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
     const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
 
-    // Template: bar_purchase — {{1}}=total, {{2}}=new_balance
     await sendTemplateOnly(env, {
       to: w.mobile,
       settingKey: "WA_TMP_BAR_PURCHASE",
       variables: [ rands(total), rands(newBal) ]
     });
 
-    // Low-balance nudge (no vars)
-    const lim = Number((await getSetting(env, "BAR_LOW_BALANCE_CENTS")) || 5000); // default R50
+    const lim = Number((await getSetting(env, "BAR_LOW_BALANCE_CENTS")) || 5000);
     if (newBal >= 0 && newBal < lim) {
       await sendTemplateOnly(env, {
         to: w.mobile,
@@ -281,23 +257,48 @@ export function mountWallet(router) {
       });
     }
 
-    // respond
     const newVersion = Number(w.version || 0) + 1;
-    return json({
-      ok: true,
-      wallet_id: id,
-      new_balance_cents: newBal,
-      version: newVersion
-    });
+    return json({ ok: true, wallet_id: id, new_balance_cents: newBal, version: newVersion });
   });
 
-  // Purchase alias
-  router.add("POST", "/api/wallets/:id/purchase", async (req, env, _ctx, { id }) => {
-    let b; try { b = await req.json(); } catch { b = {}; }
-    const items = Array.isArray(b?.items) ? b.items : [];
-    const expected_version = Number(b?.expected_version ?? -1);
-    const body = JSON.stringify({ items, expected_version });
-    const proxied = new Request(`/api/wallets/${encodeURIComponent(id)}/deduct`, { method: "POST", body, headers: { "content-type": "application/json" }});
-    return await router.handle(proxied, env);
+  /* --------------------------- NEW: Wallet Transfer --------------------------- */
+  router.add("POST", "/api/wallets/transfer", async (req, env) => {
+    let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
+    const donor = String(b?.from || "").trim();
+    const recipient = String(b?.to || "").trim();
+    if (!donor || !recipient) return bad(400, "missing_wallets");
+    if (donor === recipient) return bad(400, "same_wallet");
+
+    const dw = await getWalletById(env, donor);
+    const rw = await getWalletById(env, recipient);
+    if (!dw || !rw) return bad(404, "wallet_not_found");
+
+    const amount = Number(dw.balance_cents || 0);
+    if (amount <= 0) return bad(400, "no_balance");
+
+    const newDonorBal = 0;
+    const newRecBal = Number(rw.balance_cents || 0) + amount;
+    const t = nowSec();
+    const id = shortId(10);
+
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE wallets SET balance_cents=?1,version=version+1 WHERE id=?2`).bind(newDonorBal, donor),
+      env.DB.prepare(`UPDATE wallets SET balance_cents=?1,version=version+1 WHERE id=?2`).bind(newRecBal, recipient),
+      env.DB.prepare(`INSERT INTO transfers (id,donor_wallet_id,recipient_wallet_id,amount_cents,created_at) VALUES (?1,?2,?3,?4,?5)`).bind(id, donor, recipient, amount, t)
+    ]);
+
+    // Optional: WhatsApp notifications
+    await sendTemplateOnly(env, {
+      to: dw.mobile,
+      settingKey: "WA_TMP_BAR_TRANSFER_OUT",
+      variables: [ rands(amount) ]
+    });
+    await sendTemplateOnly(env, {
+      to: rw.mobile,
+      settingKey: "WA_TMP_BAR_TRANSFER_IN",
+      variables: [ rands(amount) ]
+    });
+
+    return json({ ok: true, id, amount_cents: amount, donor, recipient });
   });
 }
