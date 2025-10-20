@@ -4,7 +4,8 @@ export const posSellHTML = `<!doctype html><html><head>
 <title>POS · Sell</title>
 <style>
   :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --danger:#b42318; }
-  *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
+  *{ box-sizing:border-box } 
+  body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:20px auto; padding:0 16px }
   h1{ margin:0 0 12px }
   .grid{ display:grid; grid-template-columns: 1.25fr .9fr; gap:16px }
@@ -179,7 +180,7 @@ async function recall(){
     const j = await r.json().catch(()=>({ok:false,error:'bad json'}));
     if (!j.ok) throw new Error(j.error || 'not found');
 
-    if (j.paid){ // already paid → offer resend only
+    if (j.paid){
       const to = j.order.buyer_phone || '';
       const yes = confirm('Order '+code+' is already PAID. Resend tickets to '+(to||'the saved number')+'?');
       if (yes){
@@ -188,13 +189,10 @@ async function recall(){
           body: JSON.stringify({ to })
         });
         $('miniMsg').textContent = 'Tickets resent.';
-      } else {
-        $('miniMsg').textContent = 'Order is paid.';
-      }
+      } else $('miniMsg').textContent = 'Order is paid.';
       return;
     }
 
-    // Unpaid recall → fill cart
     state.cart.clear();
     (j.order.items||[]).forEach(it => {
       if (state.ttypes.has(it.ticket_type_id)) state.cart.set(it.ticket_type_id, Number(it.qty||0));
@@ -216,7 +214,6 @@ function requireCustomer(){
 
 async function tender(method){
   $('err').textContent=''; $('ok').style.display='none';
-
   const who = requireCustomer();
   if (!who) return;
 
@@ -228,7 +225,7 @@ async function tender(method){
     event_id: event_id || undefined,
     customer_name: who.name,
     customer_msisdn: who.phone,
-    method,                 // 'pos_cash' | 'pos_card'
+    method,
     items
   };
 
