@@ -318,7 +318,7 @@ export function mountWallet(router) {
     if (newBal >= 0 && newBal < lim) {
       await sendBarWhatsApp(env, {
         to: w.mobile,
-        tplKey: "WA_TMP_BAR_LOW_BAL",
+        tplKey: "WA_TMP_BAR_LOW_BALANCE",
         fallbackName: "bar_low_balance",
         variables: { balance: rands(newBal) },
         fallbackText:
