@@ -6,19 +6,16 @@ async function getSetting(env, key) {
   const row = await env.DB.prepare(
     `SELECT value FROM site_settings WHERE key=?1 LIMIT 1`
   ).bind(key).first();
-  return row ? row.value : null;
+  return row ? String(row.value) : null;
 }
 
-async function parseTpl(env, key) {
-  const sel = await getSetting(env, key);
-  if (!sel) return { name: null, lang: "af" };
+function parseNameLang(sel, fallbackName = "ticket", fallbackLang = "af") {
+  if (!sel) return { name: fallbackName, language: fallbackLang };
   const [n, l] = String(sel).split(":");
-  return { name: (n || "").trim() || null, lang: (l || "").trim() || "af" };
-}
-
-async function waSvc() {
-  try { return await import("../services/whatsapp.js"); }
-  catch (e) { console.warn("WA: service module not available", e?.message); return null; }
+  return {
+    name: (n || fallbackName || "").trim(),
+    language: (l || fallbackLang || "af").trim()
+  };
 }
 
 function normPhone(raw){
@@ -27,69 +24,68 @@ function normPhone(raw){
   return s;
 }
 
+function nowSec(){ return Math.floor(Date.now()/1000); }
+
+async function logWA(env, { to, type = "template", payload, status = "sent" }) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO wa_logs (to_msisdn, type, payload, status, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5)`
+    ).bind(
+      String(to || ""),
+      String(type),
+      JSON.stringify(payload || null),
+      String(status),
+      nowSec()
+    ).run();
+  } catch {}
+}
+
 /**
- * Ticket delivery only (gate sales)
- * Tries in order:
- *  1) services.whatsapp.sendTicketTemplate(env, to, { templateName, language, bodyParam1, urlSuffixParam1 })
- *  2) services.whatsapp.sendWhatsAppTemplate(env, { to, name, language, variables:{...} })
- *  3) services.whatsapp.sendWhatsAppTextIfSession(env, to, text)
+ * Template-only ticket delivery
+ * Site setting: WA_TMP_TICKET_DELIVERY  (e.g. "ticket:af")
+ * Template vars: {{1}} = firstName, {{2}} = shortCode, {{3}} = link
  */
-async function sendTicketDelivery(env, msisdn, shortCode, buyerName){
-  const svc = await waSvc();
-  if (!svc) { console.warn("WA: no service, skipping"); return; }
-  if (!msisdn || !shortCode) { console.warn("WA: missing msisdn/code, skipping"); return; }
+async function sendTicketTemplateOnly(env, { to, shortCode, buyerName }) {
+  const msisdn = normPhone(to || "");
+  if (!msisdn || !shortCode) {
+    await logWA(env, { to: msisdn, payload: { error:"missing_msisdn_or_code" }, status:"error" });
+    return { ok:false, reason:"missing_msisdn_or_code" };
+  }
 
   const base = (await getSetting(env,"PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
   const link = `${base}/t/${encodeURIComponent(shortCode)}`;
-  const first = String(buyerName||"").split(/\s+/)[0] || "Vriend";
+  const first = (String(buyerName||"").trim().split(/\s+/)[0]) || "Vriend";
 
-  const sel = await getSetting(env, "WA_TMP_TICKET_DELIVERY"); // e.g. "ticket_delivery:af"
-  const [tplNameRaw, langRaw] = String(sel || "").split(":");
-  const templateName = (tplNameRaw || "ticket_delivery").trim();
-  const language = (langRaw || "af").trim();
+  const sel = await getSetting(env, "WA_TMP_TICKET_DELIVERY");
+  const { name, language } = parseNameLang(sel, "ticket", "af");
 
   try {
-    if (typeof svc.sendTicketTemplate === "function") {
-      console.log("WA: using sendTicketTemplate", { templateName, language, to: msisdn });
-      await svc.sendTicketTemplate(env, String(msisdn), {
-        templateName,
-        language,
-        bodyParam1: first,          // {{1}}
-        urlSuffixParam1: shortCode, // used by URL button → /t/{{1}}
-      });
-      return;
+    const mod = await import("../services/whatsapp.js");
+    if (!mod || typeof mod.sendWhatsAppTemplate !== "function") {
+      await logWA(env, { to: msisdn, payload:{ error:"service_missing", template:name, language }, status:"error" });
+      return { ok:false, reason:"service_missing" };
     }
-  } catch (e) {
-    console.error("WA: sendTicketTemplate failed", e?.message);
-  }
 
-  try {
-    if (typeof svc.sendWhatsAppTemplate === "function") {
-      console.log("WA: fallback sendWhatsAppTemplate", { name: templateName, language, to: msisdn });
-      await svc.sendWhatsAppTemplate(env, {
+    // Preferred signature
+    try {
+      await mod.sendWhatsAppTemplate(env, {
         to: msisdn,
-        name: templateName,
+        name,
         language,
-        variables: { name:first, code:shortCode, link }
+        variables: [ first, shortCode, link ]
       });
-      return;
+    } catch {
+      // Legacy signature fallback
+      await mod.sendWhatsAppTemplate(env, msisdn, [ first, shortCode, link ], language, name);
     }
-  } catch (e) {
-    console.error("WA: sendWhatsAppTemplate failed", e?.message);
-  }
 
-  try {
-    if (typeof svc.sendWhatsAppTextIfSession === "function") {
-      console.log("WA: fallback sendWhatsAppTextIfSession", { to: msisdn });
-      await svc.sendWhatsAppTextIfSession(env, msisdn,
-        `Hallo ${first}! Jou kaartjies is gereed: ${link}`);
-      return;
-    }
+    await logWA(env, { to: msisdn, payload:{ template:name, language, variables:[first, shortCode, link] }, status:"sent" });
+    return { ok:true };
   } catch (e) {
-    console.error("WA: sendWhatsAppTextIfSession failed", e?.message);
+    await logWA(env, { to: msisdn, payload:{ template:name, language, variables:[first, shortCode, link], error: String(e?.message||e) }, status:"error" });
+    return { ok:false, reason:"exception" };
   }
-
-  console.warn("WA: no compatible send method succeeded");
 }
 
 /* ---------------- Small DB helpers ---------------- */
@@ -269,7 +265,7 @@ export function mountPOS(router, env) {
     return json({ ok:true, session:{ ...s, gate_name } });
   });
 
-  // POS order: SALE (create order + tickets, log payment, send **tickets only** via WA)
+  // POS order: SALE (create order + tickets, log payment, send template WA)
   router.add("POST", "/api/pos/order/sale", async (req) => {
     let b;
     try { b = await req.json(); } catch { return bad(400,"bad_json"); }
@@ -296,8 +292,12 @@ export function mountPOS(router, env) {
         ).bind(Number(b.session_id||0)||null, order.order_id, method, order.total_cents, Math.floor(Date.now()/1000)).run();
       }catch(e){ console.warn("pos_payments insert failed", e?.message); }
 
-      // WhatsApp: **only** deliver tickets for gate sales
-      await sendTicketDelivery(env, phone, order.short_code, name);
+      // WhatsApp: TEMPLATE ONLY
+      await sendTicketTemplateOnly(env, {
+        to: phone,
+        shortCode: order.short_code,
+        buyerName: name
+      });
       console.log("WA queued for gate sale", { to: phone, code: order.short_code });
 
       return json({ ok:true, order_id: order.order_id, code: order.short_code });
@@ -307,7 +307,7 @@ export function mountPOS(router, env) {
     }
   });
 
-  // Recall: if PAID -> do not return cart, offer resend details instead
+  // Recall: if PAID -> do not return cart, allow resend
   router.add("GET", "/api/pos/order/lookup/:code", async (_req, env2, _ctx, { code }) => {
     const c = String(code||"").toUpperCase();
     if (!c) return bad(400,"code_required");
@@ -331,7 +331,7 @@ export function mountPOS(router, env) {
     }});
   });
 
-  // Resend tickets for a paid order
+  // Resend tickets for a paid order (template-only)
   router.add("POST", "/api/pos/order/resend/:code", async (req, env2, _ctx, { code }) => {
     const b = await req.json().catch(()=>({}));
     const c = String(code||"").toUpperCase();
@@ -341,14 +341,16 @@ export function mountPOS(router, env) {
     ).bind(c).first();
     if (!row) return bad(404,"not_found");
     if (String(row.status||"").toLowerCase()!=="paid") return bad(409,"not_paid");
+
     const to = normPhone(row.buyer_phone || b.to || "");
     if (!to) return bad(400,"no_msisdn");
-    await sendTicketDelivery(env2, to, row.short_code, row.buyer_name);
+
+    await sendTicketTemplateOnly(env2, { to, shortCode: row.short_code, buyerName: row.buyer_name });
     console.log("WA resend for paid order", { to, code: row.short_code });
     return json({ ok:true, code: row.short_code });
   });
 
-  /* Existing settle kept for compatibility */
+  /* Legacy settle kept for compatibility (also template-only) */
   router.add("POST", "/api/pos/settle", async (req, env3) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
     const code = String(b?.code || "").trim().toUpperCase();
@@ -372,7 +374,11 @@ export function mountPOS(router, env) {
        VALUES (?1, ?2, ?3, 'approved', ?4, ?4)`
     ).bind(row.id, Number(row.total_cents||0), method, now).run();
 
-    await sendTicketDelivery(env3, normPhone(row.buyer_phone || b?.buyer_phone || ""), code, (row.buyer_name || b?.buyer_name || ""));
+    await sendTicketTemplateOnly(env3, {
+      to: normPhone(row.buyer_phone || b?.buyer_phone || ""),
+      shortCode: code,
+      buyerName: (row.buyer_name || b?.buyer_name || "")
+    });
     console.log("WA after settle", { code });
     return json({ ok:true, order_id: row.id, code, method });
   });
