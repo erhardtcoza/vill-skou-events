@@ -1,6 +1,5 @@
 // /src/routes/wallet.js
 import { json, bad } from "../utils/http.js";
-import { handleWalletCreated, handleWalletMovement } from "../services/wa_bar_notifications.js";
 
 /* ----------------------------- helpers ----------------------------- */
 function normPhone(raw) {
@@ -10,6 +9,7 @@ function normPhone(raw) {
   return s;
 }
 function nowSec() { return Math.floor(Date.now() / 1000); }
+function rands(c) { return "R" + ((Number(c) || 0) / 100).toFixed(2); }
 function shortId(len = 7) {
   const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let s = "";
@@ -23,6 +23,19 @@ async function getSetting(env, key) {
   ).bind(key).first();
   return row ? String(row.value) : null;
 }
+function parseNameLang(sel, fallbackName = "", fallbackLang = "af") {
+  if (!sel) return { name: fallbackName, language: fallbackLang };
+  const [n, l] = String(sel).split(":");
+  return { name: (n || fallbackName || "").trim(), language: (l || fallbackLang || "af").trim() };
+}
+async function logWA(env, { to, type = "template", payload, status = "sent" }) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO wa_logs (to_msisdn, type, payload, status, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5)`
+    ).bind(String(to || ""), String(type), JSON.stringify(payload || null), String(status), nowSec()).run();
+  } catch {}
+}
 
 /* ----------------------------- queries ----------------------------- */
 async function getWalletById(env, id) {
@@ -31,7 +44,6 @@ async function getWalletById(env, id) {
        FROM wallets WHERE id=?1 LIMIT 1`
   ).bind(String(id)).first();
 }
-
 async function getWalletByMobile(env, mobileDigits) {
   return await env.DB.prepare(
     `SELECT id,name,mobile,status,version,balance_cents,created_at
@@ -41,8 +53,6 @@ async function getWalletByMobile(env, mobileDigits) {
       LIMIT 1`
   ).bind(`%${mobileDigits}%`).first();
 }
-
-/* Quick list of movements for a wallet (paged) */
 async function listMovements(env, walletId, limit = 50, offset = 0) {
   try {
     const rows = await env.DB.prepare(
@@ -55,6 +65,40 @@ async function listMovements(env, walletId, limit = 50, offset = 0) {
     return rows.results || [];
   } catch {
     return [];
+  }
+}
+
+/* ---------------------- template-only sender ----------------------- */
+async function sendTemplateOnly(env, { to, settingKey, variables = [] }) {
+  const msisdn = normPhone(to);
+  if (!msisdn) return { ok: false, reason: "no_msisdn" };
+
+  const sel = await getSetting(env, settingKey);
+  if (!sel) {
+    await logWA(env, { to: msisdn, payload: { error: "no_template_setting", settingKey }, status: "error" });
+    return { ok: false, reason: "no_template_setting" };
+  }
+  const { name, language } = parseNameLang(sel);
+
+  try {
+    const mod = await import("../services/whatsapp.js");
+    if (!mod || typeof mod.sendWhatsAppTemplate !== "function") {
+      await logWA(env, { to: msisdn, payload: { error: "service_missing", template: name, language, variables }, status: "error" });
+      return { ok: false, reason: "service_missing" };
+    }
+
+    // Preferred signature: (env, { to, name, language, variables })
+    try {
+      await mod.sendWhatsAppTemplate(env, { to: msisdn, name, language, variables });
+    } catch {
+      // Legacy signature fallback: (env, to, variables, language, name)
+      await mod.sendWhatsAppTemplate(env, msisdn, variables, language, name);
+    }
+    await logWA(env, { to: msisdn, payload: { template: name, language, variables }, status: "sent" });
+    return { ok: true };
+  } catch (e) {
+    await logWA(env, { to: msisdn, payload: { template: name, language, variables, error: String(e && e.message || e) }, status: "error" });
+    return { ok: false, reason: "exception" };
   }
 }
 
@@ -103,7 +147,7 @@ export function mountWallet(router) {
     const mobile = normPhone(b?.mobile || b?.msisdn || "");
     if (!name) return bad(400, "name_required");
 
-    // Generate unique id
+    // unique short id
     let id = shortId();
     for (let i = 0; i < 3; i++) {
       const exists = await getWalletById(env, id);
@@ -117,13 +161,20 @@ export function mountWallet(router) {
        VALUES (?1, ?2, ?3, ?4, 'active', 0, 0)`
     ).bind(id, name, mobile || null, t).run();
 
-    // TEMPLATES ONLY: delegate to notifications module
-    await handleWalletCreated(env, id).catch(()=>{});
+    // Build public link
+    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+    const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
+
+    // Template: bar_welcome — {{1}}=name, {{2}}=link
+    await sendTemplateOnly(env, {
+      to: mobile,
+      settingKey: "WA_TMP_BAR_WELCOME",
+      variables: [ name || "", link ]
+    });
 
     const w = await getWalletById(env, id);
     return json({ ok: true, wallet: w });
   }
-
   router.add("POST", "/api/wallets/create", handleCreate);
   router.add("POST", "/api/wallets/register", handleCreate); // legacy alias
 
@@ -133,7 +184,6 @@ export function mountWallet(router) {
     const id = String(b?.wallet_id || b?.walletId || "");
     const amount = Number(b?.amount_cents || 0) | 0;
     const method = String(b?.method || "cash");
-
     if (!id || !amount) return bad(400, "wallet_and_amount_required");
 
     const w = await getWalletById(env, id);
@@ -141,38 +191,47 @@ export function mountWallet(router) {
     if (String(w.status) !== "active") return bad(409, "wallet_not_active");
 
     const newBal = Number(w.balance_cents || 0) + amount;
+
+    // Update wallet
     await env.DB.prepare(
       `UPDATE wallets SET balance_cents=?1, version=version+1 WHERE id=?2`
     ).bind(newBal, id).run();
 
-    // Log movement and notify (capture movement_id)
-    let movementId = null;
+    // Log movement
     try {
-      const r = await env.DB.prepare(
+      await env.DB.prepare(
         `INSERT INTO wallet_movements (wallet_id, kind, amount_cents, meta_json, created_at)
          VALUES (?1,'topup',?2,?3,?4)`
       ).bind(id, amount, JSON.stringify({ method }), nowSec()).run();
-      movementId = r?.meta?.last_row_id || null;
     } catch {}
-    if (movementId) await handleWalletMovement(env, movementId).catch(()=>{});
+
+    // Link
+    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+    const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
+
+    // Template: bar_topup — {{1}}=amount, {{2}}=link, {{3}}=new_balance
+    await sendTemplateOnly(env, {
+      to: w.mobile,
+      settingKey: "WA_TMP_BAR_TOPUP",
+      variables: [ rands(amount), link, rands(newBal) ]
+    });
 
     const w2 = await getWalletById(env, id);
     return json({ ok: true, wallet: w2 });
   });
 
-  // Top-up (alias with URL param)
+  // Top-up alias with URL param
   router.add("POST", "/api/wallets/:id/topup", async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { b = {}; }
     const amount = Number(b?.amount_cents || b?.amount || 0) | 0;
     const method = String(b?.method || "cash");
     if (!id || !amount) return bad(400, "wallet_and_amount_required");
-
     const body = JSON.stringify({ wallet_id: id, amount_cents: amount, method });
     const proxied = new Request("/api/wallets/topup", { method: "POST", body, headers: { "content-type": "application/json" }});
     return await router.handle(proxied, env);
   });
 
-  // Deduct at bar
+  // Deduct at bar (purchase)
   router.add("POST", "/api/wallets/:id/deduct", async (req, env, _ctx, { id }) => {
     let b; try { b = await req.json(); } catch { return bad(400, "bad_json"); }
     const items = Array.isArray(b?.items) ? b.items : [];
@@ -187,23 +246,40 @@ export function mountWallet(router) {
 
     const newBal = Number(w.balance_cents || 0) - total;
 
+    // Update wallet
     await env.DB.prepare(
       `UPDATE wallets SET balance_cents=?1, version=version+1 WHERE id=?2`
     ).bind(newBal, id).run();
 
-    // Log purchase and notify (capture movement_id)
-    let movementId = null;
+    // Log purchase with line-items
     try {
       const t = nowSec();
-      const txId = (Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10)).toUpperCase();
-      const r = await env.DB.prepare(
+      const txId = shortId(8);
+      await env.DB.prepare(
         `INSERT INTO wallet_movements (wallet_id, kind, amount_cents, meta_json, created_at, ref)
          VALUES (?1,'purchase',?2,?3,?4,?5)`
       ).bind(id, -total, JSON.stringify({ items }), t, txId).run();
-      movementId = r?.meta?.last_row_id || null;
     } catch {}
 
-    if (movementId) await handleWalletMovement(env, movementId).catch(()=>{});
+    const base = (await getSetting(env, "PUBLIC_BASE_URL")) || env.PUBLIC_BASE_URL || "";
+    const link = base ? `${base}/w/${encodeURIComponent(id)}` : `/w/${encodeURIComponent(id)}`;
+
+    // Template: bar_purchase — {{1}}=total, {{2}}=new_balance
+    await sendTemplateOnly(env, {
+      to: w.mobile,
+      settingKey: "WA_TMP_BAR_PURCHASE",
+      variables: [ rands(total), rands(newBal) ]
+    });
+
+    // Low-balance nudge (no vars)
+    const lim = Number((await getSetting(env, "BAR_LOW_BALANCE_CENTS")) || 5000); // default R50
+    if (newBal >= 0 && newBal < lim) {
+      await sendTemplateOnly(env, {
+        to: w.mobile,
+        settingKey: "WA_TMP_BAR_LOW_BALANCE",
+        variables: []
+      });
+    }
 
     // respond
     const newVersion = Number(w.version || 0) + 1;
