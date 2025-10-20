@@ -16,12 +16,19 @@ export const barTopupHTML = `<!doctype html><html lang="af"><head>
   .btn{ display:inline-block; background:var(--accent); color:#fff; padding:11px 14px; border-radius:10px; text-decoration:none; font-weight:800; border:0; cursor:pointer }
   .btn.alt{ background:#111 }
   .btn.ghost{ background:#e5e7eb; color:#111 }
+  .btn.warn{ background:var(--danger) }
   .muted{ color:var(--muted) }
   .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
   .pill{ display:inline-block; padding:6px 10px; border-radius:999px; border:1px solid var(--border) }
   .balance{ font-size:24px; font-weight:900 }
   .qr{ width:180px; height:180px; border:1px solid var(--border); border-radius:12px; display:flex; align-items:center; justify-content:center; background:#fff }
   .topups .btn{ min-width:86px }
+
+  /* Modal */
+  .modal-back{ position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; padding:16px; z-index:9999 }
+  .modal{ background:#fff; border-radius:14px; max-width:520px; width:100%; padding:16px; box-shadow:0 14px 34px rgba(0,0,0,.25) }
+  .modal h3{ margin:0 0 8px }
+  .modal .actions{ display:flex; gap:8px; justify-content:flex-end; margin-top:12px }
 </style>
 </head><body>
 <div class="wrap">
@@ -52,7 +59,7 @@ export const barTopupHTML = `<!doctype html><html lang="af"><head>
       </div>
     </div>
 
-    <!-- RIGHT: Active wallet + quick topups -->
+    <!-- RIGHT: Active wallet + quick topups + transfer -->
     <div class="card">
       <h2 style="margin:0 0 10px">Vinnige top-ups</h2>
       <div class="muted" id="hint">Laai of skep eers 'n beursie aan die linkerkant.</div>
@@ -72,9 +79,33 @@ export const barTopupHTML = `<!doctype html><html lang="af"><head>
           <button class="btn" data-amt="10000">R100</button>
           <button class="btn" data-amt="20000">R200</button>
           <button class="btn" data-amt="30000">R300</button>
+          <button id="transferBtn" class="btn ghost">Transfer</button>
         </div>
         <div id="msgR" class="muted" style="margin-top:8px"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Transfer Modal -->
+<div id="modalBack" class="modal-back">
+  <div class="modal">
+    <h3>Oordrag van balans</h3>
+    <p class="muted" style="margin:0 0 8px">Skuif die oorblywende balans volledig van <b>Donor</b> na <b>Ontvanger</b>.</p>
+    <label>Donor beursie (ID of selfoon)</label>
+    <div class="row">
+      <input id="txFrom" placeholder="bv. Q7P3Y8 of 082… / 2772…" />
+      <button id="scanFrom" class="btn ghost">Scan</button>
+    </div>
+    <label style="margin-top:8px">Ontvanger beursie (ID of selfoon)</label>
+    <div class="row">
+      <input id="txTo" placeholder="bv. NEEPX7Q of 082… / 2772…" />
+      <button id="scanTo" class="btn ghost">Scan</button>
+    </div>
+    <div id="txMsg" class="muted" style="margin-top:8px"></div>
+    <div class="actions">
+      <button id="txCancel" class="btn ghost">Kanselleer</button>
+      <button id="txDo" class="btn warn">Transfer balans</button>
     </div>
   </div>
 </div>
@@ -106,6 +137,13 @@ function showWallet(w, isCached=false){
   $('wbal').textContent = rands(w?.balance_cents||0) + (isCached ? ' (kas)' : '');
   $('wid').textContent  = 'ID: ' + (w?.id ?? '—');
   $('wqr').innerHTML = '<img src="/api/qr/svg/WALLET-'+encodeURIComponent(w.id)+'" width="180" height="180" alt="QR"/>';
+}
+
+async function fetchWalletById(id){
+  const r = await fetch('/api/wallets/'+encodeURIComponent(id));
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok || j.ok===false) throw new Error(j.error||'Wallet nie gevind');
+  return j.wallet ? j.wallet : j;
 }
 
 async function loadByIdOrMobile(value){
@@ -165,6 +203,63 @@ async function topup(cents){
   }
 }
 
+/* ---------- Transfer modal helpers ---------- */
+function openModal(){ $('modalBack').style.display='flex'; $('txMsg').textContent=''; $('txFrom').value=''; $('txTo').value=''; }
+function closeModal(){ $('modalBack').style.display='none'; }
+
+function askScan(label){
+  const v = prompt(label + ' — voer/scan ID of selfoon:');
+  return v ? v.trim() : '';
+}
+
+async function resolveIdOrPhone(raw){
+  if (!raw) return null;
+  // First assume it's an id (fast path)
+  try { const w = await fetchWalletById(raw); return w.id; } catch {}
+  // Try by phone digits
+  const d = digits(raw);
+  if (d){
+    try{
+      const r = await fetch('/api/wallets/by-mobile/'+encodeURIComponent(d));
+      const j = await r.json().catch(()=>({}));
+      if (r.ok && j.ok!==false) return (j.wallet ? j.wallet : j).id;
+    }catch{}
+  }
+  return null;
+}
+
+async function doTransfer(){
+  const fromRaw = ($('txFrom').value||'').trim();
+  const toRaw   = ($('txTo').value||'').trim();
+  $('txMsg').textContent = 'Laai beursies…';
+
+  const fromId = await resolveIdOrPhone(fromRaw);
+  const toId   = await resolveIdOrPhone(toRaw);
+  if (!fromId || !toId){ $('txMsg').textContent='Wallets nie gevind nie.'; return; }
+  if (fromId === toId){ $('txMsg').textContent='Donor en ontvanger kan nie dieselfde wees nie.'; return; }
+
+  $('txMsg').textContent = 'Verskuif balans…';
+  try{
+    const r = await fetch('/api/wallets/transfer', {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ from: fromId, to: toId })
+    });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || j.ok===false) throw new Error(j.error||'Transfer het misluk');
+
+    $('txMsg').textContent = 'Klaar. Bedrag: '+rands(j.amount_cents||0);
+    // Refresh recipient wallet into the right panel for convenience
+    try{
+      const w = await fetchWalletById(toId);
+      lruTouch(w);
+      showWallet(w, false);
+    }catch{}
+    setTimeout(()=>{ closeModal(); }, 900);
+  }catch(e){
+    $('txMsg').textContent = e.message || 'Fout met transfer.';
+  }
+}
+
 /* ---------- events ---------- */
 $('loadBtn').onclick = async ()=>{
   $('msgL').textContent = '';
@@ -189,9 +284,16 @@ $('create').onclick = async ()=>{
   }catch(e){ $('msgL').textContent = e.message||'Kon nie skep nie'; }
 };
 // Quick top-up buttons
-document.querySelectorAll('.topups .btn').forEach(b=>{
+document.querySelectorAll('.topups .btn[data-amt]').forEach(b=>{
   b.addEventListener('click', ()=> topup(parseInt(b.dataset.amt,10)||0));
 });
+
+// Transfer button + modal controls
+$('transferBtn').onclick = openModal;
+$('txCancel').onclick = closeModal;
+$('txDo').onclick = doTransfer;
+$('scanFrom').onclick = ()=>{ const v=askScan('Scan/voer DONOR'); if(v){ $('txFrom').value=v; } };
+$('scanTo').onclick   = ()=>{ const v=askScan('Scan/voer ONTVANGER'); if(v){ $('txTo').value=v; } };
 
 // Enter shortcuts
 $('lookupId').addEventListener('keydown', e=>{ if(e.key==='Enter') $('loadBtn').click(); });
