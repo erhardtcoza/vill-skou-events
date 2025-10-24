@@ -3,7 +3,7 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Checkout · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --warn-bg:#fff3cd; --warn-border:#ffe69c; --warn-text:#7a5a00; }
   *{ box-sizing:border-box } body{ margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
   .grid{ display:grid; grid-template-columns:1.25fr .9fr; gap:16px; align-items:start }
@@ -14,8 +14,10 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   @media (max-width:680px){ .row{ grid-template-columns:1fr; } }
   label{ display:block; font-size:13px; color:#444; margin:10px 0 6px }
   input, select, textarea{ width:100%; padding:10px 12px; border:1px solid #e5e7eb; border-radius:10px; font:inherit; background:#fff; min-height:40px }
+  input[disabled], select[disabled], textarea[disabled]{ background:#f1f2f4; color:#777; cursor:not-allowed }
   .btn{ padding:12px 14px; border-radius:10px; border:0; background:var(--green); color:#fff; font-weight:700; cursor:pointer }
   .btn.secondary{ background:#fff; color:#111; border:1px solid #e5e7eb }
+  .btn[disabled]{ background:#e5e7eb; color:#777; cursor:not-allowed }
   .att{ border:1px solid #eef0f2; border-radius:12px; padding:12px; margin:10px 0 }
   .att h3{ margin:0 0 8px; font-size:16px }
   .right h2{ margin-top:0 } .line{ display:flex; justify-content:space-between; margin:6px 0 }
@@ -24,6 +26,17 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   .ok{ color:#0a7d2b; margin-top:8px; font-weight:600 }
   .pill{ display:inline-block; font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; color:#444 }
   .notice{ background:#fff3cd; border:1px solid #ffe69c; color:#7a5a00; padding:12px 14px; border-radius:10px; margin:0 0 12px 0; font-size:14px; line-height:1.35 }
+  .closedBanner{
+    background:var(--warn-bg);
+    border:1px solid var(--warn-border);
+    color:var(--warn-text);
+    border-radius:10px;
+    padding:12px 14px;
+    font-weight:600;
+    line-height:1.4;
+    margin-bottom:12px;
+  }
+  .closedBanner strong{ display:block; }
 
   /* overlay spinner during redirect */
   .overlay{ position:fixed; inset:0; background:rgba(255,255,255,.8); display:none; align-items:center; justify-content:center; z-index:9999 }
@@ -38,6 +51,9 @@ export const checkoutHTML = (slug) => `<!doctype html><html><head>
   <div class="grid">
     <div class="card">
       <div id="eventMeta" class="muted" style="margin-bottom:10px"></div>
+
+      <!-- Closed banner goes here if needed -->
+      <div id="closedBannerSlot"></div>
 
       <!-- Notice -->
       <div class="notice">
@@ -111,7 +127,7 @@ const slug = ${JSON.stringify(slug)};
 const $ = (id)=>document.getElementById(id);
 
 function rands(cents){ return 'R' + ((cents||0)/100).toFixed(2); }
-function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[c])); }
+function esc(s){ return String(s||'').replace(/[&<>"]/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
 
 // Normalize ZA phone -> 27XXXXXXXXX (drop leading 0)
 function normPhone(raw){
@@ -123,6 +139,7 @@ function normPhone(raw){
 
 let catalog = null;
 let cart = null;
+let salesClosed = false; // will set after load
 
 // ---------- Attendee UI -----------------------------------------------------
 function buildAttendeeForms(){
@@ -145,11 +162,11 @@ function buildAttendeeForms(){
         <div class="row">
           <div>
             <label>Volle naam</label>
-            <input class="att_name" data-tid="\${tt.id}" placeholder="Naam en Van" value="\${esc(seedName)}"/>
+            <input class="att_name" data-tid="\${tt.id}" placeholder="Naam en Van" value="\${esc(seedName)}" \${salesClosed?'disabled':''}/>
           </div>
           <div>
             <label>Geslag</label>
-            <select class="att_gender" data-tid="\${tt.id}">
+            <select class="att_gender" data-tid="\${tt.id}" \${salesClosed?'disabled':''}>
               <option value="">—</option>
               <option value="male">Manlik</option>
               <option value="female">Vroulik</option>
@@ -160,7 +177,7 @@ function buildAttendeeForms(){
         <div class="row">
           <div>
             <label>Selfoon (vir aflewering)</label>
-            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(seedPhone)}" />
+            <input class="att_phone" data-tid="\${tt.id}" type="tel" inputmode="tel" value="\${esc(seedPhone)}" \${salesClosed?'disabled':''} />
           </div>
           <div></div>
         </div>\`;
@@ -295,6 +312,11 @@ function setOverlay(on){
 
 // ---------- Submit ----------------------------------------------------------
 async function submit(){
+  if (salesClosed){
+    showMsg('err', 'AANLYN VERKOPE IS GESLUIT.');
+    return;
+  }
+
   showMsg('', '');
   const btn = $('submitBtn');
   const methodSel = $('pay_method').value;
@@ -350,6 +372,27 @@ async function submit(){
 }
 
 // ---------- Load ------------------------------------------------------------
+function blockUIForClosed(){
+  // disable inputs, select, submit; show banner
+  const banner = document.createElement('div');
+  banner.className = 'closedBanner';
+  banner.innerHTML = '<strong>ONLINE SALES CLOSED</strong>AANLYN VERKOPE NOU GESLUIT';
+  $('closedBannerSlot').appendChild(banner);
+
+  // disable all editable fields + submit
+  [
+    'buyer_first','buyer_last','buyer_email','buyer_phone','pay_method','submitBtn'
+  ].forEach(id=>{
+    const el = $(id);
+    if (el) el.setAttribute('disabled','disabled');
+  });
+
+  // also disable attendee inputs if they already rendered
+  document.querySelectorAll('#attWrap input, #attWrap select').forEach(el=>{
+    el.setAttribute('disabled','disabled');
+  });
+}
+
 async function load(){
   try{
     cart = JSON.parse(sessionStorage.getItem('pending_cart') || 'null');
@@ -368,15 +411,22 @@ async function load(){
 
   $('eventMeta').textContent = (catalog.event?.name||'') + (catalog.event?.venue ? ' · '+catalog.event.venue : '');
 
+  // closed?
+  salesClosed = !!catalog.event.sales_closed;
+
   renderSummary();
   buildAttendeeForms();
   wireBuyerSync();
 
-  // Initial sync pass (if buyer fields already prefilled by the browser)
+  // Initial sync pass
   syncAttendeeNamesFromBuyer();
   syncAttendeePhonesFromBuyer();
 
   $('submitBtn').onclick = submit;
+
+  if (salesClosed){
+    blockUIForClosed();
+  }
 }
 
 load();
