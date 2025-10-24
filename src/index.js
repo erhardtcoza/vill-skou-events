@@ -25,9 +25,8 @@ import { mountAuth } from "./routes/auth.js";
 import { mountWhatsApp } from "./routes/whatsapp.js";
 import { mountCashbar } from "./routes/cashbar.js";
 import { mountItems } from "./routes/items.js";
-import { mountAdminBar } from "./routes/admin_bar.js"; // <-- correct file
+import { mountAdminBar } from "./routes/admin_bar.js"; // /api/admin/bar/*
 import { mountVendorPortal } from "./routes/vendor_portal.js";
-
 
 // UI
 import { badgeHTML } from "./ui/badge.js";
@@ -65,7 +64,9 @@ registerAddonRoutes(router);
 function renderHTML(mod, ...args) {
   try {
     const html = (typeof mod === "function") ? mod(...args) : mod;
-    return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+    return new Response(html, {
+      headers: { "content-type": "text/html; charset=utf-8" }
+    });
   } catch (_e) {
     return new Response("Internal error rendering page", { status: 500 });
   }
@@ -95,19 +96,20 @@ function initWithEnv(env) {
   mountPublicVendors(router);       // /api/public/vendors/*
   mountCashbar(router, env);        // legacy cashbar API
   mountItems(router, env);          // /api/items
-  mountVendorPortal(router);
-
-
+  mountVendorPortal(router);        // /api/vendor-portal/* (internal vendor portal pages/api)
 
   /* ------------------- UI ROUTES --------------------- */
+
+  // Landing / marketing
   router.add("GET", "/", async () => renderHTML(landingHTML));
 
-  // Admin (guarded) — Bar tab is inside this UI
+  // Admin dashboard UI (guarded)
   router.add("GET", "/admin", requireRole("admin", async () => renderHTML(adminHTML)));
   router.add("GET", "/admin/login", async () => renderHTML(() => loginHTML("admin")));
 
-  // Gate POS (guarded)
+  // Gate POS dashboard UI (guarded)
   router.add("GET", "/gate", requireRole("pos", async () => renderHTML(posHTML)));
+
   router.add("GET", "/gate/sell", requireRole("pos", async (req) => {
     const u = new URL(req.url);
     const session_id = Number(u.searchParams.get("session_id") || 0);
@@ -123,30 +125,39 @@ function initWithEnv(env) {
     return renderHTML(gateSellHTML, session_id);
   }));
 
-  // Public shop + checkout
+  // 🔥 Scanner UI routes
+  // Public/unguarded scanner page for now
+  router.add("GET", "/scan", async () => renderHTML(scannerHTML));
+
+  // Login page for scanner operators (reuses POS login style)
+  router.add("GET", "/scan/login", async () => renderHTML(() => loginHTML("pos")));
+
+  // Public shop product page
   router.add("GET", "/shop/:slug", async (_req, _env2, _ctx, { slug }) =>
     renderHTML(() => shopHTML(slug))
   );
+
+  // Checkout page
   router.add("GET", "/shop/:slug/checkout", async (_req, _env2, _ctx, { slug }) =>
     renderHTML(() => checkoutHTML(slug))
   );
 
-  // Ticket display (batch by order short code)
+  // Ticket bundle view (by order short code)
   router.add("GET", "/t/:code", async (_req, _env2, _ctx, { code }) =>
     renderHTML(() => ticketHTML(code))
   );
 
-  // Single-ticket display by token
+  // Single ticket view (by per-ticket token)
   router.add("GET", "/tt/:token", async (_req, _env2, _ctx, { token }) =>
     renderHTML(() => ticketSingleHTML(token))
   );
 
-  // Thank-you page after checkout
+  // Thank-you page after checkout / payment
   router.add("GET", "/thanks/:code", async (_req, _env2, _ctx, { code }) =>
     renderHTML(() => thankYouHTML(code))
   );
 
-  // Bar UI
+  // Bar / cashbar UIs
   router.add("GET", "/bar/sell",   async () => renderHTML(barSellHTML));
   router.add("GET", "/bar/topup",  async () => renderHTML(barTopupHTML));
   router.add("GET", "/bar/wallet", async () => renderHTML(barWalletHTML));
@@ -155,11 +166,25 @@ function initWithEnv(env) {
   router.add("GET", "/cashbar/cashier", async () => renderHTML(barTopupHTML));
   router.add("GET", "/cashbar/bar",     async () => renderHTML(barSellHTML));
 
-  // Public wallet display
+  // Public wallet balance view (QR for bar tab)
   router.add("GET", "/w/:id", async (_req, env2, _ctx, { id }) => {
-    const w = await env2.DB.prepare(`SELECT id, name, balance_cents FROM wallets WHERE id=?1`).bind(id).first();
-    if (!w) return new Response("Not found", { status: 404 });
-    return renderHTML(() => barWalletHTML({ id: w.id, name: w.name, balance_cents: w.balance_cents }));
+    const w = await env2.DB.prepare(
+      `SELECT id, name, balance_cents
+         FROM wallets
+        WHERE id=?1`
+    ).bind(id).first();
+
+    if (!w) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    return renderHTML(() =>
+      barWalletHTML({
+        id: w.id,
+        name: w.name,
+        balance_cents: w.balance_cents
+      })
+    );
   });
 
   __initialized = true;
