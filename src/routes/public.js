@@ -25,6 +25,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText, params = 
   const { name, lang } = await parseTpl(env, tplKey);
   try {
     if (name && sendTpl) {
+      // legacy signature: (env, to, fallbackText, lang, name, params)
       await sendTpl(env, toMsisdn, fallbackText, lang, name, params);
     } else if (sendTxt) {
       await sendTxt(env, toMsisdn, fallbackText);
@@ -51,6 +52,10 @@ function normalizeMsisdnZAF(s) {
 function asInt(n, def = 0) {
   const x = Number(n);
   return Number.isFinite(x) ? Math.trunc(x) : def;
+}
+
+function nowSec() {
+  return Math.floor(Date.now() / 1000);
 }
 
 /* -------- schema helpers: detect columns to stay compatible ---------- */
@@ -100,7 +105,8 @@ export function mountPublic(router) {
     });
   });
 
-  /* Event detail (+ ticket types) — tolerant of requires_name missing */
+  /* Event detail (+ ticket types) — tolerant of requires_name missing
+     ALSO: expose sales_closed so UI can disable buying. */
   router.add("GET", "/api/public/events/:slug", async (_req, env, _ctx, { slug }) => {
     const ev = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -109,6 +115,11 @@ export function mountPublic(router) {
         WHERE slug=?1 LIMIT 1`
     ).bind(slug).first();
     if (!ev) return bad("Not found", 404);
+
+    // sales_closed rule:
+    // "no online sales is possible from the day that the event starts"
+    // => once now >= starts_at, close.
+    const closed = nowSec() >= Number(ev.starts_at || 0);
 
     const hasReqName = await tableHasColumn(env, "ticket_types", "requires_name");
     const selectCols = `
@@ -133,7 +144,13 @@ export function mountPublic(router) {
       requires_name: hasReqName ? (asInt(r.requires_name) ? 1 : 0) : 0
     }));
 
-    return json({ ok: true, event: ev, ticket_types });
+    // attach the closed flag to event in response
+    const eventOut = {
+      ...ev,
+      sales_closed: closed ? 1 : 0
+    };
+
+    return json({ ok: true, event: eventOut, ticket_types });
   });
 
   /* Event ticket availability snapshot (per type) */
@@ -159,7 +176,9 @@ export function mountPublic(router) {
     return json({ ok: true, availability: list });
   });
 
-  /* Create order (NO manual BEGIN/COMMIT; uses batch + cleanup) */
+  /* Create order (web checkout).
+     We now HARD-BLOCK online creation once sales_closed = true.
+     That means: if event has started, reject with 403 "online_sales_closed". */
   router.add("POST", "/api/public/orders/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
@@ -175,6 +194,18 @@ export function mountPublic(router) {
     if (!event_id)        return bad("event_id required");
     if (!itemsIn.length)  return bad("items required");
     if (!buyer_name)      return bad("buyer_name required");
+
+    // fetch starts_at to know if sales are closed
+    const evRow = await env.DB.prepare(
+      `SELECT starts_at FROM events WHERE id=?1 LIMIT 1`
+    ).bind(event_id).first();
+    if (!evRow) return bad("event_invalid", 400);
+
+    const closed = nowSec() >= Number(evRow.starts_at || 0);
+    if (closed) {
+      // once event day has started, web checkout must NOT create new orders
+      return bad("online_sales_closed", 403);
+    }
 
     // ticket types (keep SQL simple — no requires_name column here)
     const ttQ = await env.DB.prepare(
@@ -227,7 +258,7 @@ export function mountPublic(router) {
       queues.set(tid, arr);
     }
 
-    // enforce gender only (we're not using requires_name server side)
+    // enforce gender only
     for (const it of order_items) {
       const tt = ttMap.get(it.ticket_type_id);
       const needGender = asInt(tt?.requires_gender) ? 1 : 0;
@@ -242,7 +273,7 @@ export function mountPublic(router) {
     const hasGender = await tableHasColumn(env, "tickets", "gender");
     const hasToken  = await tableHasColumn(env, "tickets", "token");
 
-    const now = Math.floor(Date.now() / 1000);
+    const now = nowSec();
     const short_code = ("C" + Math.random().toString(36).slice(2, 8)).toUpperCase();
 
     const contact_json = JSON.stringify({
@@ -253,7 +284,7 @@ export function mountPublic(router) {
     let order_id = 0;
 
     try {
-      // 1) insert order (single statement to get last_row_id)
+      // 1) insert order
       const r = await env.DB.prepare(
         `INSERT INTO orders
            (short_code, event_id, status, payment_method, total_cents, contact_json,
@@ -268,7 +299,7 @@ export function mountPublic(router) {
 
       order_id = r.meta.last_row_id;
 
-      // 2) build all dependent inserts and run atomically via batch()
+      // 2) build dependent inserts
       const stmts = [];
 
       // order_items
@@ -296,9 +327,9 @@ export function mountPublic(router) {
         }
       }
 
-      await env.DB.batch(stmts); // all-or-nothing for the dependent rows
+      await env.DB.batch(stmts); // all-or-nothing
 
-      // 3) notify on WhatsApp (best effort)
+      // 3) WhatsApp notify (best effort)
       try {
         const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
         const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
@@ -334,7 +365,7 @@ export function mountPublic(router) {
         }
       });
     } catch (e) {
-      // Best-effort cleanup to avoid half-baked orders
+      // cleanup on failure
       try {
         if (order_id) {
           await env.DB.batch([
