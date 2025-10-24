@@ -25,7 +25,7 @@ async function sendViaTemplateKey(env, tplKey, toMsisdn, fallbackText, params = 
   const { name, lang } = await parseTpl(env, tplKey);
   try {
     if (name && sendTpl) {
-      // legacy signature: (env, to, fallbackText, lang, name, params)
+      // legacy sig: (env, to, fallbackText, lang, name, params)
       await sendTpl(env, toMsisdn, fallbackText, lang, name, params);
     } else if (sendTxt) {
       await sendTxt(env, toMsisdn, fallbackText);
@@ -105,8 +105,8 @@ export function mountPublic(router) {
     });
   });
 
-  /* Event detail (+ ticket types) — tolerant of requires_name missing
-     ALSO: expose sales_closed so UI can disable buying. */
+  /* Event detail (+ ticket types)
+     Adds event.sales_closed = 1 if now >= starts_at so UI can disable buying. */
   router.add("GET", "/api/public/events/:slug", async (_req, env, _ctx, { slug }) => {
     const ev = await env.DB.prepare(
       `SELECT id, slug, name, venue, starts_at, ends_at, status,
@@ -116,9 +116,6 @@ export function mountPublic(router) {
     ).bind(slug).first();
     if (!ev) return bad("Not found", 404);
 
-    // sales_closed rule:
-    // "no online sales is possible from the day that the event starts"
-    // => once now >= starts_at, close.
     const closed = nowSec() >= Number(ev.starts_at || 0);
 
     const hasReqName = await tableHasColumn(env, "ticket_types", "requires_name");
@@ -144,7 +141,6 @@ export function mountPublic(router) {
       requires_name: hasReqName ? (asInt(r.requires_name) ? 1 : 0) : 0
     }));
 
-    // attach the closed flag to event in response
     const eventOut = {
       ...ev,
       sales_closed: closed ? 1 : 0
@@ -176,9 +172,8 @@ export function mountPublic(router) {
     return json({ ok: true, availability: list });
   });
 
-  /* Create order (web checkout).
-     We now HARD-BLOCK online creation once sales_closed = true.
-     That means: if event has started, reject with 403 "online_sales_closed". */
+  /* Create order (checkout).
+     Refuses if online sales closed (now >= starts_at). */
   router.add("POST", "/api/public/orders/create", async (req, env) => {
     let b; try { b = await req.json(); } catch { return bad("Bad JSON"); }
 
@@ -195,7 +190,7 @@ export function mountPublic(router) {
     if (!itemsIn.length)  return bad("items required");
     if (!buyer_name)      return bad("buyer_name required");
 
-    // fetch starts_at to know if sales are closed
+    // block once event has started
     const evRow = await env.DB.prepare(
       `SELECT starts_at FROM events WHERE id=?1 LIMIT 1`
     ).bind(event_id).first();
@@ -203,11 +198,10 @@ export function mountPublic(router) {
 
     const closed = nowSec() >= Number(evRow.starts_at || 0);
     if (closed) {
-      // once event day has started, web checkout must NOT create new orders
       return bad("online_sales_closed", 403);
     }
 
-    // ticket types (keep SQL simple — no requires_name column here)
+    // ticket types
     const ttQ = await env.DB.prepare(
       `SELECT id, name, price_cents, capacity, per_order_limit, requires_gender
          FROM ticket_types WHERE event_id=?1`
@@ -243,7 +237,7 @@ export function mountPublic(router) {
     }
     if (!order_items.length) return bad("No valid items");
 
-    // attendees queues
+    // attendees
     const queues = new Map();
     for (const a of attendeesIn) {
       const tid = asInt(a?.ticket_type_id);
@@ -258,7 +252,7 @@ export function mountPublic(router) {
       queues.set(tid, arr);
     }
 
-    // enforce gender only
+    // enforce gender-required tickets
     for (const it of order_items) {
       const tt = ttMap.get(it.ticket_type_id);
       const needGender = asInt(tt?.requires_gender) ? 1 : 0;
@@ -299,7 +293,7 @@ export function mountPublic(router) {
 
       order_id = r.meta.last_row_id;
 
-      // 2) build dependent inserts
+      // 2) dependent inserts
       const stmts = [];
 
       // order_items
@@ -327,9 +321,9 @@ export function mountPublic(router) {
         }
       }
 
-      await env.DB.batch(stmts); // all-or-nothing
+      await env.DB.batch(stmts);
 
-      // 3) WhatsApp notify (best effort)
+      // 3) WhatsApp notify buyer (best effort)
       try {
         const base = (await getSetting(env, "PUBLIC_BASE_URL")) || (env.PUBLIC_BASE_URL || "");
         const link = base ? `${base}/thanks/${encodeURIComponent(short_code)}` : "";
@@ -391,24 +385,43 @@ export function mountPublic(router) {
     return json({ ok: true, status: row.status });
   });
 
-  /* Public ticket lookup by code (batch) */
+  /* Public ticket lookup (all tickets in that order code)
+     NOW returns buyer + phone + ticket.phone for editing in UI. */
   router.add("GET", "/api/public/tickets/by-code/:code", async (_req, env, _ctx, { code }) => {
     const c = String(code || "").trim().toUpperCase();
     if (!c) return bad("code required");
+
+    // fetch order for meta (buyer_name, buyer_phone)
+    const ord = await env.DB.prepare(
+      `SELECT id, short_code, buyer_name, buyer_phone
+         FROM orders
+        WHERE UPPER(short_code)=?1
+        LIMIT 1`
+    ).bind(c).first();
+
+    if (!ord) {
+      return json({ ok: true, short_code: c, buyer_name: "", buyer_phone: "", tickets: [] });
+    }
+
     const q = await env.DB.prepare(
-      `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last,
-              tt.name AS type_name, tt.price_cents,
-              o.short_code
+      `SELECT t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
+              tt.name AS type_name, tt.price_cents
          FROM tickets t
-         JOIN orders o ON o.id=t.order_id
-         JOIN ticket_types tt ON tt.id=t.ticket_type_id
-        WHERE UPPER(o.short_code)=?1
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+        WHERE t.order_id = ?1
         ORDER BY t.id ASC`
-    ).bind(c).all();
-    return json({ ok: true, tickets: q.results || [] });
+    ).bind(ord.id).all();
+
+    return json({
+      ok: true,
+      short_code: ord.short_code || c,
+      buyer_name: ord.buyer_name || "",
+      buyer_phone: ord.buyer_phone || "",
+      tickets: q.results || []
+    });
   });
 
-  /* Public single-ticket lookup by token */
+  /* Public single-ticket lookup by token (unchanged) */
   router.add("GET", "/api/public/tickets/by-token/:token", async (_req, env, _ctx, { token }) => {
     const tok = String(token || "").trim();
     if (!tok) return bad("token required");
@@ -416,7 +429,7 @@ export function mountPublic(router) {
     const row = await env.DB.prepare(
       `SELECT
           t.id, t.qr, t.state,
-          t.attendee_first, t.attendee_last, t.token,
+          t.attendee_first, t.attendee_last, t.token, t.phone,
           tt.name AS type_name, tt.price_cents,
           o.short_code, o.buyer_name
         FROM tickets t
@@ -437,11 +450,132 @@ export function mountPublic(router) {
         attendee_first: row.attendee_first,
         attendee_last: row.attendee_last,
         token: row.token,
+        phone: row.phone,
         type_name: row.type_name,
         price_cents: row.price_cents,
         short_code: row.short_code,
         buyer_name: row.buyer_name
       }
     });
+  });
+
+  /* -----------------------------------------------------------
+     NEW: Update attendee details for a specific ticket
+     Body: { order_code, first, last, phone }
+     We "auth" by requiring correct order_code for that ticket.
+  ----------------------------------------------------------- */
+  router.add("POST", "/api/public/tickets/:id/update-attendee", async (req, env, _ctx, { id }) => {
+    const tid = asInt(id, 0);
+    if (!tid) return bad("invalid ticket id");
+
+    let body;
+    try { body = await req.json(); } catch { return bad("Bad JSON"); }
+
+    const order_code = String(body?.order_code || "").trim().toUpperCase();
+    const first = String(body?.first || "").trim();
+    const last  = String(body?.last  || "").trim();
+    const rawPhone = String(body?.phone || "").trim();
+    const phone = normalizeMsisdnZAF(rawPhone);
+
+    if (!order_code) return bad("order_code required");
+
+    // verify this ticket belongs to that order_code
+    const row = await env.DB.prepare(
+      `SELECT t.id, o.short_code
+         FROM tickets t
+         JOIN orders o ON o.id = t.order_id
+        WHERE t.id=?1
+        LIMIT 1`
+    ).bind(tid).first();
+
+    if (!row) return bad("not found", 404);
+    if (String(row.short_code || "").toUpperCase() !== order_code) {
+      return bad("forbidden", 403);
+    }
+
+    // do update
+    await env.DB.prepare(
+      `UPDATE tickets
+          SET attendee_first=?1,
+              attendee_last=?2,
+              phone=?3
+        WHERE id=?4`
+    ).bind(first || null, last || null, phone || null, tid).run();
+
+    return json({ ok: true, id: tid, first, last, phone });
+  });
+
+  /* -----------------------------------------------------------
+     NEW: Send a WhatsApp with this specific ticket QR
+     Body: { order_code }
+     Uses WA_TMP_TICKET_DELIVERY template if configured,
+     falls back to plain text.
+  ----------------------------------------------------------- */
+  router.add("POST", "/api/public/tickets/:id/send-wa", async (req, env, _ctx, { id }) => {
+    const tid = asInt(id, 0);
+    if (!tid) return bad("invalid ticket id");
+
+    let body;
+    try { body = await req.json(); } catch { return bad("Bad JSON"); }
+    const order_code = String(body?.order_code || "").trim().toUpperCase();
+    if (!order_code) return bad("order_code required");
+
+    // Load ticket + order so we know where it should go
+    const row = await env.DB.prepare(
+      `SELECT
+          t.qr,
+          t.attendee_first,
+          t.attendee_last,
+          t.phone AS attendee_phone,
+          tt.name AS type_name,
+          o.short_code,
+          o.buyer_name,
+          o.buyer_phone
+        FROM tickets t
+        JOIN orders o ON o.id = t.order_id
+        JOIN ticket_types tt ON tt.id = t.ticket_type_id
+       WHERE t.id=?1
+       LIMIT 1`
+    ).bind(tid).first();
+
+    if (!row) return bad("not found", 404);
+    if (String(row.short_code || "").toUpperCase() !== order_code) {
+      return bad("forbidden", 403);
+    }
+
+    // choose phone: ticket phone if available, else buyer phone
+    const destPhoneRaw = row.attendee_phone || row.buyer_phone || "";
+    const destPhone = normalizeMsisdnZAF(destPhoneRaw);
+    if (!destPhone) return bad("no_phone", 400);
+
+    const fullName = [row.attendee_first || "", row.attendee_last || ""].filter(Boolean).join(" ").trim() ||
+                     (row.buyer_name || "Besoeker");
+
+    // basic fallback text
+    // We'll include the QR string and order code.
+    // The actual template WA_TMP_TICKET_DELIVERY can format nicely.
+    const msgLines = [
+      `Hallo ${fullName}`,
+      ``,
+      `Hier is jou kaartjie vir die Villiersdorp Skou.`,
+      `Bestelkode: ${row.short_code || ""}`,
+      `QR: ${row.qr || ""}`,
+      ``,
+      `Wys hierdie QR by die hek sodat dit gescan kan word.`
+    ].filter(Boolean);
+    const fallbackMsg = msgLines.join("\n");
+
+    // Template vars we’ll pass: name, order_code, qr
+    const vars = [ fullName, row.short_code || "", row.qr || "" ];
+
+    let sentOk = false;
+    try {
+      await sendViaTemplateKey(env, "WA_TMP_TICKET_DELIVERY", destPhone, fallbackMsg, vars);
+      sentOk = true;
+    } catch {
+      // we'll still respond ok but sent:false if WA fails hard
+    }
+
+    return json({ ok: true, sent: sentOk, to: destPhone });
   });
 }
