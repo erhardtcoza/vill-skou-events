@@ -3,7 +3,7 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Event · Villiersdorp Skou</title>
 <style>
-  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; }
+  :root{ --green:#0a7d2b; --muted:#667085; --bg:#f7f7f8; --warn-bg:#fff3cd; --warn-border:#ffe69c; --warn-text:#7a5a00; }
   *{ box-sizing:border-box }
   body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:0; background:var(--bg); color:#111 }
   .wrap{ max-width:1100px; margin:18px auto; padding:0 14px }
@@ -40,6 +40,19 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
 
   .card{ background:#fff; border-radius:14px; box-shadow:0 12px 26px rgba(0,0,0,.08); padding:18px }
 
+  /* CLOSED BANNER */
+  .closedBanner{
+    background:var(--warn-bg);
+    border:1px solid var(--warn-border);
+    color:var(--warn-text);
+    border-radius:10px;
+    padding:12px 14px;
+    font-weight:600;
+    line-height:1.4;
+    margin-bottom:12px;
+  }
+  .closedBanner strong{ display:block; }
+
   /* MOBILE CTA */
   .cta-wrap{ display:flex; justify-content:center; margin:14px 0 }
   .cta-choose{
@@ -47,6 +60,9 @@ export const shopHTML = (slug) => `<!doctype html><html><head>
     gap:12px; border:0; border-radius:999px; padding:14px 22px;
     background:var(--green); color:#fff; font-weight:700; font-size:18px;
     box-shadow:0 8px 24px rgba(10,125,43,.25); cursor:pointer;
+  }
+  .cta-choose[disabled]{
+    background:#e5e7eb; color:#777; box-shadow:none; cursor:not-allowed;
   }
 
   /* TICKETS */
@@ -101,6 +117,7 @@ function render(cat){
   const images = (ev.gallery_urls ? tryParseJSON(ev.gallery_urls) : []) || [];
   const hero = ev.hero_url || images[0] || ev.poster_url || '';
   const ttypes = cat.ticket_types || [];
+  const closed = !!ev.sales_closed; // new flag from backend
 
   const app = document.getElementById('app');
   app.innerHTML = \`
@@ -114,13 +131,13 @@ function render(cat){
 
     <!-- MOBILE CTA -->
     <div class="cta-wrap only-mobile">
-      <button id="openSheet" class="cta-choose">Kies jou kaartjies</button>
+      <button id="openSheet" class="cta-choose" \${closed ? 'disabled' : ''}>Kies jou kaartjies</button>
     </div>
 
     <div class="grid">
       <div class="card">
         <h2>Inligting</h2>
-        \${renderInfoRich(ev)}
+        \${renderInfoRich(ev, closed)}
       </div>
 
       <!-- DESKTOP TICKETS ONLY -->
@@ -129,7 +146,7 @@ function render(cat){
         <div id="tickets"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
           <span id="deskTotal" class="totals">R0.00</span>
-          <button id="deskCheckout" class="btn primary" disabled>Checkout</button>
+          <button id="deskCheckout" class="btn primary" \${closed ? 'disabled' : ''}>\${closed ? 'Gesluit' : 'Checkout'}</button>
         </div>
       </div>
     </div>
@@ -142,7 +159,7 @@ function render(cat){
         <b>Totaal</b><span id="total" class="totals">R0.00</span>
       </div>
       <div style="margin-top:10px;display:flex;justify-content:flex-end">
-        <button id="checkoutBtn" class="btn primary" disabled>Checkout</button>
+        <button id="checkoutBtn" class="btn primary" \${closed ? 'disabled' : ''}>\${closed ? 'Gesluit' : 'Checkout'}</button>
       </div>
     </div>
 
@@ -155,27 +172,36 @@ function render(cat){
       <div id="sheetBody"></div>
       <div id="sheetFoot">
         <button id="sheetClose" class="btn" style="flex:0 0 auto">Sluit</button>
-        <button id="sheetCheckout" class="btn primary" style="margin-left:auto" disabled>Checkout</button>
+        <button id="sheetCheckout" class="btn primary" \${closed ? 'disabled' : ''} style="margin-left:auto">\${closed ? 'Gesluit' : 'Checkout'}</button>
       </div>
     </div>
   \`;
 
   // Desktop ticket list
   const ticketsEl = document.getElementById('tickets');
-  if (ticketsEl) ticketsEl.innerHTML = renderTicketRows(ttypes, 'desk');
+  if (ticketsEl) ticketsEl.innerHTML = renderTicketRows(ttypes, 'desk', closed);
 
   // Wire everything
-  initState(ev, ttypes);
-  wireDesktopQty();
-  wireSheet(ttypes);
+  initState(ev, ttypes, closed);
+  wireDesktopQty(closed);
+  wireSheet(ttypes, closed);
   wireCheckoutButtons();
 }
 
-/* Rich, formatted details */
-function renderInfoRich(ev){
+/* Rich, formatted details (now with CLOSED banner if needed) */
+function renderInfoRich(ev, closed){
   const when = fmtWhen(ev.starts_at, ev.ends_at);
   const venue = ev.venue ? escapeHtml(ev.venue) : 'Villiersdorp Skougronde';
+
+  const closedBanner = closed ? (
+    '<div class="closedBanner">'
+    + '<strong>ONLINE SALES CLOSED</strong>'
+    + 'AANLYN VERKOPE NOU GESLUIT'
+    + '</div>'
+  ) : '';
+
   return \`
+    \${closedBanner}
     <div class="infoRich" style="border:2px dashed #e5e7eb;border-radius:12px;padding:12px;margin-top:8px">
       <p><strong>🎉 Villiersdorp Skou 2025 – Alles wat jy moet weet</strong></p>
       <p>📅 \${when}<br/>📍 \${venue}</p>
@@ -248,11 +274,12 @@ function renderInfoRich(ev){
     </div>\`;
 }
 
-/* Ticket rows (used by desktop list and the sheet) */
-function renderTicketRows(types, mode){
+/* Ticket rows (used by desktop list and the sheet)
+   If disabled=true (sales closed), the +/- buttons are disabled + no data-* attrs so they can't be clicked. */
+function renderTicketRows(types, mode, disabled){
   if (!types.length) return '<p class="muted">Geen kaartjies beskikbaar nie.</p>';
-  const dec = mode==='desk' ? 'data-desk-dec' : 'data-sheet-dec';
-  const inc = mode==='desk' ? 'data-desk-inc' : 'data-sheet-inc';
+  const decAttr = disabled ? '' : (mode==='desk' ? 'data-desk-dec' : 'data-sheet-dec');
+  const incAttr = disabled ? '' : (mode==='desk' ? 'data-desk-inc' : 'data-sheet-inc');
   const qid = mode==='desk' ? 'dq' : 'sq';
   return types.map(t => \`
     <div class="ticket">
@@ -261,9 +288,9 @@ function renderTicketRows(types, mode){
         <div class="muted">\${(t.price_cents||0) ? rands(t.price_cents) : 'FREE'}</div>
       </div>
       <div class="qty">
-        <button class="btn" \${dec}="\${t.id}">−</button>
+        <button class="btn" \${decAttr?decAttr+'="'+t.id+'"' : ''} \${disabled?'disabled':''}>−</button>
         <span id="\${qid}\${t.id}">0</span>
-        <button class="btn" \${inc}="\${t.id}">+</button>
+        <button class="btn" \${incAttr?incAttr+'="'+t.id+'"' : ''} \${disabled?'disabled':''}>+</button>
       </div>
     </div>\`).join('');
 }
@@ -271,15 +298,17 @@ function renderTicketRows(types, mode){
 /* ---------- state & wiring ---------- */
 let globalState = null;
 
-function initState(event, ttypes){
+function initState(event, ttypes, closed){
   globalState = {
     event,
     ttypes: new Map((ttypes||[]).map(t=>[t.id,t])),
     items: new Map(), // ticket_type_id -> qty
+    closed: !!closed
   };
 }
 
-function wireDesktopQty(){
+function wireDesktopQty(disabled){
+  if (disabled) return; // don't wire clicks if closed
   document.querySelectorAll('[data-desk-inc]').forEach(b=>{
     b.onclick = ()=> changeQty(Number(b.dataset.deskInc), +1);
   });
@@ -288,24 +317,35 @@ function wireDesktopQty(){
   });
 }
 
-function wireSheet(types){
+function wireSheet(types, disabled){
   const sb = document.getElementById('sheetBody');
-  if (sb) sb.innerHTML = renderTicketRows(types, 'sheet');
+  if (sb) sb.innerHTML = renderTicketRows(types, 'sheet', disabled);
   const open = document.getElementById('openSheet');
   const sheet = document.getElementById('sheet');
   const close = document.getElementById('sheetClose');
-  if (open) open.onclick = ()=>{ sheet.style.bottom='0'; sheet.setAttribute('aria-hidden','false'); };
+
+  if (open) {
+    if (disabled) {
+      open.onclick = ()=>{}; // no-op if closed
+    } else {
+      open.onclick = ()=>{ sheet.style.bottom='0'; sheet.setAttribute('aria-hidden','false'); };
+    }
+  }
   if (close) close.onclick = ()=>{ sheet.style.bottom='-100%'; sheet.setAttribute('aria-hidden','true'); };
-  document.querySelectorAll('[data-sheet-inc]').forEach(b=>{
-    b.onclick = ()=> changeQty(Number(b.dataset.sheetInc), +1);
-  });
-  document.querySelectorAll('[data-sheet-dec]').forEach(b=>{
-    b.onclick = ()=> changeQty(Number(b.dataset.sheetDec), -1);
-  });
+
+  if (!disabled){
+    document.querySelectorAll('[data-sheet-inc]').forEach(b=>{
+      b.onclick = ()=> changeQty(Number(b.dataset.sheetInc), +1);
+    });
+    document.querySelectorAll('[data-sheet-dec]').forEach(b=>{
+      b.onclick = ()=> changeQty(Number(b.dataset.sheetDec), -1);
+    });
+  }
 }
 
 function wireCheckoutButtons(){
   const gotoCheckout = ()=>{
+    if (globalState.closed) return; // block
     const items = Array.from(globalState.items.entries()).map(([id,qty])=>({ ticket_type_id:id, qty }));
     if (!items.length) return;
     sessionStorage.setItem('pending_cart', JSON.stringify({ event_id: globalState.event.id, items }));
@@ -318,16 +358,12 @@ function wireCheckoutButtons(){
   if (m) m.onclick = gotoCheckout;
   if (s) s.onclick = gotoCheckout;
 
-  // event closed?
-  const now = Math.floor(Date.now()/1000);
-  const closed = ((globalState.event.ends_at||0) < now) || (globalState.event.status!=='active');
-  if (closed){
-    [d,m,s].forEach(el=>{ if(el){ el.disabled = true; el.textContent = 'Gesluit'; } });
-  }
+  // hard disable label is already in markup for closed
 }
 
 /* single source of truth for qty & totals */
 function changeQty(id, delta){
+  if (globalState.closed) return; // cannot modify cart when closed
   const cur = globalState.items.get(id)||0;
   const next = Math.max(0, cur+delta);
   if (next===0) globalState.items.delete(id); else globalState.items.set(id,next);
@@ -337,6 +373,10 @@ function changeQty(id, delta){
   if (dq) dq.textContent = String(next);
   if (sq) sq.textContent = String(next);
 
+  refreshCartSummary();
+}
+
+function refreshCartSummary(){
   const list = document.getElementById('cartList');
   const empty = document.getElementById('cartEmpty');
   const arr = Array.from(globalState.items.entries());
@@ -363,11 +403,7 @@ function changeQty(id, delta){
   if (mobileTotal) mobileTotal.textContent = rands(totalCents);
   if (deskTotal) deskTotal.textContent  = rands(totalCents);
 
-  const enable = totalCents>0 && arr.length>0;
-  const d = document.getElementById('deskCheckout');
-  const m = document.getElementById('checkoutBtn');
-  const s = document.getElementById('sheetCheckout');
-  [d,m,s].forEach(el=>{ if(el) el.disabled = !enable; });
+  // buttons are already pre-disabled if closed, so no further toggle needed
 }
 
 /* ---------- boot ---------- */
