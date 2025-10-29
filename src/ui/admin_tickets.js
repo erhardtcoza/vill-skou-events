@@ -20,15 +20,17 @@ window.AdminPanels.tickets = async function renderTickets(){
       .tickets-sum th.num, .tickets-sum td.num { text-align:center; }
 
       /* Lookup + list tables */
-      table.tickets-list { width:100%; border-collapse:collapse; }
-      .tickets-list th, .tickets-list td { padding:6px 8px; border-bottom:1px solid #eef1f3; }
+      table.tickets-list { width:100%; border-collapse:collapse; font-size:13px; }
+      .tickets-list th, .tickets-list td { padding:6px 8px; border-bottom:1px solid #eef1f3; vertical-align:top; }
       .tickets-list th { text-align:left; white-space:nowrap; }
       .tickets-list td.state { text-transform:uppercase; font-weight:600; letter-spacing:.02em; }
       .tickets-list td.compact { white-space:nowrap; }
-      .pill { background:#f4f6f8; border:1px solid #eef1f3; padding:4px 8px; border-radius:999px; }
+      .pill { background:#f4f6f8; border:1px solid #eef1f3; padding:4px 8px; border-radius:999px; font-size:12px; }
       .cardish h3 { margin:0 0 8px }
       .grid { display:grid; grid-template-columns: 1fr auto auto; gap:8px; }
       @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+      .paid-ok { color:#136c2e; font-weight:600; }
+      .paid-no { color:#9b1c1c; font-weight:600; }
     \`;
     document.head.appendChild(style);
   })();
@@ -86,9 +88,10 @@ window.AdminPanels.tickets = async function renderTickets(){
           "<option value='void'>Void</option>",
         "</select>",
       "</div>",
-      "<div style='display:flex;align-items:center;gap:8px'>",
+      "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>",
         "<button id='tix-refresh' class='btn'>Refresh</button>",
-        "<span id='tix-pageinfo' class='muted' style='margin-left:8px'></span>",
+        "<button id='tix-export' class='btn outline'>Download CSV</button>",
+        "<span id='tix-pageinfo' class='muted' style='margin-left:8px;font-size:12px;'></span>",
       "</div>",
     "</div>",
     "<div id='tix-list' class='muted' style='margin-top:8px'>No results yet.</div>",
@@ -128,7 +131,7 @@ window.AdminPanels.tickets = async function renderTickets(){
     )).join("");
 
     box.innerHTML = [
-      "<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px'>",
+      "<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12px'>",
         "<span class='pill'>Sold: "+sold+"</span>",
         "<span class='pill'>Unused: "+unused+"</span>",
         "<span class='pill'>In: "+inside+"</span>",
@@ -160,7 +163,14 @@ window.AdminPanels.tickets = async function renderTickets(){
       "<div><b>Order</b> ",
       esc(o.short_code||""), " · ", esc(o.buyer_name||""), " · ", esc(o.buyer_phone||""), "</div>",
       "<table class='tickets-list' style='margin-top:6px'>",
-      "<thead><tr><th>ID</th><th>QR</th><th>Type</th><th>Name</th><th>Phone</th><th>State</th></tr></thead>",
+      "<thead><tr>",
+        "<th>ID</th>",
+        "<th>QR</th>",
+        "<th>Type</th>",
+        "<th>Name</th>",
+        "<th>Phone</th>",
+        "<th>State</th>",
+      "</tr></thead>",
       "<tbody>",
       t.map(r=>("<tr>"
         +"<td class='compact'>"+r.id+"</td>"
@@ -178,6 +188,13 @@ window.AdminPanels.tickets = async function renderTickets(){
 
   // ------- Tickets list logic -------
   let listOffset = 0, listTotal = 0, listLimit = 50;
+
+  function centsToRand(c){
+    const cents = Number(c||0);
+    const rands = cents / 100;
+    // Force 2 decimals always
+    return "R " + rands.toFixed(2);
+  }
 
   async function loadList(newOffset){
     if (typeof newOffset === "number") listOffset = Math.max(0, newOffset);
@@ -200,25 +217,46 @@ window.AdminPanels.tickets = async function renderTickets(){
     listLimit = Number(j.limit||50);
     listOffset = Number(j.offset||0);
 
-    const rows = (j.tickets||[]).map(r=>(
-      "<tr>"
+    const rows = (j.tickets||[]).map(r=>{
+      const fullName = ((r.attendee_first||'')+' '+(r.attendee_last||'')).trim();
+      const isPaid = String(r.order_status||"").toLowerCase()==="paid";
+      return "<tr>"
         +"<td class='compact'>"+r.id+"</td>"
         +"<td class='compact'>"+esc(r.qr||"")+"</td>"
         +"<td>"+esc(r.type_name||"")+"</td>"
-        +"<td>"+esc(((r.attendee_first||'')+' '+(r.attendee_last||'')).trim())+"</td>"
+        +"<td>"+esc(fullName)+"</td>"
         +"<td class='compact'>"+esc(r.phone||"")+"</td>"
         +"<td class='state'>"+esc(r.state||"")+"</td>"
         +"<td class='compact'>"+esc(r.short_code||"")+"</td>"
         +"<td>"+esc(r.buyer_name||"")+"</td>"
-      +"</tr>"
-    )).join("");
+
+        // NEW COLUMNS:
+        +"<td class='compact'>"
+          + (isPaid
+              ? "<span class='paid-ok'>PAID</span>"
+              : "<span class='paid-no'>UNPAID</span>")
+        +"</td>"
+        +"<td class='compact'>"+esc(r.payment_method||"")+"</td>"
+        +"<td class='compact'>"+centsToRand(r.total_cents||0)+"</td>"
+      +"</tr>";
+    }).join("");
 
     boxList.innerHTML = [
       "<table class='tickets-list'>",
         "<thead><tr>",
-          "<th>ID</th><th>QR</th><th>Type</th><th>Name</th><th>Phone</th><th>State</th><th>Order</th><th>Buyer</th>",
+          "<th>ID</th>",
+          "<th>QR</th>",
+          "<th>Type</th>",
+          "<th>Name</th>",
+          "<th>Phone</th>",
+          "<th>State</th>",
+          "<th>Order</th>",
+          "<th>Buyer</th>",
+          "<th>Paid?</th>",
+          "<th>Method</th>",
+          "<th>Total</th>",
         "</tr></thead>",
-        "<tbody>", rows || "<tr><td colspan='8' class='muted'>No results</td></tr>", "</tbody>",
+        "<tbody>", rows || "<tr><td colspan='11' class='muted'>No results</td></tr>", "</tbody>",
       "</table>"
     ].join("");
 
@@ -234,9 +272,29 @@ window.AdminPanels.tickets = async function renderTickets(){
     nextBtn.disabled = (listOffset + listLimit) >= listTotal;
   }
 
+  async function doExportCSV(){
+    const q = String(document.getElementById("tix-q").value||"").trim();
+    const st = String(document.getElementById("tix-state").value||"").trim();
+    const eid = Number(sel.value||0);
+
+    const url = new URL("/api/admin/tickets/export", location.origin);
+    url.searchParams.set("event_id", eid);
+    if (q)  url.searchParams.set("q", q);
+    if (st) url.searchParams.set("state", st);
+
+    // create a hidden <a download> and click it so browser downloads CSV
+    const a = document.createElement("a");
+    a.href = url.toString();
+    a.download = "tickets_export_event_"+eid+".csv";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ a.remove(); }, 1000);
+  }
+
   document.getElementById("tix-refresh").onclick = ()=>loadList(0);
   document.getElementById("tix-prev").onclick    = ()=>loadList(Math.max(0, listOffset - listLimit));
   document.getElementById("tix-next").onclick    = ()=>loadList(listOffset + listLimit);
+  document.getElementById("tix-export").onclick  = doExportCSV;
 
   sel.onchange = ()=>{ loadSum(); loadList(0); };
 
