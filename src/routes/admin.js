@@ -62,8 +62,8 @@ export function mountAdmin(router) {
   function normalizeOutKey(k) {
     const map = {
       WA_TOKEN:           "WHATSAPP_TOKEN",
-      WA_PHONE_NUMBER_ID: "PHONE_NUMBER_ID",
-      WA_BUSINESS_ID:     "BUSINESS_ID",
+      WA_PHONE_NUMBER_ID: "WA_PHONE_NUMBER_ID",
+      WA_BUSINESS_ID:     "WA_BUSINESS_ID",
       WA_TMP_ORDER_CONFIRM:   "WA_TMP_ORDER_CONFIRM",
       WA_TMP_PAYMENT_CONFIRM: "WA_TMP_PAYMENT_CONFIRM",
       WA_TMP_TICKET_DELIVERY: "WA_TMP_TICKET_DELIVERY",
@@ -538,7 +538,13 @@ export function mountAdmin(router) {
     return json({ ok: true, summary: rows.results || [] });
   }));
 
-  // NEW: Tickets list for admin UI ("All tickets")
+  /**
+   * Tickets list for admin UI ("All tickets")
+   * NOW INCLUDES:
+   * - order_status
+   * - payment_method
+   * - total_cents
+   */
   router.add("GET", "/api/admin/tickets/list", guard(async (req, env) => {
     const u = new URL(req.url);
     const event_id = Number(u.searchParams.get("event_id") || 0);
@@ -563,16 +569,25 @@ export function mountAdmin(router) {
         UPPER(o.buyer_name) LIKE UPPER(?${args.length+1}) OR
         REPLACE(o.buyer_phone,' ','') LIKE ?${args.length+1}
       )`);
-      args.push('%'+q.replace(/\s+/g,'')+'%'); // same value reused by LIKEs above
+      args.push('%'+q.replace(/\s+/g,'')+'%');
     }
 
     const whereSql = "WHERE " + where.join(" AND ");
 
     const list = await env.DB.prepare(
       `SELECT
-         t.id, t.qr, t.state, t.attendee_first, t.attendee_last, t.phone,
+         t.id,
+         t.qr,
+         t.state,
+         t.attendee_first,
+         t.attendee_last,
+         t.phone,
          tt.name AS type_name,
-         o.short_code, o.buyer_name
+         o.short_code,
+         o.buyer_name,
+         o.status AS order_status,
+         o.payment_method,
+         o.total_cents
        FROM tickets t
        JOIN ticket_types tt ON tt.id = t.ticket_type_id
        JOIN orders o        ON o.id = t.order_id
@@ -594,6 +609,114 @@ export function mountAdmin(router) {
       tickets: list.results || [],
       total: Number(cRow?.c || 0),
       limit, offset
+    });
+  }));
+
+  /**
+   * CSV export of all tickets for an event.
+   * Columns:
+   *   ticket_id, qr, ticket_type, attendee_name, attendee_phone,
+   *   ticket_state,
+   *   order_code, buyer_name,
+   *   order_status, payment_method, total_cents
+   */
+  router.add("GET", "/api/admin/tickets/export", guard(async (req, env) => {
+    const u = new URL(req.url);
+    const event_id = Number(u.searchParams.get("event_id") || 0);
+    if (!event_id) return bad("event_id required");
+
+    // optional filters, same as list()
+    const q = (u.searchParams.get("q") || "").trim();
+    const state = (u.searchParams.get("state") || "").trim();
+
+    const where = ["tt.event_id = ?1"];
+    const args  = [event_id];
+
+    if (state) { where.push("t.state = ?"+(args.length+1)); args.push(state); }
+    if (q) {
+      where.push(`(
+        UPPER(t.qr) LIKE UPPER(?${args.length+1}) OR
+        UPPER(t.attendee_first) LIKE UPPER(?${args.length+1}) OR
+        UPPER(t.attendee_last)  LIKE UPPER(?${args.length+1}) OR
+        REPLACE(t.phone,' ','') LIKE ?${args.length+1} OR
+        UPPER(o.short_code) LIKE UPPER(?${args.length+1}) OR
+        UPPER(o.buyer_name) LIKE UPPER(?${args.length+1}) OR
+        REPLACE(o.buyer_phone,' ','') LIKE ?${args.length+1}
+      )`);
+      args.push('%'+q.replace(/\s+/g,'')+'%');
+    }
+
+    const whereSql = "WHERE " + where.join(" AND ");
+
+    const rows = await env.DB.prepare(
+      `SELECT
+         t.id AS ticket_id,
+         t.qr,
+         tt.name AS ticket_type,
+         (t.attendee_first || ' ' || t.attendee_last) AS attendee_name,
+         t.phone AS attendee_phone,
+         t.state AS ticket_state,
+         o.short_code AS order_code,
+         o.buyer_name,
+         o.status AS order_status,
+         o.payment_method,
+         o.total_cents
+       FROM tickets t
+       JOIN ticket_types tt ON tt.id = t.ticket_type_id
+       JOIN orders o        ON o.id = t.order_id
+       ${whereSql}
+       ORDER BY t.id DESC`
+    ).bind(...args).all();
+
+    const arr = rows.results || [];
+
+    // Build CSV
+    const header = [
+      "ticket_id",
+      "qr",
+      "ticket_type",
+      "attendee_name",
+      "attendee_phone",
+      "ticket_state",
+      "order_code",
+      "buyer_name",
+      "order_status",
+      "payment_method",
+      "total_cents"
+    ];
+    function csvEscape(v) {
+      const s = v==null ? "" : String(v);
+      if (/[",\n]/.test(s)) {
+        return '"' + s.replace(/"/g,'""') + '"';
+      }
+      return s;
+    }
+
+    const lines = [];
+    lines.push(header.join(","));
+    for (const r of arr) {
+      lines.push([
+        csvEscape(r.ticket_id),
+        csvEscape(r.qr),
+        csvEscape(r.ticket_type),
+        csvEscape(r.attendee_name),
+        csvEscape(r.attendee_phone),
+        csvEscape(r.ticket_state),
+        csvEscape(r.order_code),
+        csvEscape(r.buyer_name),
+        csvEscape(r.order_status),
+        csvEscape(r.payment_method),
+        csvEscape(r.total_cents)
+      ].join(","));
+    }
+
+    const body = lines.join("\n");
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="tickets_export_event_${event_id}.csv"`
+      }
     });
   }));
 
